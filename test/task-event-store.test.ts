@@ -28,8 +28,8 @@ test("TaskEventStore persists appended events to an append-only local outbox fil
       summary: "Submission accepted and routed to CEO review.",
       availableActions: ["ship"],
       links: {
-        task: "https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V",
-        reviewFeedback: "https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback",
+        task: "https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V",
+        reviewFeedback: "https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback",
         ciStatus: null,
         shipOperation: null
       }

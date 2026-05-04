@@ -13,7 +13,7 @@ accepted against `main` until versioned release branches exist.
 
 Do not open a public issue for a suspected vulnerability.
 
-Email `security@agentrail.dev` with:
+Email `security@agentrail.app` with:
 
 - Affected component or endpoint.
 - Reproduction steps.

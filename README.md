@@ -25,7 +25,18 @@ AgentRail gives agents:
 
 ## Quickstart
 
-Prerequisite: Node.js 18 or newer.
+Prerequisite: Node.js 22.6 or newer, or Docker Desktop with Docker Compose.
+
+One-command Docker setup:
+
+```bash
+git clone https://github.com/oxnw/agentrail.git && cd agentrail && docker compose up --build
+```
+
+The local API starts on `http://127.0.0.1:3000` by default. Docker Compose
+persists task event stream replay data in the `agentrail-event-data` volume.
+
+Node setup:
 
 ```bash
 git clone https://github.com/oxnw/agentrail.git
@@ -34,8 +45,8 @@ cp .env.example .env
 npm start
 ```
 
-The local API starts on `http://127.0.0.1:3000` by default. It runs without
-private credentials and serves the deterministic demo task store.
+The local API runs without private credentials and serves the deterministic demo
+task store.
 
 In a second terminal, run the issue-to-ship demo:
 
@@ -64,7 +75,7 @@ Run tests:
 npm test
 ```
 
-Docker:
+Docker image:
 
 ```bash
 docker build -t agentrail .
@@ -203,7 +214,10 @@ release bundle.
 ## Repository Docs
 
 - [Integration guide for Claude Code / Codex / Cursor](./docs/integration-guide.md)
+- [Five-minute quick start](./docs/quick-start.md)
+- [Agent recipes for Claude Code, Codex, and Cursor](./docs/agent-recipes.md)
 - [OpenAPI contract](./docs/api/task-lifecycle.openapi.yaml)
+- [Railway production deployment runbook](./docs/deployment/railway-production.md)
 - [End-to-end demo](./docs/demo/agentrail-e2e-demo.md)
 - [Release hygiene checklist](./docs/security/release-hygiene.md)
 - [Claude Code and Codex lifecycle example](./examples/issue-to-pr-lifecycle.md)

@@ -33,6 +33,7 @@ export interface CreateServerOptions {
   authStore?: AgentAuthStore | null;
   taskLifecycleStore?: unknown;
   waitlistStore?: WaitlistStore | null;
+  publicBaseUrl?: string | null;
   fallbackMode?: boolean;
   emailWebhookUrl?: string | null;
   emailWebhookToken?: string | null;
@@ -54,15 +55,16 @@ export function createServer({
   authStore = null,
   taskLifecycleStore = null,
   waitlistStore = null,
+  publicBaseUrl = process.env.AGENTRAIL_PUBLIC_BASE_URL || null,
   fallbackMode = false,
   emailWebhookUrl = process.env.WAITLIST_EMAIL_WEBHOOK_URL || null,
   emailWebhookToken = process.env.WAITLIST_EMAIL_WEBHOOK_TOKEN || null,
   resendApiKey = process.env.RESEND_API_KEY || null,
-  resendFromEmail = process.env.RESEND_FROM_EMAIL || "AgentRail <waitlist@agentrail.dev>",
+  resendFromEmail = process.env.RESEND_FROM_EMAIL || "AgentRail <waitlist@agentrail.app>",
   sendgridApiKey = process.env.SENDGRID_API_KEY || null,
-  sendgridFromEmail = process.env.SENDGRID_FROM_EMAIL || "AgentRail <waitlist@agentrail.dev>",
+  sendgridFromEmail = process.env.SENDGRID_FROM_EMAIL || "AgentRail <waitlist@agentrail.app>",
   brevoApiKey = process.env.BREVO_API_KEY || null,
-  brevoFromEmail = process.env.BREVO_FROM_EMAIL || "waitlist@agentrail.dev",
+  brevoFromEmail = process.env.BREVO_FROM_EMAIL || "waitlist@agentrail.app",
   brevoFromName = process.env.BREVO_FROM_NAME || "AgentRail"
 }: CreateServerOptions) {
   const webhookStore = new TaskWebhookSubscriptionStore({ now });
@@ -81,6 +83,7 @@ export function createServer({
       authStore,
       taskLifecycleStore,
       waitlistStore: resolvedWaitlistStore,
+      publicBaseUrl,
       fallbackMode,
       emailWebhookUrl,
       emailWebhookToken,
@@ -127,18 +130,21 @@ async function routeRequest({
   authStore,
   taskLifecycleStore,
   waitlistStore,
+  publicBaseUrl = null,
   fallbackMode = false,
   emailWebhookUrl = null,
   emailWebhookToken = null,
   resendApiKey = null,
-  resendFromEmail = "AgentRail <waitlist@agentrail.dev>",
+  resendFromEmail = "AgentRail <waitlist@agentrail.app>",
   sendgridApiKey = null,
-  sendgridFromEmail = "AgentRail <waitlist@agentrail.dev>",
+  sendgridFromEmail = "AgentRail <waitlist@agentrail.app>",
   brevoApiKey = null,
-  brevoFromEmail = "waitlist@agentrail.dev",
+  brevoFromEmail = "waitlist@agentrail.app",
   brevoFromName = "AgentRail"
 }: RouteRequestOptions) {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const routePrefix = resolveRoutePrefix(publicBaseUrl);
+  const pathname = stripRoutePrefix(url.pathname, routePrefix);
 
   // Observability: intercept writeHead/end to capture status + emit log entry.
   const obs: { operation: string | null; agentId: string | null; taskId: string | null; idempotencyKey: string | null; provider?: string } = { operation: null, agentId: null, taskId: null, idempotencyKey: request.headers["idempotency-key"] as string ?? null };
@@ -164,7 +170,7 @@ async function routeRequest({
 
   // Fallback switch: return 503 on all task lifecycle routes so agents can detect
   // the condition and revert to direct GitHub / Paperclip APIs.
-  const isTaskRoute = /^\/(tasks|task-events|task-webhook-subscriptions|agent-api-keys)/.test(url.pathname);
+  const isTaskRoute = /^\/(tasks|task-events|task-webhook-subscriptions|agent-api-keys)/.test(pathname);
   if (fallbackMode && isTaskRoute) {
     obs.operation = obs.operation ?? "fallback_gate";
     response.writeHead(503, {
@@ -184,29 +190,34 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+  if (request.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
     serveStaticFile(response, path.join(__dirname, "..", "landing", "index-light.html"), "text/html");
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/health") {
+  if (request.method === "GET" && pathname === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ status: "ok" }));
+    response.end(JSON.stringify(buildHealthResponse({
+      request,
+      now: now ?? (() => new Date()),
+      publicBaseUrl,
+      routePrefix
+    })));
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/demo.mp4") {
+  if (request.method === "GET" && pathname === "/demo.mp4") {
     serveStaticFile(response, path.join(__dirname, "..", "docs", "demo", "agentrail-e2e-demo.mp4"), "video/mp4");
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/waitlist") {
+  if (request.method === "POST" && pathname === "/waitlist") {
     obs.operation = "waitlist_signup";
     await handleWaitlistSignup({ request, response, waitlistStore: waitlistStore as WaitlistStore, emailWebhookUrl, emailWebhookToken, resendApiKey, resendFromEmail, sendgridApiKey, sendgridFromEmail, brevoApiKey, brevoFromEmail, brevoFromName });
     return;
   }
 
-  if (request.method === "OPTIONS" && url.pathname === "/waitlist") {
+  if (request.method === "OPTIONS" && pathname === "/waitlist") {
     response.writeHead(204, {
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "POST, OPTIONS",
@@ -216,7 +227,7 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/agent-api-keys") {
+  if (request.method === "POST" && pathname === "/agent-api-keys") {
     if (!ensureAuthStore({ response, authStore })) {
       return;
     }
@@ -239,7 +250,7 @@ async function routeRequest({
 
   const rotateKeyMatch =
     request.method === "POST"
-      ? url.pathname.match(/^\/agent-api-keys\/(akey_[A-Za-z0-9]+)\/rotate$/)
+      ? pathname.match(/^\/agent-api-keys\/(akey_[A-Za-z0-9]+)\/rotate$/)
       : null;
   if (rotateKeyMatch) {
     if (!ensureAuthStore({ response, authStore })) {
@@ -268,7 +279,7 @@ async function routeRequest({
 
   const usageMatch =
     request.method === "GET"
-      ? url.pathname.match(/^\/agent-api-keys\/(akey_[A-Za-z0-9]+)\/usage$/)
+      ? pathname.match(/^\/agent-api-keys\/(akey_[A-Za-z0-9]+)\/usage$/)
       : null;
   if (usageMatch) {
     if (!ensureAuthStore({ response, authStore })) {
@@ -294,7 +305,7 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/tasks/mine") {
+  if (request.method === "GET" && pathname === "/tasks/mine") {
     obs.operation = "list_my_tasks";
     const principal = authorizeRoute({
       request,
@@ -313,7 +324,7 @@ async function routeRequest({
   }
 
   const taskDetailMatch =
-    request.method === "GET" ? url.pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)$/) : null;
+    request.method === "GET" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)$/) : null;
   if (taskDetailMatch) {
     obs.operation = "get_task";
     obs.taskId = taskDetailMatch[1];
@@ -338,7 +349,7 @@ async function routeRequest({
   }
 
   const submitMatch =
-    request.method === "POST" ? url.pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/submit$/) : null;
+    request.method === "POST" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/submit$/) : null;
   if (submitMatch) {
     obs.operation = "submit_task";
     obs.taskId = submitMatch[1];
@@ -363,7 +374,7 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/task-events/stream") {
+  if (request.method === "GET" && pathname === "/task-events/stream") {
     const principal = authorizeRoute({
       request,
       response,
@@ -379,7 +390,7 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/task-webhook-subscriptions") {
+  if (request.method === "GET" && pathname === "/task-webhook-subscriptions") {
     const principal = authorizeRoute({
       request,
       response,
@@ -395,7 +406,7 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/task-webhook-subscriptions") {
+  if (request.method === "POST" && pathname === "/task-webhook-subscriptions") {
     const principal = authorizeRoute({
       request,
       response,
@@ -411,13 +422,13 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/providers/circleci/webhooks") {
+  if (request.method === "POST" && pathname === "/providers/circleci/webhooks") {
     await handleCircleCiWebhook({ request, response, ciStatusAdapter });
     return;
   }
 
   const ciStatusMatch =
-    request.method === "GET" ? url.pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/ci-status$/) : null;
+    request.method === "GET" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/ci-status$/) : null;
   if (ciStatusMatch) {
     obs.operation = "get_task_ci_status";
     obs.taskId = ciStatusMatch[1];
@@ -443,7 +454,7 @@ async function routeRequest({
   }
 
   const reviewFeedbackMatch =
-    request.method === "GET" ? url.pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/review-feedback$/) : null;
+    request.method === "GET" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/review-feedback$/) : null;
   if (reviewFeedbackMatch) {
     obs.operation = "get_task_review_feedback";
     obs.taskId = reviewFeedbackMatch[1];
@@ -469,7 +480,7 @@ async function routeRequest({
   }
 
   const shipMatch =
-    request.method === "POST" ? url.pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/ship$/) : null;
+    request.method === "POST" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/ship$/) : null;
   if (shipMatch) {
     obs.operation = "ship_task";
     obs.taskId = shipMatch[1];
@@ -495,7 +506,7 @@ async function routeRequest({
   }
 
   const rollbackMatch =
-    request.method === "POST" ? url.pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/rollback$/) : null;
+    request.method === "POST" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/rollback$/) : null;
   if (rollbackMatch) {
     obs.operation = "rollback_task";
     obs.taskId = rollbackMatch[1];
@@ -523,7 +534,7 @@ async function routeRequest({
 
   const getWebhookSubscriptionMatch =
     request.method === "GET"
-      ? url.pathname.match(/^\/task-webhook-subscriptions\/(whsub_[A-Za-z0-9]+)$/)
+      ? pathname.match(/^\/task-webhook-subscriptions\/(whsub_[A-Za-z0-9]+)$/)
       : null;
   if (getWebhookSubscriptionMatch) {
     const principal = authorizeRoute({
@@ -547,7 +558,7 @@ async function routeRequest({
 
   const deleteMatch =
     request.method === "DELETE"
-      ? url.pathname.match(/^\/task-webhook-subscriptions\/(whsub_[A-Za-z0-9]+)$/)
+      ? pathname.match(/^\/task-webhook-subscriptions\/(whsub_[A-Za-z0-9]+)$/)
       : null;
   if (deleteMatch) {
     const principal = authorizeRoute({
@@ -1054,6 +1065,67 @@ function parseEventTypes(rawValue: string | null): Set<string> | undefined {
       .map((value) => value.trim())
       .filter(Boolean)
   );
+}
+
+function buildHealthResponse({
+  request,
+  now,
+  publicBaseUrl,
+  routePrefix
+}: {
+  request: http.IncomingMessage;
+  now: () => Date;
+  publicBaseUrl: string | null;
+  routePrefix: string;
+}) {
+  return {
+    status: "ok",
+    service: "agentrail-service",
+    publicBaseUrl: publicBaseUrl || inferRequestBaseUrl(request),
+    pathPrefix: routePrefix || null,
+    time: now().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime())
+  };
+}
+
+function resolveRoutePrefix(publicBaseUrl: string | null): string {
+  if (!publicBaseUrl) {
+    return "";
+  }
+
+  try {
+    const { pathname } = new URL(publicBaseUrl);
+    if (!pathname || pathname === "/") {
+      return "";
+    }
+
+    return pathname.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function stripRoutePrefix(pathname: string, routePrefix: string): string {
+  if (!routePrefix) {
+    return pathname;
+  }
+
+  if (pathname === routePrefix) {
+    return "/";
+  }
+
+  if (!pathname.startsWith(`${routePrefix}/`)) {
+    return pathname;
+  }
+
+  const stripped = pathname.slice(routePrefix.length);
+  return stripped || "/";
+}
+
+function inferRequestBaseUrl(request: http.IncomingMessage): string {
+  const protocol = request.headers["x-forwarded-proto"] || "http";
+  const host = request.headers.host || "127.0.0.1";
+  return `${protocol}://${host}`;
 }
 
 function ensureAuthStore({ response, authStore }: { response: http.ServerResponse; authStore: AgentAuthStore | null | undefined }) {

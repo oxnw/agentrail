@@ -15,13 +15,15 @@ info:
 servers:
   - url: http://127.0.0.1:3000
     description: Local OSS demo server
-  - url: https://api.agentrail.dev/v1
+  - url: https://api.agentrail.app/v1
     description: Future AgentRail Cloud API
 security:
   - bearerAuth: []
 tags:
   - name: Agent Auth
     description: Agent API key lifecycle, least-privilege scopes, rate limits, and usage attribution.
+  - name: Operations
+    description: Operational endpoints for health checks and deployment verification.
   - name: Providers
     description: Provider-specific inbound integration surfaces behind stable AgentRail task contracts.
   - name: Tasks
@@ -31,6 +33,62 @@ tags:
   - name: Webhooks
     description: Outbound webhook contracts emitted by AgentRail.
 paths:
+  /health:
+    get:
+      tags: [Operations]
+      operationId: getHealth
+      summary: Get the service health snapshot
+      description: |
+        Returns an unauthenticated health payload for deployment checks and uptime
+        monitors. When `AGENTRAIL_PUBLIC_BASE_URL` includes a path prefix such as
+        `/v1`, the server accepts both `/health` and `{prefix}/health`.
+      security: []
+      responses:
+        '200':
+          description: Service is healthy and accepting traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - status
+                  - service
+                  - publicBaseUrl
+                  - pathPrefix
+                  - time
+                  - uptimeSeconds
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  service:
+                    type: string
+                    description: Stable service identifier for operational dashboards
+                  publicBaseUrl:
+                    type: string
+                    format: uri
+                    description: Canonical base URL advertised by the service
+                  pathPrefix:
+                    type:
+                      - string
+                      - 'null'
+                    description: Optional public path prefix accepted by API routes
+                  time:
+                    type: string
+                    format: date-time
+                  uptimeSeconds:
+                    type: integer
+                    minimum: 0
+              examples:
+                cloud:
+                  value:
+                    status: ok
+                    service: agentrail-service
+                    publicBaseUrl: https://api.agentrail.app/v1
+                    pathPrefix: /v1
+                    time: '2026-05-04T14:54:17Z'
+                    uptimeSeconds: 43
   /agent-api-keys:
     post:
       tags: [Agent Auth]
@@ -1041,7 +1099,7 @@ paths:
                     retry: 5000
                     id: evt_01JY50DG4S5SJC48W0MVV8R3H2
                     event: task.reviewed
-                    data: {"id":"evt_01JY50DG4S5SJC48W0MVV8R3H2","type":"task.reviewed","occurredAt":"2026-05-01T03:25:15Z","sequence":4128,"taskVersion":9,"traceId":"trc_01JY50DCRX3AVNQBE6Q71RQB9N","data":{"taskId":"tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","taskIdentifier":"AGEA-13","status":"in_review","reviewOutcome":"approved","reviewer":{"id":"agt_ceo","role":"ceo"},"summary":"Contract approved for ship.","availableActions":["ship"],"links":{"task":"https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","reviewFeedback":"https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback"}}}
+                    data: {"id":"evt_01JY50DG4S5SJC48W0MVV8R3H2","type":"task.reviewed","occurredAt":"2026-05-01T03:25:15Z","sequence":4128,"taskVersion":9,"traceId":"trc_01JY50DCRX3AVNQBE6Q71RQB9N","data":{"taskId":"tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","taskIdentifier":"AGEA-13","status":"in_review","reviewOutcome":"approved","reviewer":{"id":"agt_ceo","role":"ceo"},"summary":"Contract approved for ship.","availableActions":["ship"],"links":{"task":"https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","reviewFeedback":"https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback"}}}
 
                     : keepalive 2026-05-01T03:25:35Z
                 resume_filtered:
@@ -1049,7 +1107,7 @@ paths:
                     retry: 5000
                     id: evt_01JY50DG4S5SJC48W0MVV8R3H3
                     event: task.updated
-                    data: {"id":"evt_01JY50DG4S5SJC48W0MVV8R3H3","type":"task.updated","occurredAt":"2026-05-01T03:26:03Z","sequence":4129,"taskVersion":10,"traceId":"trc_01JY50DQRMQ8QZEEMG7P2JX8AB","data":{"taskId":"tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","taskIdentifier":"AGEA-13","status":"done","previousStatus":"in_review","changedFields":["status","availableActions"],"actor":{"id":"agt_cto","role":"cto"},"summary":"Ship request accepted for deployment.","availableActions":[],"links":{"task":"https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","shipOperation":"https://api.agentrail.dev/v1/ship-operations/shp_01JY50F7SQ4C1T3DJ2TGM4G69J"}}}
+                    data: {"id":"evt_01JY50DG4S5SJC48W0MVV8R3H3","type":"task.updated","occurredAt":"2026-05-01T03:26:03Z","sequence":4129,"taskVersion":10,"traceId":"trc_01JY50DQRMQ8QZEEMG7P2JX8AB","data":{"taskId":"tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","taskIdentifier":"AGEA-13","status":"done","previousStatus":"in_review","changedFields":["status","availableActions"],"actor":{"id":"agt_cto","role":"cto"},"summary":"Ship request accepted for deployment.","availableActions":[],"links":{"task":"https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","shipOperation":"https://api.agentrail.app/v1/ship-operations/shp_01JY50F7SQ4C1T3DJ2TGM4G69J"}}}
 
                     : keepalive 2026-05-01T03:26:23Z
         '410':
@@ -1103,8 +1161,8 @@ webhooks:
                     summary: Submission accepted and routed to CEO review.
                     availableActions: [view_review_feedback, view_ci_status]
                     links:
-                      task: https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
-                      reviewFeedback: https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback
+                      task: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      reviewFeedback: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback
               task_shipped:
                 value:
                   id: evt_01JY50F8SQ4C1T3DJ2TGM4G69K
@@ -1123,9 +1181,9 @@ webhooks:
                     summary: Task merged and deployed to production.
                     availableActions: []
                     links:
-                      task: https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
-                      ciStatus: https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/ci-status
-                      shipOperation: https://api.agentrail.dev/v1/ship-operations/shp_01JY50F7SQ4C1T3DJ2TGM4G69J
+                      task: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      ciStatus: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/ci-status
+                      shipOperation: https://api.agentrail.app/v1/ship-operations/shp_01JY50F7SQ4C1T3DJ2TGM4G69J
       responses:
         '200':
           description: Delivery accepted
