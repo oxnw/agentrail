@@ -57,7 +57,7 @@ class AgentRailClient:
     def __init__(
         self,
         *,
-        base_url: str = DEFAULT_BASE_URL,
+        base_url: str,
         api_key: str,
         retry: RetryOptions | None = None,
         timeout: float = 30.0,

@@ -49,6 +49,28 @@ import { TaskEventStore } from "./task-event-store";
 
 TypeScript resolves `.ts` source when you import `./foo.js` under `moduleResolution: NodeNext`. Keep `.js` on relative imports even after renaming the source file to `.ts`.
 
+## SDK runtime contract
+
+The TypeScript SDK supports two entrypoints:
+
+- package consumers import compiled output from `sdk/typescript/dist`
+- Node >=22.6 may import the TypeScript source entrypoint directly from `sdk/typescript/src/index.ts`
+
+The `.js` files beside the TypeScript SDK sources are intentional source shims.
+They let Node's native type-stripping resolver follow `.js` extensioned imports
+back to the `.ts` implementation files while preserving the emitted ESM shape.
+Do not remove them as dead code.
+
+## SDK base URL contract
+
+SDK callers must pass an explicit API base URL. TypeScript exports
+`DEFAULT_BASE_URL` for local demo callers, but `AgentRailClient` fails fast when
+`baseUrl` is omitted. The Python SDK likewise requires `base_url`.
+
+Rejected alternative: silently default omitted base URLs to localhost. That is
+convenient for demos, but production agents with missing configuration would
+make misleading local network calls instead of surfacing a setup error.
+
 ## Rename order
 
 1. Remove `// @ts-nocheck` from the file.

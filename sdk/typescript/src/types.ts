@@ -508,7 +508,7 @@ export type TaskLifecycleEvent =
 // ── Client options ─────────────────────────────────────────────────
 
 export interface AgentRailClientOptions {
-  baseUrl?: string;
+  baseUrl: string;
   apiKey: string;
   retry?: RetryOptions;
 }
