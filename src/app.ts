@@ -319,7 +319,7 @@ async function routeRequest({
     }
     obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
 
-    handleListMyTasks({ response, url, taskLifecycleStore });
+    handleListMyTasks({ response, url, taskLifecycleStore, principal });
     return;
   }
 
@@ -586,13 +586,19 @@ async function routeRequest({
   response.end(JSON.stringify({ error: { code: "not_found", message: "Not found", details: {} } }));
 }
 
+interface PrincipalLike {
+  agent?: { id?: string } | null;
+  keyId?: string;
+}
+
 interface ListMyTasksOptions {
   response: http.ServerResponse;
   url: URL;
   taskLifecycleStore: unknown;
+  principal?: PrincipalLike | null;
 }
 
-function handleListMyTasks({ response, url, taskLifecycleStore }: ListMyTasksOptions) {
+async function handleListMyTasks({ response, url, taskLifecycleStore, principal }: ListMyTasksOptions) {
   if (!taskLifecycleStore || typeof (taskLifecycleStore as { listMyTasks?: unknown }).listMyTasks !== "function") {
     writeError(response, 404, "not_found", "Task source not found.", {
       availableActions: []
@@ -601,11 +607,17 @@ function handleListMyTasks({ response, url, taskLifecycleStore }: ListMyTasksOpt
   }
 
   try {
-    const body = (taskLifecycleStore as { listMyTasks: (opts: Record<string, unknown>) => unknown }).listMyTasks({
+    const store = taskLifecycleStore as { listMyTasks: (opts: Record<string, unknown>) => Promise<unknown> | unknown };
+    const opts: Record<string, unknown> = {
       status: url.searchParams.get("status") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
-      cursor: url.searchParams.get("cursor") ?? undefined
-    });
+      cursor: url.searchParams.get("cursor") ?? undefined,
+    };
+    if (principal != null) {
+      // Pass user context for identity-aware task stores (e.g. GitHub assignee resolution)
+      opts.principal = principal;
+    }
+    const body = await store.listMyTasks(opts);
     writeJson(response, 200, body);
   } catch (error) {
     if (error instanceof TaskLifecycleError) {
@@ -623,7 +635,7 @@ interface GetTaskOptions {
   taskId: string;
 }
 
-function handleGetTask({ response, taskLifecycleStore, taskId }: GetTaskOptions) {
+async function handleGetTask({ response, taskLifecycleStore, taskId }: GetTaskOptions) {
   if (!taskLifecycleStore || typeof (taskLifecycleStore as { getTask?: unknown }).getTask !== "function") {
     writeError(response, 404, "not_found", "Task source not found.", {
       availableActions: ["list_my_tasks"]
@@ -632,7 +644,7 @@ function handleGetTask({ response, taskLifecycleStore, taskId }: GetTaskOptions)
   }
 
   try {
-    const body = (taskLifecycleStore as { getTask: (id: string) => unknown }).getTask(taskId);
+    const body = await (taskLifecycleStore as { getTask: (id: string) => Promise<unknown> | unknown }).getTask(taskId);
     writeJson(response, 200, body);
   } catch (error) {
     if (error instanceof TaskLifecycleError) {
@@ -890,6 +902,8 @@ async function handleShipTask({ request, response, taskLifecycleStore, taskId }:
 
   try {
     const payload = await readJsonBody(request);
+    await assertShipAvailable(taskLifecycleStore, taskId);
+
     const body = await (taskLifecycleStore as { shipTask: (taskId: string, payload: unknown, key: string | undefined) => Promise<unknown> }).shipTask(
       taskId,
       payload,
@@ -903,6 +917,28 @@ async function handleShipTask({ request, response, taskLifecycleStore, taskId }:
     }
 
     throw error;
+  }
+}
+
+async function assertShipAvailable(taskLifecycleStore: unknown, taskId: string) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { getTask?: unknown }).getTask !== "function") {
+    return;
+  }
+
+  const taskBody = await (taskLifecycleStore as { getTask: (id: string) => Promise<any> | any }).getTask(taskId);
+  const availableActions = Array.isArray(taskBody?.data?.availableActions)
+    ? taskBody.data.availableActions
+    : Array.isArray(taskBody?.availableActions)
+      ? taskBody.availableActions
+      : [];
+  const currentStatus = taskBody?.data?.status ?? null;
+
+  if (!availableActions.includes("ship")) {
+    throw new TaskLifecycleError(409, "conflict", "Task is not ready to ship.", {
+      taskId,
+      currentStatus,
+      availableActions: availableActions.length > 0 ? availableActions : ["get_task"]
+    });
   }
 }
 
@@ -924,19 +960,28 @@ async function handleRollbackTask({ request, response, taskLifecycleStore, rollb
 
   try {
     const payload = await readJsonBody(request);
+    const idempotencyKey = request.headers["idempotency-key"] as string | undefined;
+
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"]
+      });
+    }
+
+    await assertRollbackAvailable(taskLifecycleStore, taskId);
 
     let body: unknown;
     if (rollbackAdapter && typeof rollbackAdapter.rollbackTask === "function") {
       body = await rollbackAdapter.rollbackTask(
         taskId,
         payload,
-        request.headers["idempotency-key"] as string
+        idempotencyKey
       );
     } else {
       body = await (taskLifecycleStore as { rollbackTask: (taskId: string, payload: unknown, key: string | undefined) => Promise<unknown> }).rollbackTask(
         taskId,
         payload,
-        request.headers["idempotency-key"] as string | undefined
+        idempotencyKey
       );
     }
     writeJson(response, 202, body);
@@ -952,6 +997,28 @@ async function handleRollbackTask({ request, response, taskLifecycleStore, rollb
     }
 
     throw error;
+  }
+}
+
+async function assertRollbackAvailable(taskLifecycleStore: unknown, taskId: string) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { getTask?: unknown }).getTask !== "function") {
+    return;
+  }
+
+  const taskBody = await (taskLifecycleStore as { getTask: (id: string) => Promise<any> | any }).getTask(taskId);
+  const availableActions = Array.isArray(taskBody?.data?.availableActions)
+    ? taskBody.data.availableActions
+    : Array.isArray(taskBody?.availableActions)
+      ? taskBody.availableActions
+      : [];
+  const currentStatus = taskBody?.data?.status ?? null;
+
+  if (!availableActions.includes("rollback") && currentStatus !== "rolled_back") {
+    throw new TaskLifecycleError(409, "conflict", "Task is not in a shipped state.", {
+      taskId,
+      currentStatus,
+      availableActions: availableActions.length > 0 ? availableActions : ["get_task"]
+    });
   }
 }
 

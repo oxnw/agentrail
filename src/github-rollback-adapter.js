@@ -17,7 +17,8 @@ export class GitHubRollbackAdapter {
     taskSources = {},
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
-    apiBaseUrl = DEFAULT_GITHUB_API_BASE_URL
+    apiBaseUrl = DEFAULT_GITHUB_API_BASE_URL,
+    delegate = null,
   } = {}) {
     if (typeof fetch !== "function") {
       throw new TypeError("GitHubRollbackAdapter requires a fetch implementation.");
@@ -27,11 +28,37 @@ export class GitHubRollbackAdapter {
     this.githubToken = githubToken;
     this.fetch = fetch;
     this.apiBaseUrl = apiBaseUrl.replace(/\/$/, "");
+    this.delegate = delegate;
+    this.idempotencyRecords = new Map();
   }
 
   async rollbackTask(taskId, payload, idempotencyKey) {
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"]
+      });
+    }
+
+    const key = `rollback:${idempotencyKey}`;
+    const fingerprint = JSON.stringify(payload);
+    const cached = this.idempotencyRecords.get(key);
+    if (cached) {
+      if (cached.fingerprint !== fingerprint) {
+        throw new TaskLifecycleError(
+          409,
+          "conflict",
+          "Idempotency-Key has already been used with a different request payload.",
+          { idempotencyKey, availableActions: ["retry"] }
+        );
+      }
+      return structuredClone(cached.response);
+    }
+
     const source = this.lookupTaskSource(taskId);
     if (!source) {
+      if (this.delegate && typeof this.delegate.rollbackTask === "function") {
+        return this.delegate.rollbackTask(taskId, payload, idempotencyKey);
+      }
       throw new TaskLifecycleError(404, "not_found", "Task source not found for rollback.", {
         availableActions: ["list_my_tasks"]
       });
@@ -53,7 +80,7 @@ export class GitHubRollbackAdapter {
       await this.reopenIssue(source);
     }
 
-    return {
+    const response = {
       data: {
         taskId,
         rollbackPrUrl: prResponse.html_url,
@@ -64,6 +91,9 @@ export class GitHubRollbackAdapter {
       },
       availableActions: ["get_task"]
     };
+
+    this.idempotencyRecords.set(key, { fingerprint, response: structuredClone(response) });
+    return response;
   }
 
   async createRevertCommit(source) {

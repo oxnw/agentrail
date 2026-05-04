@@ -386,6 +386,27 @@ export interface TaskShipResponse {
   availableActions: string[];
 }
 
+// ── Rollback ───────────────────────────────────────────────────────
+
+export interface TaskRollbackRequest {
+  reason?: string | null;
+}
+
+export interface TaskRollbackData {
+  taskId: string;
+  rollbackPrUrl: string;
+  rollbackPrNumber: number;
+  newHeadSha: string;
+  revertedCommitSha: string;
+  status: "rollback_pr_created" | "rolled_back";
+  availableActions: string[];
+}
+
+export interface TaskRollbackResponse {
+  data: TaskRollbackData;
+  availableActions: string[];
+}
+
 // ── Webhooks ───────────────────────────────────────────────────────
 
 export interface WebhookFilters {

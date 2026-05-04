@@ -1856,6 +1856,16 @@ components:
           format: date-time
         availableActions:
           $ref: '#/components/schemas/AvailableActions'
+        latestSubmission:
+          type: object
+          additionalProperties: false
+          required: [prUrl, prNumber]
+          properties:
+            prUrl:
+              type: [string, 'null']
+              format: uri
+            prNumber:
+              type: [integer, 'null']
     TaskDetailResponse:
       type: object
       additionalProperties: false
@@ -1923,6 +1933,16 @@ components:
             status:
               type: string
               enum: [in_review]
+            prUrl:
+              type: string
+              format: uri
+            prNumber:
+              type: integer
+            action:
+              type: string
+              enum: [created, existing]
+            idempotencyKey:
+              type: string
             reviewRoute:
               type: object
               additionalProperties: false
@@ -1943,6 +1963,22 @@ components:
             acceptedAt:
               type: string
               format: date-time
+            warnings:
+              type: array
+              maxItems: 10
+              items:
+                type: object
+                additionalProperties: false
+                required: [code, message]
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+                  reviewers:
+                    type: array
+                    items:
+                      type: string
             availableActions:
               $ref: '#/components/schemas/AvailableActions'
         availableActions:

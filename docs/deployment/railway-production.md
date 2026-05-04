@@ -200,6 +200,35 @@ old GitHub commit will still return `{"status":"ok"}` at `/health` and
 
 After redeploy, rerun the verification commands above.
 
+### Railway deployment is stuck in `Queued`
+
+First confirm GitHub is ready:
+
+```bash
+gh pr view 2 --json state,mergedAt,mergeCommit,statusCheckRollup
+git ls-remote origin refs/heads/main
+```
+
+If PR #2 is merged, CI is green, and `main` points at the merge commit, then the
+remaining wait is inside Railway. Railway deployments enter the queue before
+`Building`; on limited/free capacity Railway may queue new deployments during
+peak periods. If the queued deployment does not move to `Building` after 10-15
+minutes:
+
+1. Open the queued deployment in Railway and check whether it shows a specific
+   message, such as capacity/peak-hours queuing or a GitHub source issue.
+2. If there is no useful message and the deployment remains queued, use Railway's
+   deployment menu to cancel/abort that queued deployment.
+3. Trigger a fresh redeploy of the latest `main` commit.
+4. After it becomes active, verify:
+
+```bash
+curl -sS https://api.agentrail.app/v1/health
+```
+
+Expected response includes `publicBaseUrl: "https://api.agentrail.app/v1"` and
+`pathPrefix: "/v1"`.
+
 ## Rollback
 
 If the production deploy is unhealthy:
@@ -212,4 +241,6 @@ If the production deploy is unhealthy:
 ## References
 
 - Railway custom domains: https://docs.railway.com/networking/domains/working-with-domains
+- Railway deployments: https://docs.railway.com/reference/deployments
+- Railway deployment actions: https://docs.railway.com/guides/deployment-actions
 - Cloudflare DNS records: https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/

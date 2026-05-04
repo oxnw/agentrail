@@ -385,6 +385,19 @@ class AgentShipCycleDemoStore {
     });
   }
 
+  recordSubmission(taskId, _submissionData) {
+    const task = this.getExistingTask(taskId);
+    task.submissions.push({
+      id: _submissionData.submissionId,
+      prUrl: _submissionData.prUrl ?? null,
+      prNumber: _submissionData.prNumber ?? null,
+      summary: _submissionData.summary ?? null,
+      submittedAt: _submissionData.acceptedAt ?? this.now().toISOString(),
+    });
+    task.latestSubmissionId = _submissionData.submissionId;
+    task.updatedAt = this.now().toISOString();
+  }
+
   async appendTaskShippedEvent(task: any, _opts?: Record<string, unknown>) {
     if (!this.eventStore) {
       return;
@@ -490,6 +503,7 @@ function toTaskSummary(task) {
 }
 
 function toTaskDetail(task) {
+  const latestSubmission = task.submissions[task.submissions.length - 1] ?? null;
   return {
     id: task.id,
     identifier: task.identifier,
@@ -502,7 +516,8 @@ function toTaskDetail(task) {
     links: task.links,
     context: task.context,
     updatedAt: task.updatedAt,
-    availableActions: task.availableActions
+    availableActions: task.availableActions,
+    ...(latestSubmission ? { latestSubmission: { prUrl: latestSubmission.prUrl, prNumber: latestSubmission.prNumber } } : {})
   };
 }
 
