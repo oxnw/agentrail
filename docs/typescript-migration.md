@@ -8,9 +8,9 @@ This document covers the incremental migration of the AgentRail root service fro
 |-------|-------|--------|
 | 0 – Tooling baseline | `tsconfig.json`, `npm run typecheck`, CI gate | ✅ Done |
 | 1 – Shared utilities | `task-event-store`, `structured-logger`, `task-lifecycle-errors`, `multi-ci-status-adapter` | ✅ Done |
-| 2 – Stateful stores | `waitlist-store`, `task-webhook-store`, `task-webhook-delivery-worker`, `agent-auth-store` | 🔜 [AGEA-78](/AGEA/issues/AGEA-78) |
+| 2 – Stateful stores | `waitlist-store`, `task-webhook-store`, `task-webhook-delivery-worker`, `agent-auth-store` | ✅ Done |
 | 3 – Provider adapters | `github-*-adapter`, `circleci-status-adapter`, `agent-ship-cycle-demo` | 🔜 [AGEA-79](/AGEA/issues/AGEA-79) |
-| 4 – HTTP boundary | `app.js`, `server.js`, endpoint tests | 🔜 Blocked on Phases 1–3 |
+| 4 – HTTP boundary | `app.js`, `server.js`, endpoint tests | ✅ Done |
 | 5 – Runtime finalization | `tsc` compile to `dist/`, final CI cleanup | 🔜 Blocked on Phase 4 |
 
 ## Current `// @ts-nocheck` suppressions
@@ -20,7 +20,6 @@ Files suppressed in Phase 0 (to be cleaned up in the phases above):
 **src/**
 - `src/agent-auth-store.js` → Phase 2
 - `src/agent-ship-cycle-demo.js` → Phase 3
-- `src/server.js` → Phase 4
 - `src/task-event-store.js` → Phase 1
 - `src/task-webhook-store.js` → Phase 2
 
