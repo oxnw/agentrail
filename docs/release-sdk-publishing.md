@@ -136,6 +136,22 @@ For a first publish where `@agentrail/sdk` does not exist yet, create the
 granular token with access to the `@agentrail` scope or organization rather than
 access to only a pre-existing package.
 
+### Package Name vs Scope Ownership
+
+`@agentrail/sdk` has two parts:
+
+- `agentrail` is the npm scope, which must map to an npm user or organization
+  we control.
+- `sdk` is the package name inside that scope.
+
+An unpublished package can still be blocked if the scope is unavailable. In this
+case, `@agentrail/sdk` is not live on npm, but publishing it still requires
+control of the `agentrail` npm user or organization scope.
+
+npm documents this model in its [scope documentation][npm-scope-docs]: each npm
+user or organization has a matching scope, and only that account can add
+packages in that scope.
+
 ## npm Scope Creation Denied
 
 If npm denies creation of the `agentrail` organization, the planned
@@ -158,3 +174,5 @@ Available paths:
 Do not use the unscoped `agentrail` npm name unless ownership is transferred to
 AgentRail. The public npm registry already has an `agentrail` package owned by
 someone else.
+
+[npm-scope-docs]: https://docs.npmjs.com/about-scopes/
