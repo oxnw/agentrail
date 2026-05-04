@@ -4,6 +4,7 @@ import { createAgentShipCycleDemoStore } from "./agent-ship-cycle-demo.js";
 import { createServer } from "./app.js";
 import { CircleCiStatusAdapter } from "./circleci-status-adapter.js";
 import { GitHubActionsCiAdapter } from "./github-actions-ci-adapter.js";
+import { GitHubRollbackAdapter } from "./github-rollback-adapter.js";
 import { GitHubSubmitAdapter } from "./github-submit-adapter.js";
 import { MultiCiStatusAdapter } from "./multi-ci-status-adapter.js";
 import { TaskEventStore } from "./task-event-store.js";
@@ -32,6 +33,7 @@ const taskSourcesJson = process.env.AGENTRAIL_TASK_SOURCES || null;
 let taskSources: Map<string, unknown> | null = null;
 
 let taskLifecycleStore: GitHubSubmitAdapter | ReturnType<typeof createAgentShipCycleDemoStore> = demoStore;
+let rollbackAdapter: GitHubRollbackAdapter | null = null;
 if (taskSourcesJson) {
   try {
     const parsed = JSON.parse(taskSourcesJson);
@@ -42,14 +44,18 @@ if (taskSourcesJson) {
         githubToken,
         delegate: demoStore,
       });
-      // Delegate non-submit methods back to demo store
+      // Delegate non-submit / non-rollback methods back to demo store
       const storeWithFallback = taskLifecycleStore as unknown as ReturnType<typeof createAgentShipCycleDemoStore>;
       storeWithFallback.listMyTasks = demoStore.listMyTasks.bind(demoStore);
       storeWithFallback.getTask = demoStore.getTask.bind(demoStore);
       storeWithFallback.getTaskCiStatus = demoStore.getTaskCiStatus.bind(demoStore);
       storeWithFallback.getTaskReviewFeedback = demoStore.getTaskReviewFeedback.bind(demoStore);
       storeWithFallback.shipTask = demoStore.shipTask.bind(demoStore);
-      storeWithFallback.rollbackTask = demoStore.rollbackTask.bind(demoStore);
+
+      rollbackAdapter = new GitHubRollbackAdapter({
+        taskSources,
+        githubToken,
+      });
     }
   } catch {
     process.stderr.write("Warning: AGENTRAIL_TASK_SOURCES is not valid JSON; using demo store.\n");
@@ -68,6 +74,7 @@ const server = createServer({
   taskLifecycleStore,
   ciStatusAdapter,
   reviewFeedbackAdapter: demoStore,
+  rollbackAdapter,
   now,
   fallbackMode,
 });
