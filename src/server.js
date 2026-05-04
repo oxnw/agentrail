@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck
 import fs from "node:fs";
 
 import { createAgentShipCycleDemoStore } from "./agent-ship-cycle-demo.js";

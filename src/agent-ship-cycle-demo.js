@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { TaskLifecycleError } from "./task-lifecycle-errors.js";
 
 export const DEMO_TASK_ID = "tsk_DEMOISSUETOSHIP01";

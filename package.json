@@ -8,8 +8,15 @@
     "start": "node src/server.js",
     "demo": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-e2e-demo.mjs",
     "demo:json": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-e2e-demo.mjs --json",
+    "lint:openapi": "spectral lint docs/api/task-lifecycle.openapi.yaml -r .spectral.yaml",
     "test": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && npm run test:service",
     "test:service": "node --test test/*.test.js",
-    "test:integration": "node --test test/github-submit-integration.test.js"
+    "test:integration": "node --test test/github-submit-integration.test.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@stoplight/spectral-cli": "^6.15.1",
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
   }
 }

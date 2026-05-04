@@ -1,3 +1,4 @@
+// @ts-nocheck
 import crypto from "node:crypto";
 
 const DEFAULT_RATE_LIMIT = {

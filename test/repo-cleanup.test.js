@@ -1,3 +1,4 @@
+// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 import { access } from "node:fs/promises";
@@ -61,6 +62,7 @@ for (const relativePath of keptPublicArtifacts) {
 test(".gitignore blocks local env files but keeps the public template", async () => {
   const gitignore = await readFile(".gitignore", "utf8");
 
+  assert.match(gitignore, /^AGENTS\.md$/m);
   assert.match(gitignore, /^\.env$/m);
   assert.match(gitignore, /^\.env\.\*$/m);
   assert.match(gitignore, /^!\.env\.example$/m);

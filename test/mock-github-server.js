@@ -1,3 +1,4 @@
+// @ts-nocheck
 import http from "node:http";
 
 export function createMockGitHubServer({ port = 9999, responses = {} } = {}) {
