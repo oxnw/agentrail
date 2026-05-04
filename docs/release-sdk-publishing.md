@@ -120,3 +120,18 @@ publish access and bypasses 2FA for write actions. Then rerun only the failed
 GitHub Actions jobs for the release run. Do not rerun the full workflow after
 PyPI has already published the same version, because PyPI rejects duplicate
 files for an existing release.
+
+## npm Scope Publish Failure
+
+If the npm publish job fails with:
+
+`404 Not Found - PUT https://registry.npmjs.org/@agentrail%2fsdk`
+
+confirm that the `agentrail` scope exists on npm as either a user scope or an
+npm organization, and that the token owner can publish packages to that scope.
+For an organization-scoped package, npm requires the organization to exist
+before publishing packages under `@agentrail/*`.
+
+For a first publish where `@agentrail/sdk` does not exist yet, create the
+granular token with access to the `@agentrail` scope or organization rather than
+access to only a pre-existing package.
