@@ -1,0 +1,49 @@
+{
+  "$schema": "./node_modules/@openapitools/openapi-generator-cli/config.schema.json",
+  "spaces": 2,
+  "generator-cli": {
+    "version": "7.14.0",
+    "generators": {
+      "task-lifecycle-typescript": {
+        "generatorName": "typescript-fetch",
+        "glob": "docs/api/task-lifecycle.openapi.yaml",
+        "output": "#{cwd}/generated/sdk/typescript",
+        "additionalProperties": {
+          "npmName": "@agentrail/task-lifecycle-sdk",
+          "npmVersion": "0.1.0",
+          "supportsES6": true,
+          "stringEnums": true,
+          "useSingleRequestParameter": true,
+          "prefixParameterInterfaces": true,
+          "modelPropertyNaming": "original",
+          "enumPropertyNaming": "original"
+        },
+        "globalProperty": {
+          "apiDocs": false,
+          "modelDocs": false,
+          "apiTests": false,
+          "modelTests": false
+        }
+      },
+      "task-lifecycle-python": {
+        "generatorName": "python",
+        "glob": "docs/api/task-lifecycle.openapi.yaml",
+        "output": "#{cwd}/generated/sdk/python",
+        "additionalProperties": {
+          "packageName": "agentrail_task_lifecycle",
+          "projectName": "agentrail-task-lifecycle-sdk",
+          "packageVersion": "0.1.0",
+          "hideGenerationTimestamp": true,
+          "generateSourceCodeOnly": true,
+          "library": "urllib3"
+        },
+        "globalProperty": {
+          "apiDocs": false,
+          "modelDocs": false,
+          "apiTests": false,
+          "modelTests": false
+        }
+      }
+    }
+  }
+}

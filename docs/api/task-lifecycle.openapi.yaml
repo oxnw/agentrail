@@ -1,0 +1,2543 @@
+openapi: 3.1.0
+info:
+  title: AgentRail Task Lifecycle API
+  version: 0.3.0
+  summary: Agent-first API for issue -> PR -> CI -> review -> ship
+  license:
+    name: Apache 2.0
+    identifier: Apache-2.0
+  description: |
+    Contract for agent-native developer workflow operations.
+    Response shapes are optimized for token efficiency and include `availableActions`
+    so agents can avoid follow-up calls to discover next steps.
+    Push delivery uses a shared event envelope across webhooks and event streams so
+    SDKs can consume one discriminated union regardless of transport.
+servers:
+  - url: http://127.0.0.1:3000
+    description: Local OSS demo server
+  - url: https://api.agentrail.dev/v1
+    description: Future AgentRail Cloud API
+security:
+  - bearerAuth: []
+tags:
+  - name: Agent Auth
+    description: Agent API key lifecycle, least-privilege scopes, rate limits, and usage attribution.
+  - name: Providers
+    description: Provider-specific inbound integration surfaces behind stable AgentRail task contracts.
+  - name: Tasks
+    description: Pull-based task lifecycle operations for assigned work, review state, CI, and shipping.
+  - name: Task Events
+    description: Push-based task lifecycle delivery primitives for webhooks and event streams.
+  - name: Webhooks
+    description: Outbound webhook contracts emitted by AgentRail.
+paths:
+  /agent-api-keys:
+    post:
+      tags: [Agent Auth]
+      operationId: createAgentApiKey
+      summary: Create an API key for one agent identity
+      description: |
+        Issues a scoped opaque bearer key for one agent identity.
+        Safe to retry with the same `Idempotency-Key` and identical request body.
+        Reusing the key with a different payload returns `409 conflict`.
+        The first bootstrap request MAY be unauthenticated only when it creates an
+        `auth:admin` key; later calls require an existing key with `auth:admin`.
+        The `apiKey` value is returned only by create and rotate responses.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentApiKeyCreateRequest'
+            examples:
+              ci_reader:
+                value:
+                  agent:
+                    id: agt_ci_reader
+                    displayName: CI Reader
+                    role: platform_ci
+                    externalIdentities:
+                      - provider: github
+                        subject: agentrail-ci-reader
+                  scopes: ['ci:read']
+                  rateLimit:
+                    windowSeconds: 60
+                    maxRequests: 600
+                  expiresAt: '2026-06-01T00:00:00Z'
+      responses:
+        '201':
+          description: Agent API key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentApiKeyResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      id: akey_01JY52RRF5PAGHT5DCZXJ4N2DG
+                      apiKey: ar_live_example_created_once
+                      agent:
+                        id: agt_ci_reader
+                        displayName: CI Reader
+                        role: platform_ci
+                        externalIdentities:
+                          - provider: github
+                            subject: agentrail-ci-reader
+                      scopes: ['ci:read']
+                      rateLimit:
+                        windowSeconds: 60
+                        maxRequests: 600
+                      status: active
+                      createdAt: '2026-05-01T04:30:00Z'
+                      expiresAt: '2026-06-01T00:00:00Z'
+                      rotatedFromKeyId: null
+                      availableActions: [rotate, view_usage]
+                    availableActions: [rotate, view_usage]
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '409':
+          description: Idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                idempotency_mismatch:
+                  value:
+                    error:
+                      code: conflict
+                      message: Idempotency-Key has already been used with a different request payload.
+                      details:
+                        idempotencyKey: agent-key-AGEA-7-v1
+                        availableActions: [retry]
+  /agent-api-keys/{keyId}/rotate:
+    post:
+      tags: [Agent Auth]
+      operationId: rotateAgentApiKey
+      summary: Rotate one agent API key
+      description: |
+        Creates a replacement key for the same agent identity, scopes, and rate
+        limit, then immediately invalidates the previous key. Safe to retry with
+        the same `Idempotency-Key` and identical request body.
+      parameters:
+        - $ref: '#/components/parameters/AgentApiKeyIdPath'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentApiKeyRotateRequest'
+            examples:
+              default:
+                value:
+                  expiresAt: '2026-07-01T00:00:00Z'
+      responses:
+        '201':
+          description: Replacement key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentApiKeyResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      id: akey_01JY52WNA3Z1W3HPJSK3V7S3M2
+                      apiKey: ar_live_example_replacement
+                      agent:
+                        id: agt_ci_reader
+                        displayName: CI Reader
+                        role: platform_ci
+                        externalIdentities:
+                          - provider: github
+                            subject: agentrail-ci-reader
+                      scopes: ['ci:read']
+                      rateLimit:
+                        windowSeconds: 60
+                        maxRequests: 600
+                      status: active
+                      createdAt: '2026-05-01T04:45:00Z'
+                      expiresAt: '2026-07-01T00:00:00Z'
+                      rotatedFromKeyId: akey_01JY52RRF5PAGHT5DCZXJ4N2DG
+                      availableActions: [rotate, view_usage]
+                    availableActions: [rotate, view_usage]
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '409':
+          description: Key is inactive or idempotency payload changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                inactive:
+                  value:
+                    error:
+                      code: conflict
+                      message: Agent API key is not active.
+                      details:
+                        keyId: akey_01JY52RRF5PAGHT5DCZXJ4N2DG
+                        currentStatus: rotated
+                        availableActions: [retry]
+  /agent-api-keys/{keyId}/usage:
+    get:
+      tags: [Agent Auth]
+      operationId: getAgentApiKeyUsage
+      summary: Get compact usage attribution for one agent API key
+      description: |
+        Returns bounded usage counters for a key so agents and operators can
+        attribute activity across tools without fetching logs. Requires
+        `usage:read`; `auth:admin` keys also satisfy this scope.
+      parameters:
+        - $ref: '#/components/parameters/AgentApiKeyIdPath'
+      responses:
+        '200':
+          description: Agent API key usage summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentApiKeyUsageResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      keyId: akey_01JY52RRF5PAGHT5DCZXJ4N2DG
+                      agent:
+                        id: agt_ci_reader
+                        displayName: CI Reader
+                        role: platform_ci
+                        externalIdentities:
+                          - provider: github
+                            subject: agentrail-ci-reader
+                      status: active
+                      lastUsedAt: '2026-05-01T04:32:12Z'
+                      totals:
+                        accepted: 42
+                        denied: 1
+                      byScope:
+                        - scope: ci:read
+                          count: 42
+                      byOperation:
+                        - operation: get_task_ci_status
+                          count: 42
+                      rateLimit:
+                        windowSeconds: 60
+                        maxRequests: 600
+                        currentWindow:
+                          startedAt: '2026-05-01T04:32:00Z'
+                          resetAt: '2026-05-01T04:33:00Z'
+                          used: 12
+                          remaining: 588
+                      availableActions: [rotate]
+                    availableActions: [rotate]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /tasks/mine:
+    get:
+      tags: [Tasks]
+      operationId: listMyTasks
+      summary: List tasks assigned to the current agent
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [todo, in_progress, in_review, blocked]
+          description: Optional status filter
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          schema:
+            type: string
+          description: Opaque pagination cursor
+      responses:
+        '200':
+          description: Task list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      - id: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                        identifier: AGEA-2
+                        title: Design Task Lifecycle API schema
+                        status: in_progress
+                        priority: critical
+                        dueAt: null
+                        updatedAt: '2026-05-01T02:48:05Z'
+                        availableActions: [submit]
+                      - id: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5W
+                        identifier: AGEA-5
+                        title: Implement GitHub adapter error mapping
+                        status: todo
+                        priority: high
+                        dueAt: '2026-05-02T18:00:00Z'
+                        updatedAt: '2026-05-01T01:22:11Z'
+                        availableActions: [start]
+                    page:
+                      nextCursor: eyJvZmZzZXQiOjI1fQ
+                      hasMore: true
+                    availableActions: [fetch_next_page]
+                    meta:
+                      tokenBudgetHint: compact
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /tasks/{id}:
+    get:
+      tags: [Tasks]
+      operationId: getTaskById
+      summary: Get full details for one task
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDetailResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      id: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      identifier: AGEA-2
+                      title: Design Task Lifecycle API schema
+                      description: Create OpenAPI 3.1 spec with six lifecycle endpoints and examples.
+                      status: in_progress
+                      priority: critical
+                      assignee:
+                        id: agt_cto
+                        name: CTO
+                      acceptanceCriteria:
+                        - Endpoint contracts include request and response examples
+                        - Happy-path tests for each endpoint
+                        - Include availableActions on each response
+                      links:
+                        issue: https://github.com/oxnw/agentrail/issues/2
+                        parentIssue: https://github.com/oxnw/agentrail/issues/1
+                      context:
+                        project: onboarding
+                        goal: Validate agent-native software infrastructure in 14 days
+                      updatedAt: '2026-05-01T02:48:05Z'
+                      availableActions: [submit, view_ci_status, view_review_feedback]
+                    availableActions: [submit]
+                    meta:
+                      truncatedFields: []
+                      tokenBudgetHint: standard
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /tasks/{id}/submit:
+    post:
+      tags: [Tasks]
+      operationId: submitTaskWork
+      summary: Submit work for review
+      description: |
+        Safe to retry with the same `Idempotency-Key` and identical request body.
+        Reusing the key with a different payload returns `409 conflict`.
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskSubmitRequest'
+            examples:
+              default:
+                value:
+                  summary: Added OpenAPI schema with full examples and validation notes.
+                  artifacts:
+                    - type: pull_request
+                      url: https://github.com/oxnw/agentrail/pull/42
+                    - type: doc
+                      url: https://github.com/oxnw/agentrail/blob/main/docs/api/task-lifecycle.openapi.yaml
+                  checks:
+                    - name: spec-lint
+                      status: passed
+                  notes: 'Known limitation: pagination cursor is opaque and not stable across data mutations.'
+      responses:
+        '202':
+          description: Submission accepted and routed to review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskSubmissionResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      submissionId: sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2
+                      taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      status: in_review
+                      reviewRoute:
+                        participants:
+                          - id: agt_ceo
+                            role: ceo
+                      acceptedAt: '2026-05-01T03:01:11Z'
+                      availableActions: [view_review_feedback, view_ci_status]
+                    availableActions: [view_review_feedback]
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Task not in a submittable state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                already_submitted:
+                  value:
+                    error:
+                      code: conflict
+                      message: Task is already in review.
+                      details:
+                        currentStatus: in_review
+                        availableActions: [view_review_feedback]
+                idempotency_mismatch:
+                  value:
+                    error:
+                      code: conflict
+                      message: Idempotency-Key has already been used with a different request payload.
+                      details:
+                        idempotencyKey: submit-AGEA-2-v1
+                        availableActions: [retry]
+  /tasks/{id}/ci-status:
+    get:
+      tags: [Tasks]
+      operationId: getTaskCiStatus
+      summary: Get CI summary for the task's latest submission
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      responses:
+        '200':
+          description: CI status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCiStatusResponse'
+              examples:
+                green:
+                  value:
+                    data:
+                      taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      submissionId: sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2
+                      overallStatus: passed
+                      summary:
+                        total: 2
+                        passed: 2
+                        failed: 0
+                        running: 0
+                        queued: 0
+                        cancelled: 0
+                        skipped: 0
+                      workflows:
+                        - name: CI
+                          path: .github/workflows/ci.yml
+                          status: passed
+                          passed: 2
+                          failed: 0
+                          running: 0
+                          queued: 0
+                          cancelled: 0
+                          skipped: 0
+                          url: https://github.com/oxnw/agentrail/actions/runs/1201
+                      checks:
+                        - name: unit-tests
+                          workflow: CI
+                          status: passed
+                          url: https://github.com/oxnw/agentrail/actions/runs/1201/job/11
+                          durationSeconds: 42
+                          failureCount: 0
+                        - name: contract-tests
+                          workflow: CI
+                          status: passed
+                          url: https://github.com/oxnw/agentrail/actions/runs/1201/job/12
+                          durationSeconds: 18
+                          failureCount: 0
+                      failureSummaries: []
+                      flakyHints: []
+                      updatedAt: '2026-05-01T03:03:19Z'
+                      availableActions: [view_review_feedback]
+                    availableActions: [view_review_feedback]
+                    meta:
+                      tokenBudgetHint: compact
+                      truncatedFields: []
+                failed:
+                  value:
+                    data:
+                      taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      submissionId: sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2
+                      overallStatus: failed
+                      summary:
+                        total: 3
+                        passed: 1
+                        failed: 1
+                        running: 1
+                        queued: 0
+                        cancelled: 0
+                        skipped: 0
+                      workflows:
+                        - name: CI
+                          path: .github/workflows/ci.yml
+                          status: failed
+                          passed: 0
+                          failed: 1
+                          running: 1
+                          queued: 0
+                          cancelled: 0
+                          skipped: 0
+                          url: https://github.com/oxnw/agentrail/actions/runs/1201
+                        - name: Lint
+                          path: .github/workflows/lint.yml
+                          status: passed
+                          passed: 1
+                          failed: 0
+                          running: 0
+                          queued: 0
+                          cancelled: 0
+                          skipped: 0
+                          url: https://github.com/oxnw/agentrail/actions/runs/1202
+                      checks:
+                        - name: unit-tests
+                          workflow: CI
+                          status: failed
+                          url: https://github.com/oxnw/agentrail/actions/runs/1201/job/11
+                          durationSeconds: 42
+                          failureCount: 1
+                        - name: contract-tests
+                          workflow: CI
+                          status: running
+                          url: https://github.com/oxnw/agentrail/actions/runs/1201/job/12
+                          durationSeconds: null
+                          failureCount: 0
+                        - name: eslint
+                          workflow: Lint
+                          status: passed
+                          url: https://github.com/oxnw/agentrail/actions/runs/1202/job/21
+                          durationSeconds: 12
+                          failureCount: 0
+                      failureSummaries:
+                        - checkName: unit-tests
+                          workflow: CI
+                          testName: GET /tasks/{id}/ci-status returns structured failures
+                          file: test/ci-status-endpoint.test.js
+                          line: 44
+                          message: Expected status 200 but received 500
+                      flakyHints:
+                        - checkName: unit-tests
+                          confidence: medium
+                          reason: same check passed on a previous run for this head SHA
+                      updatedAt: '2026-05-01T03:03:19Z'
+                      availableActions: [retry_failed_checks, view_logs]
+                    availableActions: [retry_failed_checks, view_logs]
+                    meta:
+                      tokenBudgetHint: standard
+                      truncatedFields: []
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          description: GitHub Actions rate limit or secondary abuse limit reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                github_rate_limited:
+                  value:
+                    error:
+                      code: ci_source_rate_limited
+                      message: GitHub Actions CI source rejected the request.
+                      details:
+                        sourceStatus: 403
+                        availableActions: [retry]
+        '502':
+          description: GitHub Actions source unavailable or authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                github_auth_failed:
+                  value:
+                    error:
+                      code: ci_source_auth_failed
+                      message: GitHub Actions CI source rejected the request.
+                      details:
+                        sourceStatus: 401
+                        availableActions: [retry]
+  /tasks/{id}/review-feedback:
+    get:
+      tags: [Tasks]
+      operationId: getTaskReviewFeedback
+      summary: Get latest reviewer feedback for task
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      responses:
+        '200':
+          description: Reviewer decision and comments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskReviewFeedbackResponse'
+              examples:
+                changes_requested:
+                  value:
+                    data:
+                      taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      latestDecision:
+                        outcome: changes_requested
+                        reviewer:
+                          id: agt_ceo
+                          role: ceo
+                        createdAt: '2026-05-01T03:05:40Z'
+                        summary: Add explicit idempotency semantics to ship endpoint.
+                      comments:
+                        - id: cmt_01JY4YKTWSQCPVHCBD3MDYCR4A
+                          authorRole: ceo
+                          body: Include 409 behavior when ship is called before CI green.
+                          severity: must_fix
+                      availableActions: [submit]
+                    availableActions: [submit]
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /tasks/{id}/ship:
+    post:
+      tags: [Tasks]
+      operationId: shipTaskWork
+      summary: Trigger merge/deploy for an approved task
+      description: |
+        Safe to retry with the same `Idempotency-Key` and identical request body.
+        Reusing the key with a different payload returns `409 conflict`.
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskShipRequest'
+            examples:
+              default:
+                value:
+                  mode: merge_and_deploy
+                  targetEnvironment: production
+                  expectedHeadSha: b5bc7f86b9ad94f4f18f83d28bdf3e27a31e53a0
+      responses:
+        '202':
+          description: Ship operation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskShipResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      operationId: shp_01JY4YP2N9PTDP8PHV7ZV8B7XS
+                      status: queued
+                      queuedAt: '2026-05-01T03:12:02Z'
+                      availableActions: [view_ci_status]
+                    availableActions: [view_ci_status]
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Task is not shippable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                ci_not_green:
+                  value:
+                    error:
+                      code: conflict
+                      message: Task cannot be shipped until CI is green and review is approved.
+                      details:
+                        currentStatus: in_review
+                        ciStatus: running
+                        reviewStatus: approved
+                        availableActions: [view_ci_status]
+                idempotency_mismatch:
+                  value:
+                    error:
+                      code: conflict
+                      message: Idempotency-Key has already been used with a different request payload.
+                      details:
+                        idempotencyKey: ship-AGEA-2-v1
+                        availableActions: [retry]
+  /task-webhook-subscriptions:
+    get:
+      tags: [Task Events]
+      operationId: listTaskWebhookSubscriptions
+      summary: List task lifecycle webhook subscriptions
+      description: |
+        Lists durable webhook subscriptions for operational visibility.
+        Requires a key with `webhooks:read`; creating or disabling
+        subscriptions still requires `webhooks:write`.
+      responses:
+        '200':
+          description: Webhook subscriptions listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskWebhookSubscriptionListResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      - id: whsub_01JY5046P0GQF33KKV80M0X19A
+                        url: https://agents.example.com/webhooks/task-events
+                        eventTypes: [task.updated, task.reviewed, task.shipped]
+                        filters:
+                          taskIds:
+                            - tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                        status: active
+                        signingAlgorithm: hmac_sha256
+                        retryPolicy:
+                          maxAttempts: 8
+                          initialBackoffSeconds: 10
+                          maxBackoffSeconds: 3600
+                        createdAt: '2026-05-01T03:20:00Z'
+                        availableActions: [deactivate]
+                      - id: whsub_01JY505D3N3NQ96Z4BNC5S40A1
+                        url: https://agents.example.com/webhooks/archive
+                        eventTypes: [task.shipped]
+                        filters:
+                          taskIds: []
+                        status: disabled
+                        signingAlgorithm: hmac_sha256
+                        retryPolicy:
+                          maxAttempts: 8
+                          initialBackoffSeconds: 10
+                          maxBackoffSeconds: 3600
+                        createdAt: '2026-05-01T03:21:00Z'
+                        availableActions: []
+                    availableActions: [create]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+    post:
+      tags: [Task Events]
+      operationId: createTaskWebhookSubscription
+      summary: Register durable webhook delivery for task lifecycle events
+      description: |
+        Creates a persistent webhook subscription.
+        Delivery is at-least-once. Consumers MUST deduplicate on event `id`.
+        Safe to retry with the same `Idempotency-Key` and identical request body.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskWebhookSubscriptionCreateRequest'
+            examples:
+              default:
+                value:
+                  url: https://agents.example.com/webhooks/task-events
+                  eventTypes: [task.updated, task.reviewed, task.shipped]
+                  secret: whsec_live_agentrail_contract_001
+                  description: Primary automation endpoint for task lifecycle updates.
+                  filters:
+                    taskIds:
+                      - tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+      responses:
+        '201':
+          description: Webhook subscription created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskWebhookSubscriptionResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      id: whsub_01JY5046P0GQF33KKV80M0X19A
+                      url: https://agents.example.com/webhooks/task-events
+                      eventTypes: [task.updated, task.reviewed, task.shipped]
+                      filters:
+                        taskIds:
+                          - tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      status: active
+                      signingAlgorithm: hmac_sha256
+                      retryPolicy:
+                        maxAttempts: 8
+                        initialBackoffSeconds: 10
+                        maxBackoffSeconds: 3600
+                      createdAt: '2026-05-01T03:20:00Z'
+                      availableActions: [deactivate]
+                    availableActions: [deactivate]
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Idempotency conflict or duplicate subscription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                duplicate:
+                  value:
+                    error:
+                      code: conflict
+                      message: An active subscription already exists for this endpoint and filter set.
+                      details:
+                        subscriptionId: whsub_01JY5046P0GQF33KKV80M0X19A
+                        availableActions: [deactivate]
+                idempotency_mismatch:
+                  value:
+                    error:
+                      code: conflict
+                      message: Idempotency-Key has already been used with a different request payload.
+                      details:
+                        idempotencyKey: whsub-AGEA-13-v1
+                        availableActions: [retry]
+  /providers/circleci/webhooks:
+    post:
+      tags: [Providers]
+      operationId: ingestCircleCiWebhook
+      summary: Ingest a CircleCI outbound webhook for CI status caching
+      security: []
+      parameters:
+        - in: header
+          name: circleci-signature
+          required: false
+          schema:
+            type: string
+          description: >
+            Optional HMAC signature sent by CircleCI. When
+            `CIRCLECI_WEBHOOK_SECRET` is configured, AgentRail validates the
+            `v1=` SHA-256 digest before accepting the event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            examples:
+              job_completed:
+                value:
+                  id: evt-circleci-job-1
+                  type: job-completed
+                  happened_at: '2026-05-02T10:03:42Z'
+                  project:
+                    slug: gh/oxnw/agentrail
+                  pipeline:
+                    id: pipeline-current
+                    number: 88
+                    vcs:
+                      branch: feature/circleci-status
+                      revision: abc123
+                  workflow:
+                    id: workflow-build-current
+                    name: build
+                    url: https://app.circleci.com/pipelines/github/oxnw/agentrail/88/workflows/workflow-build-current
+                  job:
+                    id: job-unit-current
+                    number: 101
+                    name: unit-tests
+                    status: failed
+      responses:
+        '202':
+          description: Webhook accepted and matched against known task sources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CircleCiWebhookReceiptResponse'
+              examples:
+                matched:
+                  value:
+                    data:
+                      accepted: true
+                      deduplicated: false
+                      matchedTasks: [tsk_01JZCIRCLECI0000000000001]
+                    availableActions: []
+        '400':
+          description: Payload was not valid JSON or was missing required event fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_json:
+                  value:
+                    error:
+                      code: validation_error
+                      message: Request body must be valid JSON.
+                      details:
+                        availableActions: [retry]
+        '401':
+          description: CircleCI webhook signature failed verification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_signature:
+                  value:
+                    error:
+                      code: ci_webhook_unauthorized
+                      message: CircleCI webhook signature is missing or invalid.
+                      details:
+                        availableActions: [retry]
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /task-webhook-subscriptions/{subscriptionId}:
+    get:
+      tags: [Task Events]
+      operationId: getTaskWebhookSubscription
+      summary: Get a task lifecycle webhook subscription
+      description: |
+        Returns the current snapshot for one durable webhook subscription.
+        Requires a key with `webhooks:read`.
+      parameters:
+        - $ref: '#/components/parameters/WebhookSubscriptionIdPath'
+      responses:
+        '200':
+          description: Webhook subscription found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskWebhookSubscriptionResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      id: whsub_01JY5046P0GQF33KKV80M0X19A
+                      url: https://agents.example.com/webhooks/task-events
+                      eventTypes: [task.updated, task.reviewed, task.shipped]
+                      filters:
+                        taskIds:
+                          - tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      status: active
+                      signingAlgorithm: hmac_sha256
+                      retryPolicy:
+                        maxAttempts: 8
+                        initialBackoffSeconds: 10
+                        maxBackoffSeconds: 3600
+                      createdAt: '2026-05-01T03:20:00Z'
+                      availableActions: [deactivate]
+                    availableActions: [deactivate]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Task Events]
+      operationId: deactivateTaskWebhookSubscription
+      summary: Deactivate a task lifecycle webhook subscription
+      parameters:
+        - $ref: '#/components/parameters/WebhookSubscriptionIdPath'
+      responses:
+        '202':
+          description: Subscription deactivation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskWebhookSubscriptionResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      id: whsub_01JY5046P0GQF33KKV80M0X19A
+                      url: https://agents.example.com/webhooks/task-events
+                      eventTypes: [task.updated, task.reviewed, task.shipped]
+                      filters:
+                        taskIds:
+                          - tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      status: disabled
+                      signingAlgorithm: hmac_sha256
+                      retryPolicy:
+                        maxAttempts: 8
+                        initialBackoffSeconds: 10
+                        maxBackoffSeconds: 3600
+                      createdAt: '2026-05-01T03:20:00Z'
+                      availableActions: []
+                    availableActions: []
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /task-events/stream:
+    get:
+      tags: [Task Events]
+      operationId: streamTaskLifecycleEvents
+      summary: Stream task lifecycle events over Server-Sent Events
+      description: |
+        Opens a long-lived SSE connection for low-latency task lifecycle updates.
+        Delivery is at-least-once. Consumers MUST deduplicate on event `id`.
+        Resume from the last seen event with `Last-Event-ID` or the `cursor`
+        query parameter. When both are supplied, `Last-Event-ID` wins.
+        When a resume token is accepted, the server replays buffered events
+        strictly after the referenced event before switching the connection to
+        the live tail. When no resume token is supplied, the stream starts at
+        the live tail only.
+        The server emits keepalive comments when idle so agents do not need to poll.
+      parameters:
+        - $ref: '#/components/parameters/EventTypesQuery'
+        - $ref: '#/components/parameters/TaskIdFilterQuery'
+        - $ref: '#/components/parameters/StreamCursorQuery'
+        - $ref: '#/components/parameters/LastEventIdHeader'
+        - $ref: '#/components/parameters/HeartbeatSecondsQuery'
+      responses:
+        '200':
+          description: Event stream established
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-AgentRail-Replay-Window-Hours:
+              $ref: '#/components/headers/AgentRailReplayWindowHoursHeader'
+            X-AgentRail-Stream-Heartbeat-Seconds:
+              $ref: '#/components/headers/AgentRailStreamHeartbeatHeader'
+            X-AgentRail-Resume-Mode:
+              $ref: '#/components/headers/AgentRailResumeModeHeader'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                reviewed:
+                  value: |
+                    retry: 5000
+                    id: evt_01JY50DG4S5SJC48W0MVV8R3H2
+                    event: task.reviewed
+                    data: {"id":"evt_01JY50DG4S5SJC48W0MVV8R3H2","type":"task.reviewed","occurredAt":"2026-05-01T03:25:15Z","sequence":4128,"taskVersion":9,"traceId":"trc_01JY50DCRX3AVNQBE6Q71RQB9N","data":{"taskId":"tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","taskIdentifier":"AGEA-13","status":"in_review","reviewOutcome":"approved","reviewer":{"id":"agt_ceo","role":"ceo"},"summary":"Contract approved for ship.","availableActions":["ship"],"links":{"task":"https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","reviewFeedback":"https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback"}}}
+
+                    : keepalive 2026-05-01T03:25:35Z
+                resume_filtered:
+                  value: |
+                    retry: 5000
+                    id: evt_01JY50DG4S5SJC48W0MVV8R3H3
+                    event: task.updated
+                    data: {"id":"evt_01JY50DG4S5SJC48W0MVV8R3H3","type":"task.updated","occurredAt":"2026-05-01T03:26:03Z","sequence":4129,"taskVersion":10,"traceId":"trc_01JY50DQRMQ8QZEEMG7P2JX8AB","data":{"taskId":"tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","taskIdentifier":"AGEA-13","status":"done","previousStatus":"in_review","changedFields":["status","availableActions"],"actor":{"id":"agt_cto","role":"cto"},"summary":"Ship request accepted for deployment.","availableActions":[],"links":{"task":"https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V","shipOperation":"https://api.agentrail.dev/v1/ship-operations/shp_01JY50F7SQ4C1T3DJ2TGM4G69J"}}}
+
+                    : keepalive 2026-05-01T03:26:23Z
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '429':
+          $ref: '#/components/responses/TooManyStreams'
+webhooks:
+  taskLifecycleEvent:
+    post:
+      tags: [Webhooks]
+      operationId: receiveTaskLifecycleWebhook
+      summary: Task lifecycle event sent to a subscriber endpoint
+      description: |
+        Outbound webhook request emitted by AgentRail.
+        The raw request body is signed with the subscription secret using
+        HMAC-SHA256 and delivered in `X-AgentRail-Signature`.
+        Delivery is at-least-once with exponential backoff for up to 8 attempts.
+        `X-AgentRail-Event-Id` remains stable across retries. `X-AgentRail-Delivery-Id`
+        changes on each attempt.
+      parameters:
+        - $ref: '#/components/parameters/AgentRailWebhookIdHeader'
+        - $ref: '#/components/parameters/AgentRailEventIdHeader'
+        - $ref: '#/components/parameters/AgentRailEventTypeHeader'
+        - $ref: '#/components/parameters/AgentRailDeliveryIdHeader'
+        - $ref: '#/components/parameters/AgentRailDeliveryAttemptHeader'
+        - $ref: '#/components/parameters/AgentRailSignatureHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskLifecycleEventEnvelope'
+            examples:
+              task_updated:
+                value:
+                  id: evt_01JY50A13CW2JNEQR3MYXSGQQQ
+                  type: task.updated
+                  occurredAt: '2026-05-01T03:21:04Z'
+                  sequence: 4121
+                  taskVersion: 8
+                  traceId: trc_01JY509N1N8AMCNJQ4G4YMYKMQ
+                  data:
+                    taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                    taskIdentifier: AGEA-13
+                    status: in_review
+                    previousStatus: in_progress
+                    changedFields: [status, availableActions]
+                    actor:
+                      id: agt_cto
+                      role: cto
+                    summary: Submission accepted and routed to CEO review.
+                    availableActions: [view_review_feedback, view_ci_status]
+                    links:
+                      task: https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      reviewFeedback: https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback
+              task_shipped:
+                value:
+                  id: evt_01JY50F8SQ4C1T3DJ2TGM4G69K
+                  type: task.shipped
+                  occurredAt: '2026-05-01T03:28:44Z'
+                  sequence: 4132
+                  taskVersion: 11
+                  traceId: trc_01JY50F2Q80S8P9NS5YMSQP722
+                  data:
+                    taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                    taskIdentifier: AGEA-13
+                    status: done
+                    shipStatus: succeeded
+                    operationId: shp_01JY50F7SQ4C1T3DJ2TGM4G69J
+                    targetEnvironment: production
+                    summary: Task merged and deployed to production.
+                    availableActions: []
+                    links:
+                      task: https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      ciStatus: https://api.agentrail.dev/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/ci-status
+                      shipOperation: https://api.agentrail.dev/v1/ship-operations/shp_01JY50F7SQ4C1T3DJ2TGM4G69J
+      responses:
+        '200':
+          description: Delivery accepted
+        '202':
+          description: Delivery accepted for asynchronous processing
+        '410':
+          description: Endpoint retired; AgentRail SHOULD disable the subscription
+        '500':
+          description: Delivery failed; AgentRail SHOULD retry
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Agent API key
+  parameters:
+    AgentApiKeyIdPath:
+      in: path
+      name: keyId
+      required: true
+      schema:
+        type: string
+        pattern: '^akey_[A-Za-z0-9]+$'
+      description: Stable agent API key ID. This is not the secret key material.
+    TaskIdPath:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        pattern: '^tsk_[A-Za-z0-9]+$'
+      description: Stable task ID
+    WebhookSubscriptionIdPath:
+      in: path
+      name: subscriptionId
+      required: true
+      schema:
+        type: string
+        pattern: '^whsub_[A-Za-z0-9]+$'
+      description: Stable webhook subscription ID
+    IdempotencyKeyHeader:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: |
+        Unique key for safe retries of mutating operations.
+        Same key plus same payload must replay the original accepted result.
+        Same key plus different payload must return `409 conflict`.
+    EventTypesQuery:
+      in: query
+      name: eventTypes
+      required: false
+      style: form
+      explode: false
+      schema:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          $ref: '#/components/schemas/TaskEventType'
+      description: Optional comma-separated event type filter.
+    TaskIdFilterQuery:
+      in: query
+      name: taskId
+      required: false
+      schema:
+        type: string
+        pattern: '^tsk_[A-Za-z0-9]+$'
+      description: Optional filter to stream events for one task only.
+    StreamCursorQuery:
+      in: query
+      name: cursor
+      required: false
+      schema:
+        type: string
+      description: |
+        Opaque cursor or last event ID used to resume a disconnected stream.
+        The server replays buffered events strictly after the referenced event
+        within the active filter set, then switches to the live tail.
+    LastEventIdHeader:
+      in: header
+      name: Last-Event-ID
+      required: false
+      schema:
+        type: string
+      description: |
+        Standard SSE resume header. Overrides the `cursor` query parameter when
+        both are supplied. Uses the same replay-then-live semantics as `cursor`.
+    HeartbeatSecondsQuery:
+      in: query
+      name: heartbeatSeconds
+      required: false
+      schema:
+        type: integer
+        minimum: 10
+        maximum: 60
+        default: 20
+      description: Idle keepalive cadence for the SSE stream.
+    AgentRailWebhookIdHeader:
+      in: header
+      name: X-AgentRail-Webhook-Id
+      required: true
+      schema:
+        type: string
+        pattern: '^whsub_[A-Za-z0-9]+$'
+      description: The webhook subscription that triggered the delivery.
+    AgentRailEventIdHeader:
+      in: header
+      name: X-AgentRail-Event-Id
+      required: true
+      schema:
+        type: string
+        pattern: '^evt_[A-Za-z0-9]+$'
+      description: Stable logical event ID. Deduplicate on this value.
+    AgentRailEventTypeHeader:
+      in: header
+      name: X-AgentRail-Event-Type
+      required: true
+      schema:
+        $ref: '#/components/schemas/TaskEventType'
+      description: The task lifecycle event type.
+    AgentRailDeliveryIdHeader:
+      in: header
+      name: X-AgentRail-Delivery-Id
+      required: true
+      schema:
+        type: string
+        pattern: '^dlv_[A-Za-z0-9]+$'
+      description: Unique delivery attempt ID.
+    AgentRailDeliveryAttemptHeader:
+      in: header
+      name: X-AgentRail-Delivery-Attempt
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+      description: Monotonic retry attempt number for this delivery.
+    AgentRailSignatureHeader:
+      in: header
+      name: X-AgentRail-Signature
+      required: true
+      schema:
+        type: string
+        pattern: '^sha256=[A-Fa-f0-9]{64}$'
+      description: HMAC-SHA256 signature of the raw request body using the subscription secret.
+  headers:
+    CacheControlNoStore:
+      required: true
+      schema:
+        type: string
+        const: no-store
+      description: SSE responses are never cacheable.
+    AgentRailReplayWindowHoursHeader:
+      required: true
+      schema:
+        type: integer
+        const: 72
+      description: Retention window for resumable replay.
+    AgentRailStreamHeartbeatHeader:
+      required: true
+      schema:
+        type: integer
+        minimum: 10
+        maximum: 60
+      description: Effective keepalive cadence for this stream connection.
+    AgentRailResumeModeHeader:
+      required: true
+      schema:
+        type: string
+        enum: [live, replay_then_live]
+      description: Whether the server started at the live tail or after replaying buffered events.
+  responses:
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            default:
+              value:
+                error:
+                  code: unauthorized
+                  message: Authentication failed.
+                  details:
+                    availableActions: [reauthenticate]
+    InsufficientScope:
+      description: Agent API key is valid but lacks the required scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            default:
+              value:
+                error:
+                  code: insufficient_scope
+                  message: Agent API key does not grant the required scope.
+                  details:
+                    requiredScope: webhooks:write
+                    grantedScopes: ['ci:read']
+                    availableActions: [request_scope]
+    RateLimited:
+      description: Agent API key exceeded its fixed-window request budget
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+          description: Number of seconds to wait before retrying.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            default:
+              value:
+                error:
+                  code: rate_limited
+                  message: Rate limit exceeded for this agent key.
+                  details:
+                    limit:
+                      windowSeconds: 60
+                      maxRequests: 600
+                    remaining: 0
+                    resetAt: '2026-05-01T04:33:00Z'
+                    retryAfterSeconds: 12
+                    availableActions: [retry]
+    NotFound:
+      description: Task or subscription not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            default:
+              value:
+                error:
+                  code: not_found
+                  message: Resource not found.
+                  details:
+                    availableActions: [list_my_tasks]
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            default:
+              value:
+                error:
+                  code: validation_error
+                  message: Invalid request payload.
+                  details:
+                    fieldErrors:
+                      - field: expectedHeadSha
+                        reason: must be a 40-char commit SHA
+                    availableActions: [retry]
+    CursorExpired:
+      description: Resume cursor is outside the replay window
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            default:
+              value:
+                error:
+                  code: cursor_expired
+                  message: The requested stream cursor is no longer available.
+                  details:
+                    replayWindowHours: 72
+                    availableActions: [reconnect_without_cursor]
+    TooManyStreams:
+      description: Concurrent stream limit reached
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+          description: Number of seconds to wait before retrying the stream connection.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            default:
+              value:
+                error:
+                  code: rate_limited
+                  message: Concurrent stream limit reached for this agent token.
+                  details:
+                    concurrentLimit: 3
+                    retryAfterSeconds: 15
+                    availableActions: [retry]
+  schemas:
+    AgentApiKeyCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [agent, scopes, rateLimit]
+      properties:
+        agent:
+          $ref: '#/components/schemas/AgentIdentity'
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/AgentAuthScope'
+        rateLimit:
+          $ref: '#/components/schemas/AgentRateLimit'
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+          description: Optional key expiry. Null means no scheduled expiry.
+    AgentApiKeyRotateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+          description: Optional replacement key expiry. Omit to preserve the previous expiry.
+    AgentApiKeyResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required:
+            - id
+            - apiKey
+            - agent
+            - scopes
+            - rateLimit
+            - status
+            - createdAt
+            - expiresAt
+            - rotatedFromKeyId
+            - availableActions
+          properties:
+            id:
+              type: string
+              pattern: '^akey_[A-Za-z0-9]+$'
+            apiKey:
+              type: string
+              pattern: '^ar_live_[A-Za-z0-9_-]+$'
+              description: Secret bearer key material. Returned only on create and rotate.
+            agent:
+              $ref: '#/components/schemas/AgentIdentity'
+            scopes:
+              type: array
+              minItems: 1
+              uniqueItems: true
+              items:
+                $ref: '#/components/schemas/AgentAuthScope'
+            rateLimit:
+              $ref: '#/components/schemas/AgentRateLimit'
+            status:
+              $ref: '#/components/schemas/AgentApiKeyStatus'
+            createdAt:
+              type: string
+              format: date-time
+            expiresAt:
+              type: [string, 'null']
+              format: date-time
+            rotatedFromKeyId:
+              type: [string, 'null']
+              pattern: '^akey_[A-Za-z0-9]+$'
+            availableActions:
+              type: array
+              items:
+                type: string
+                enum: [rotate, view_usage]
+        availableActions:
+          type: array
+          items:
+            type: string
+            enum: [rotate, view_usage]
+    AgentApiKeyUsageResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required:
+            - keyId
+            - agent
+            - status
+            - lastUsedAt
+            - totals
+            - byScope
+            - byOperation
+            - rateLimit
+            - availableActions
+          properties:
+            keyId:
+              type: string
+              pattern: '^akey_[A-Za-z0-9]+$'
+            agent:
+              $ref: '#/components/schemas/AgentIdentity'
+            status:
+              $ref: '#/components/schemas/AgentApiKeyStatus'
+            lastUsedAt:
+              type: [string, 'null']
+              format: date-time
+            totals:
+              type: object
+              additionalProperties: false
+              required: [accepted, denied]
+              properties:
+                accepted:
+                  type: integer
+                  minimum: 0
+                denied:
+                  type: integer
+                  minimum: 0
+            byScope:
+              type: array
+              items:
+                $ref: '#/components/schemas/AgentScopeUsage'
+            byOperation:
+              type: array
+              items:
+                $ref: '#/components/schemas/AgentOperationUsage'
+            rateLimit:
+              type: object
+              additionalProperties: false
+              required: [windowSeconds, maxRequests, currentWindow]
+              properties:
+                windowSeconds:
+                  type: integer
+                  minimum: 10
+                  maximum: 3600
+                maxRequests:
+                  type: integer
+                  minimum: 1
+                  maximum: 10000
+                currentWindow:
+                  $ref: '#/components/schemas/AgentRateLimitWindow'
+            availableActions:
+              type: array
+              items:
+                type: string
+                enum: [rotate]
+        availableActions:
+          type: array
+          items:
+            type: string
+            enum: [rotate]
+    AgentIdentity:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, role, externalIdentities]
+      properties:
+        id:
+          type: string
+          pattern: '^agt_[A-Za-z0-9_]+$'
+        displayName:
+          type: string
+        role:
+          type: string
+          description: Product role used for attribution, not an authorization decision.
+        externalIdentities:
+          type: array
+          description: Provider subjects used to attribute the same agent across adapters.
+          items:
+            $ref: '#/components/schemas/AgentExternalIdentity'
+    AgentExternalIdentity:
+      type: object
+      additionalProperties: false
+      required: [provider, subject]
+      properties:
+        provider:
+          type: string
+          examples: [github, linear]
+        subject:
+          type: string
+    AgentAuthScope:
+      type: string
+      enum:
+        - auth:admin
+        - ci:read
+        - events:read
+        - reviews:read
+        - ship:write
+        - tasks:read
+        - tasks:write
+        - usage:read
+        - webhooks:read
+        - webhooks:write
+    AgentRateLimit:
+      type: object
+      additionalProperties: false
+      required: [windowSeconds, maxRequests]
+      properties:
+        windowSeconds:
+          type: integer
+          minimum: 10
+          maximum: 3600
+          description: Fixed-window duration for one agent key.
+        maxRequests:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: Request budget for the window. Defaults should favor bursty agent work.
+    AgentRateLimitWindow:
+      type: object
+      additionalProperties: false
+      required: [startedAt, resetAt, used, remaining]
+      properties:
+        startedAt:
+          type: string
+          format: date-time
+        resetAt:
+          type: string
+          format: date-time
+        used:
+          type: integer
+          minimum: 0
+        remaining:
+          type: integer
+          minimum: 0
+    AgentApiKeyStatus:
+      type: string
+      enum: [active, rotated, revoked]
+    AgentScopeUsage:
+      type: object
+      additionalProperties: false
+      required: [scope, count]
+      properties:
+        scope:
+          $ref: '#/components/schemas/AgentAuthScope'
+        count:
+          type: integer
+          minimum: 0
+    AgentOperationUsage:
+      type: object
+      additionalProperties: false
+      required: [operation, count]
+      properties:
+        operation:
+          type: string
+        count:
+          type: integer
+          minimum: 0
+    TaskSummary:
+      type: object
+      additionalProperties: false
+      required: [id, identifier, title, status, priority, updatedAt, availableActions]
+      properties:
+        id:
+          type: string
+        identifier:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum: [todo, in_progress, in_review, blocked, done, cancelled]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        dueAt:
+          type: [string, 'null']
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page, availableActions, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskSummary'
+        page:
+          type: object
+          additionalProperties: false
+          required: [nextCursor, hasMore]
+          properties:
+            nextCursor:
+              type: [string, 'null']
+            hasMore:
+              type: boolean
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    TaskDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - identifier
+        - title
+        - description
+        - status
+        - priority
+        - assignee
+        - acceptanceCriteria
+        - links
+        - context
+        - updatedAt
+        - availableActions
+      properties:
+        id:
+          type: string
+        identifier:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [todo, in_progress, in_review, blocked, done, cancelled]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        assignee:
+          type: object
+          additionalProperties: false
+          required: [id, name]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+        acceptanceCriteria:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        links:
+          type: object
+          additionalProperties: false
+          required: [issue]
+          properties:
+            issue:
+              type: string
+              format: uri
+            parentIssue:
+              type: [string, 'null']
+              format: uri
+        context:
+          type: object
+          additionalProperties: false
+          required: [project, goal]
+          properties:
+            project:
+              type: [string, 'null']
+            goal:
+              type: string
+        updatedAt:
+          type: string
+          format: date-time
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/TaskDetail'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    TaskSubmitRequest:
+      type: object
+      additionalProperties: false
+      required: [summary, artifacts]
+      properties:
+        summary:
+          type: string
+          maxLength: 2000
+        artifacts:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, url]
+            properties:
+              type:
+                type: string
+                enum: [pull_request, commit, doc, ci_run, other]
+              url:
+                type: string
+                format: uri
+        checks:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, status]
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+                enum: [passed, failed, running, skipped]
+        notes:
+          type: [string, 'null']
+          maxLength: 2000
+    TaskSubmissionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [submissionId, taskId, status, reviewRoute, acceptedAt, availableActions]
+          properties:
+            submissionId:
+              type: string
+            taskId:
+              type: string
+            status:
+              type: string
+              enum: [in_review]
+            reviewRoute:
+              type: object
+              additionalProperties: false
+              required: [participants]
+              properties:
+                participants:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [id, role]
+                    properties:
+                      id:
+                        type: string
+                      role:
+                        type: string
+            acceptedAt:
+              type: string
+              format: date-time
+            availableActions:
+              $ref: '#/components/schemas/AvailableActions'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskCiStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required:
+            - taskId
+            - submissionId
+            - overallStatus
+            - summary
+            - workflows
+            - checks
+            - failureSummaries
+            - flakyHints
+            - updatedAt
+            - availableActions
+          properties:
+            taskId:
+              type: string
+            submissionId:
+              type: [string, 'null']
+            overallStatus:
+              type: string
+              enum: [queued, running, passed, failed, cancelled]
+            summary:
+              type: object
+              additionalProperties: false
+              required: [total, passed, failed, running, queued, cancelled, skipped]
+              properties:
+                total:
+                  type: integer
+                  minimum: 0
+                passed:
+                  type: integer
+                  minimum: 0
+                failed:
+                  type: integer
+                  minimum: 0
+                running:
+                  type: integer
+                  minimum: 0
+                queued:
+                  type: integer
+                  minimum: 0
+                cancelled:
+                  type: integer
+                  minimum: 0
+                skipped:
+                  type: integer
+                  minimum: 0
+            workflows:
+              type: array
+              maxItems: 20
+              description: One compact summary per latest provider workflow.
+              items:
+                type: object
+                additionalProperties: false
+                required: [name, path, status, passed, failed, running, queued, cancelled, skipped, url]
+                properties:
+                  name:
+                    type: string
+                  path:
+                    type: [string, 'null']
+                  status:
+                    type: string
+                    enum: [queued, running, passed, failed, cancelled, skipped]
+                  passed:
+                    type: integer
+                    minimum: 0
+                  failed:
+                    type: integer
+                    minimum: 0
+                  running:
+                    type: integer
+                    minimum: 0
+                  queued:
+                    type: integer
+                    minimum: 0
+                  cancelled:
+                    type: integer
+                    minimum: 0
+                  skipped:
+                    type: integer
+                    minimum: 0
+                  url:
+                    type: [string, 'null']
+                    format: uri
+            checks:
+              type: array
+              maxItems: 50
+              items:
+                type: object
+                additionalProperties: false
+                required: [name, workflow, status, url, durationSeconds, failureCount]
+                properties:
+                  name:
+                    type: string
+                  workflow:
+                    type: string
+                  status:
+                    type: string
+                    enum: [queued, running, passed, failed, cancelled, skipped]
+                  url:
+                    type: [string, 'null']
+                    format: uri
+                  durationSeconds:
+                    type: [integer, 'null']
+                    minimum: 0
+                  failureCount:
+                    type: integer
+                    minimum: 0
+            failureSummaries:
+              type: array
+              maxItems: 5
+              description: Parsed test failures only; raw logs are intentionally omitted.
+              items:
+                type: object
+                additionalProperties: false
+                required: [checkName, workflow, testName, file, line, message]
+                properties:
+                  checkName:
+                    type: string
+                  workflow:
+                    type: string
+                  testName:
+                    type: string
+                  file:
+                    type: [string, 'null']
+                  line:
+                    type: [integer, 'null']
+                    minimum: 1
+                  message:
+                    type: string
+            flakyHints:
+              type: array
+              maxItems: 5
+              description: Heuristics based on reruns or recent prior passes for the same check.
+              items:
+                type: object
+                additionalProperties: false
+                required: [checkName, confidence, reason]
+                properties:
+                  checkName:
+                    type: string
+                  confidence:
+                    type: string
+                    enum: [low, medium, high]
+                  reason:
+                    type: string
+            updatedAt:
+              type: [string, 'null']
+              format: date-time
+            availableActions:
+              $ref: '#/components/schemas/AvailableActions'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    CircleCiWebhookReceiptResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [accepted, deduplicated, matchedTasks]
+          properties:
+            accepted:
+              type: boolean
+            deduplicated:
+              type: boolean
+            matchedTasks:
+              type: array
+              items:
+                type: string
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskReviewFeedbackResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [taskId, latestDecision, comments, availableActions]
+          properties:
+            taskId:
+              type: string
+            latestDecision:
+              type: object
+              additionalProperties: false
+              required: [outcome, reviewer, createdAt, summary]
+              properties:
+                outcome:
+                  type: string
+                  enum: [approved, changes_requested, pending]
+                reviewer:
+                  type: object
+                  additionalProperties: false
+                  required: [id, role]
+                  properties:
+                    id:
+                      type: string
+                    role:
+                      type: string
+                createdAt:
+                  type: string
+                  format: date-time
+                summary:
+                  type: string
+            comments:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, authorRole, body, severity]
+                properties:
+                  id:
+                    type: string
+                  authorRole:
+                    type: string
+                  body:
+                    type: string
+                  severity:
+                    type: string
+                    enum: [must_fix, should_fix, note]
+            availableActions:
+              $ref: '#/components/schemas/AvailableActions'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskShipRequest:
+      type: object
+      additionalProperties: false
+      required: [mode, targetEnvironment, expectedHeadSha]
+      properties:
+        mode:
+          type: string
+          enum: [merge_only, merge_and_deploy]
+        targetEnvironment:
+          type: string
+          enum: [staging, production]
+        expectedHeadSha:
+          type: string
+          pattern: '^[a-f0-9]{40}$'
+    TaskShipResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [taskId, operationId, status, queuedAt, availableActions]
+          properties:
+            taskId:
+              type: string
+            operationId:
+              type: string
+            status:
+              type: string
+              enum: [queued, running, succeeded, failed]
+            queuedAt:
+              type: string
+              format: date-time
+            availableActions:
+              $ref: '#/components/schemas/AvailableActions'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskWebhookSubscriptionCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [url, eventTypes, secret]
+      properties:
+        url:
+          type: string
+          format: uri
+        eventTypes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/TaskEventType'
+        secret:
+          type: string
+          minLength: 16
+          maxLength: 128
+          writeOnly: true
+          description: Shared secret used to verify `X-AgentRail-Signature`.
+        description:
+          type: [string, 'null']
+          maxLength: 200
+        filters:
+          type: object
+          additionalProperties: false
+          properties:
+            taskIds:
+              type: array
+              maxItems: 50
+              uniqueItems: true
+              items:
+                type: string
+                pattern: '^tsk_[A-Za-z0-9]+$'
+    TaskWebhookSubscription:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - url
+        - eventTypes
+        - filters
+        - status
+        - signingAlgorithm
+        - retryPolicy
+        - createdAt
+        - availableActions
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          format: uri
+        eventTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskEventType'
+        filters:
+          type: object
+          additionalProperties: false
+          properties:
+            taskIds:
+              type: array
+              items:
+                type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        signingAlgorithm:
+          type: string
+          enum: [hmac_sha256]
+        retryPolicy:
+          type: object
+          additionalProperties: false
+          required: [maxAttempts, initialBackoffSeconds, maxBackoffSeconds]
+          properties:
+            maxAttempts:
+              type: integer
+              minimum: 1
+            initialBackoffSeconds:
+              type: integer
+              minimum: 1
+            maxBackoffSeconds:
+              type: integer
+              minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskWebhookSubscriptionListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskWebhookSubscription'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskWebhookSubscriptionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          $ref: '#/components/schemas/TaskWebhookSubscription'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskEventType:
+      type: string
+      enum: [task.updated, task.reviewed, task.shipped]
+    TaskEventActor:
+      type: object
+      additionalProperties: false
+      required: [id, role]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+    TaskEventLinks:
+      type: object
+      additionalProperties: false
+      required: [task]
+      properties:
+        task:
+          type: string
+          format: uri
+        reviewFeedback:
+          type: [string, 'null']
+          format: uri
+        ciStatus:
+          type: [string, 'null']
+          format: uri
+        shipOperation:
+          type: [string, 'null']
+          format: uri
+    TaskUpdatedEventData:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - taskIdentifier
+        - status
+        - previousStatus
+        - changedFields
+        - actor
+        - summary
+        - availableActions
+        - links
+      properties:
+        taskId:
+          type: string
+        taskIdentifier:
+          type: string
+        status:
+          type: string
+          enum: [todo, in_progress, in_review, blocked, done, cancelled]
+        previousStatus:
+          type: [string, 'null']
+          enum: [todo, in_progress, in_review, blocked, done, cancelled, null]
+          description: |
+            Previous task status before this update. `null` means the task
+            entered the lifecycle without a prior status, including newly
+            assigned tasks. AgentRail does not emit a separate `task.created`
+            event in v0.3.
+        changedFields:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+        actor:
+          $ref: '#/components/schemas/TaskEventActor'
+        summary:
+          type: string
+          maxLength: 280
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        links:
+          $ref: '#/components/schemas/TaskEventLinks'
+    TaskReviewedEventData:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - taskIdentifier
+        - status
+        - reviewOutcome
+        - reviewer
+        - summary
+        - availableActions
+        - links
+      properties:
+        taskId:
+          type: string
+        taskIdentifier:
+          type: string
+        status:
+          type: string
+          enum: [todo, in_progress, in_review, blocked, done, cancelled]
+        reviewOutcome:
+          type: string
+          enum: [approved, changes_requested]
+        reviewer:
+          $ref: '#/components/schemas/TaskEventActor'
+        summary:
+          type: string
+          maxLength: 280
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        links:
+          $ref: '#/components/schemas/TaskEventLinks'
+    TaskShippedEventData:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - taskIdentifier
+        - status
+        - shipStatus
+        - operationId
+        - targetEnvironment
+        - summary
+        - availableActions
+        - links
+      properties:
+        taskId:
+          type: string
+        taskIdentifier:
+          type: string
+        status:
+          type: string
+          enum: [todo, in_progress, in_review, blocked, done, cancelled]
+        shipStatus:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        operationId:
+          type: string
+        targetEnvironment:
+          type: string
+          enum: [staging, production]
+        summary:
+          type: string
+          maxLength: 280
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        links:
+          $ref: '#/components/schemas/TaskEventLinks'
+    TaskUpdatedEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, occurredAt, sequence, taskVersion, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: task.updated
+        occurredAt:
+          type: string
+          format: date-time
+        sequence:
+          type: integer
+          minimum: 1
+          description: |
+            Global monotonic sequence within the task lifecycle outbox, shared
+            by webhook delivery and SSE replay cursors. It is not the task-local
+            ordering key; use `taskVersion` for per-task ordering.
+        taskVersion:
+          type: integer
+          minimum: 1
+          description: Monotonic per-task version after the state mutation was applied.
+        traceId:
+          type: [string, 'null']
+        data:
+          $ref: '#/components/schemas/TaskUpdatedEventData'
+    TaskReviewedEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, occurredAt, sequence, taskVersion, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: task.reviewed
+        occurredAt:
+          type: string
+          format: date-time
+        sequence:
+          type: integer
+          minimum: 1
+          description: |
+            Global monotonic sequence within the task lifecycle outbox, shared
+            by webhook delivery and SSE replay cursors. It is not the task-local
+            ordering key; use `taskVersion` for per-task ordering.
+        taskVersion:
+          type: integer
+          minimum: 1
+        traceId:
+          type: [string, 'null']
+        data:
+          $ref: '#/components/schemas/TaskReviewedEventData'
+    TaskShippedEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, occurredAt, sequence, taskVersion, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: task.shipped
+        occurredAt:
+          type: string
+          format: date-time
+        sequence:
+          type: integer
+          minimum: 1
+          description: |
+            Global monotonic sequence within the task lifecycle outbox, shared
+            by webhook delivery and SSE replay cursors. It is not the task-local
+            ordering key; use `taskVersion` for per-task ordering.
+        taskVersion:
+          type: integer
+          minimum: 1
+        traceId:
+          type: [string, 'null']
+        data:
+          $ref: '#/components/schemas/TaskShippedEventData'
+    TaskLifecycleEventEnvelope:
+      oneOf:
+        - $ref: '#/components/schemas/TaskUpdatedEvent'
+        - $ref: '#/components/schemas/TaskReviewedEvent'
+        - $ref: '#/components/schemas/TaskShippedEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          task.updated: '#/components/schemas/TaskUpdatedEvent'
+          task.reviewed: '#/components/schemas/TaskReviewedEvent'
+          task.shipped: '#/components/schemas/TaskShippedEvent'
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+    AvailableActions:
+      type: array
+      items:
+        type: string
+      maxItems: 20
+    ResponseMeta:
+      type: object
+      additionalProperties: false
+      required: [tokenBudgetHint]
+      properties:
+        tokenBudgetHint:
+          type: string
+          enum: [compact, standard]
+        truncatedFields:
+          type: array
+          items:
+            type: string

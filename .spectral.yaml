@@ -1,0 +1,23 @@
+extends:
+  - spectral:oas
+
+rules:
+  operation-operationId-unique: error
+  operation-tags: error
+  oas3-valid-schema-example: error
+
+  success-response-example-required:
+    description: Every success response must publish at least one JSON example for SDK and contract-test generation.
+    severity: error
+    given: "$.paths[*][*].responses[?(@property.match(/^(200|201|202)$/))].content['application/json']"
+    then:
+      field: examples
+      function: truthy
+
+  error-response-available-actions:
+    description: Error examples must include error.details.availableActions so agents can recover without discovery calls.
+    severity: error
+    given: "$.components.responses[*].content['application/json'].examples[*].value.error.details"
+    then:
+      field: availableActions
+      function: truthy
