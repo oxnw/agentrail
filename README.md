@@ -158,6 +158,12 @@ Example `AGENTRAIL_TASK_SOURCES` entry for CircleCI:
 
 ## SDKs
 
+For the default OSS `npm start` server, agent auth is not enabled, so
+`ar_local_demo_key` is only a local placeholder required by the SDK constructor.
+In an auth-enabled deployment, create an AgentRail API key and use the returned
+secret `data.apiKey` value, which starts with `ar_live_`. The `akey_...` value is
+the key ID, not the secret.
+
 TypeScript local usage:
 
 ```ts

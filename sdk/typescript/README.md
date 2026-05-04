@@ -67,6 +67,11 @@ const ship = await client.shipTask(
 );
 ```
 
+For the default OSS `npm start` server, `ar_local_demo_key` is only a local
+placeholder because agent auth is not enabled. In an auth-enabled deployment,
+use the returned `data.apiKey` value from key creation; it starts with
+`ar_live_`. The `akey_...` value is the key ID, not the secret.
+
 ## Authentication
 
 Create an API key, then use it to initialize the client:

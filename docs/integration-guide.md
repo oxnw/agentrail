@@ -65,7 +65,7 @@ curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
 Store the returned `rawKey` in your agent's environment:
 
 ```bash
-export AGENTRAIL_API_KEY="akey_01..."
+export AGENTRAIL_API_KEY="ar_live_..."
 ```
 
 ### Step 3 — Configure task sources (live GitHub / CircleCI)
