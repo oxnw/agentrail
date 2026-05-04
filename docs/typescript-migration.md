@@ -7,7 +7,7 @@ This document covers the incremental migration of the AgentRail root service fro
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 – Tooling baseline | `tsconfig.json`, `npm run typecheck`, CI gate | ✅ Done |
-| 1 – Shared utilities | `task-event-store`, `structured-logger`, `task-lifecycle-errors`, `multi-ci-status-adapter` | 🔜 [AGEA-77](/AGEA/issues/AGEA-77) |
+| 1 – Shared utilities | `task-event-store`, `structured-logger`, `task-lifecycle-errors`, `multi-ci-status-adapter` | ✅ Done |
 | 2 – Stateful stores | `waitlist-store`, `task-webhook-store`, `task-webhook-delivery-worker`, `agent-auth-store` | 🔜 [AGEA-78](/AGEA/issues/AGEA-78) |
 | 3 – Provider adapters | `github-*-adapter`, `circleci-status-adapter`, `agent-ship-cycle-demo` | 🔜 [AGEA-79](/AGEA/issues/AGEA-79) |
 | 4 – HTTP boundary | `app.js`, `server.js`, endpoint tests | 🔜 Blocked on Phases 1–3 |
