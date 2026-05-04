@@ -4,6 +4,9 @@
   "description": "Local OSS release candidate for the AgentRail task lifecycle API",
   "license": "Apache-2.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "start": "node src/server.js",
     "demo": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-e2e-demo.mjs",

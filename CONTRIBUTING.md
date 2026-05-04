@@ -22,6 +22,14 @@ Run tests:
 npm test
 ```
 
+Check types:
+
+```bash
+npm run typecheck
+```
+
+Requires Node ≥22.6. The service runs directly from `src/` — no build step needed.
+
 ## Quality Bar
 
 - Keep public API changes backward-compatible.

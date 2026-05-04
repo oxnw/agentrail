@@ -9,35 +9,29 @@ This document covers the incremental migration of the AgentRail root service fro
 | 0 – Tooling baseline | `tsconfig.json`, `npm run typecheck`, CI gate | ✅ Done |
 | 1 – Shared utilities | `task-event-store`, `structured-logger`, `task-lifecycle-errors`, `multi-ci-status-adapter` | ✅ Done |
 | 2 – Stateful stores | `waitlist-store`, `task-webhook-store`, `task-webhook-delivery-worker`, `agent-auth-store` | ✅ Done |
-| 3 – Provider adapters | `github-*-adapter`, `circleci-status-adapter`, `agent-ship-cycle-demo` | 🔜 [AGEA-79](/AGEA/issues/AGEA-79) |
+| 3 – Provider adapters | `github-*-adapter`, `circleci-status-adapter`, `agent-ship-cycle-demo` | ✅ Done |
 | 4 – HTTP boundary | `app.js`, `server.js`, endpoint tests | ✅ Done |
-| 5 – Runtime finalization | `tsc` compile to `dist/`, final CI cleanup | 🔜 Blocked on Phase 4 |
+| 5 – Runtime finalization | Node native TS stripping, CI Node bump, final docs | ✅ Done |
 
-## Current `// @ts-nocheck` suppressions
+## Remaining `// @ts-nocheck` suppressions
 
-Files suppressed in Phase 0 (to be cleaned up in the phases above):
+Phases 1–4 are complete. The following files still carry `// @ts-nocheck` and are candidates for a follow-up cleanup pass:
 
 **src/**
-- `src/agent-auth-store.js` → Phase 2
-- `src/agent-ship-cycle-demo.js` → Phase 3
-- `src/task-event-store.js` → Phase 1
-- `src/task-webhook-store.js` → Phase 2
+- `src/agent-ship-cycle-demo.js` — Phase 3 adapter; a typed `.ts` twin exists alongside it
 
 **test/**
-- `test/ci-status-endpoint.test.js` → Phase 4
-- `test/circleci-status-adapter.test.js` → Phase 3
-- `test/github-actions-ci-adapter.test.js` → Phase 3
-- `test/github-review-feedback-adapter.test.js` → Phase 3
-- `test/github-review-feedback-adapter.test.js` → Phase 3
-- `test/github-submit-adapter.test.js` → Phase 3
-- `test/github-submit-integration.test.js` → Phase 4
-- `test/mock-github-server.js` → Phase 3
-- `test/multi-ci-status-adapter.test.js` → Phase 1
-- `test/repo-cleanup.test.js` → Phase 4
-- `test/task-event-store.test.js` → Phase 1
-- `test/task-webhook-delivery-worker.test.js` → Phase 2
-- `test/task-webhook-subscriptions.test.js` → Phase 2
-- `test/waitlist.test.js` → Phase 2
+- `test/ci-status-endpoint.test.js`
+- `test/circleci-status-adapter.test.js`
+- `test/github-actions-ci-adapter.test.js`
+- `test/github-review-feedback-adapter.test.js`
+- `test/github-submit-adapter.test.js`
+- `test/github-submit-integration.test.js`
+- `test/mock-github-server.js`
+- `test/repo-cleanup.test.js`
+- `test/task-webhook-delivery-worker.test.js`
+- `test/task-webhook-subscriptions.test.js`
+- `test/waitlist.test.js`
 
 **Rule:** When you convert a file to TypeScript, remove the `// @ts-nocheck` comment and fix the type errors before merging.
 
@@ -75,9 +69,9 @@ The approved dependency set for this migration is:
 
 Any dependency beyond this list requires CTO approval before adding. In particular:
 
-- Do not add a TypeScript loader (`ts-node`, `tsx`, `esbuild-register`) until Phase 5 when the runtime path is decided.
+- Do not add a TypeScript loader (`ts-node`, `tsx`, `esbuild-register`). The Phase 5 decision is to rely on Node ≥22.6 native type stripping — no external loader is needed.
 - Do not add a bundler.
-- Do not add type packages for third-party libraries unless a specific module conversion in Phase 1–4 requires them.
+- Do not add type packages for third-party libraries unless a specific module conversion requires them.
 
 ## `tsconfig.json` settings
 
@@ -85,6 +79,16 @@ The root `tsconfig.json` is deliberately lenient for the migration period:
 
 - `"strict": false` — will be tightened incrementally after each phase
 - `"allowJs": true` / `"checkJs": true` — enables checking JS files without renaming them
-- `"noEmit": true` — Phase 0 adds no build step; this changes in Phase 5
+- `"noEmit": true` — no build step; the service runs directly from `src/` via Node native type stripping
 
 Do not tighten `strict` or remove `allowJs`/`checkJs` without a separate plan review.
+
+## Runtime
+
+The service runs directly from `src/` — no separate build or `dist/` directory. Node ≥22.6 strips TypeScript types natively, so `node src/server.js` loads the re-export shim which resolves to `src/server.ts` at runtime.
+
+- `npm start` → `node src/server.js` (works on Node ≥22.6)
+- `npm run typecheck` → `tsc --noEmit` (type safety gate, no emit)
+- `npm test` → builds the TypeScript SDK then runs `node --test` against `test/*.test.{js,ts}`
+
+The minimum required Node version is **22.6.0**. This is documented in `package.json` `engines`.
