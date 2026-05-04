@@ -1,6 +1,6 @@
 """AgentRail Python SDK — agent-first task lifecycle API client."""
 
-from .client import DEFAULT_BASE_URL, AgentRailClient, RetryOptions, StreamOptions
+from .client import AgentRailClient, RetryOptions, StreamOptions
 from .errors import (
     AgentRailError,
     ConflictError,
@@ -42,7 +42,6 @@ from .models import (
     ReviewComment,
     ReviewDecision,
     ReviewOutcome,
-    ReviewParticipant,
     ShipEnvironment,
     ShipMode,
     ShipStatus,
@@ -132,7 +131,6 @@ __all__ = [
     "ReviewComment",
     "ReviewDecision",
     "ReviewOutcome",
-    "ReviewParticipant",
     "ShipEnvironment",
     "ShipMode",
     "ShipStatus",
