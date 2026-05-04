@@ -1,5 +1,9 @@
 # AgentRail
 
+[![CI](https://github.com/oxnw/agentrail/actions/workflows/ci.yml/badge.svg)](https://github.com/oxnw/agentrail/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A522.6-brightgreen)](https://nodejs.org/)
+
 AgentRail is an agent-native developer operations API for the full project
 lifecycle: issue -> PR -> CI -> review -> ship.
 
