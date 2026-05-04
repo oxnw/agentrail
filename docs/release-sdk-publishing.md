@@ -108,3 +108,15 @@ The workflow will:
 - smoke-test clean installs from the built artifacts
 - publish `@agentrail/sdk` to npm
 - publish `agentrail` to PyPI via OIDC
+
+## npm 2FA Publish Failure
+
+If the npm publish job fails with:
+
+`Two-factor authentication or granular access token with bypass 2fa enabled is required`
+
+replace the `NPM_TOKEN` GitHub secret with a granular npm token that has package
+publish access and bypasses 2FA for write actions. Then rerun only the failed
+GitHub Actions jobs for the release run. Do not rerun the full workflow after
+PyPI has already published the same version, because PyPI rejects duplicate
+files for an existing release.
