@@ -1,0 +1,1444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AgentRail — Open-source infrastructure for coding agents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&display=swap" />
+<style>
+  :root {
+    --bg: #e6ebf0;           /* cool blueprint paper */
+    --bg-2: #f4f6f9;         /* lighter cards */
+    --bg-3: #d6dde5;
+    --ink: #0c1420;          /* deep navy-black */
+    --ink-2: #3a4754;
+    --ink-3: #7a8696;
+    --line: #c4ccd6;
+    --line-2: #a8b2bf;
+    --accent: #00875a;       /* saturated emerald — distinctive on cool paper */
+    --accent-2: #ff5a3d;     /* coral marker — secondary highlighter */
+    --accent-dim: #006847;
+    --warn: #e8741f;
+    --cream: #00875a;        /* repurposed as 'editorial emerald' for italics */
+    --code-bg: #0c1420;      /* code blocks: deep navy */
+    --code-ink: #e6ebf0;
+    --serif: "Fraunces", "Times New Roman", serif;
+    --sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--ink); }
+  body {
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  ::selection { background: var(--accent-2); color: var(--ink); }
+
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+  /* ===== Layout primitives ===== */
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 0 32px; }
+  .row { display: flex; }
+  .col { display: flex; flex-direction: column; }
+
+  /* Subtle grid background */
+  .gridbg {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(12,20,32,0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(12,20,32,0.05) 1px, transparent 1px);
+    background-size: 88px 88px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 40%, transparent 100%);
+  }
+
+  main { position: relative; z-index: 1; }
+
+  /* ===== Mono label ===== */
+  .mono { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  .mono-accent { color: var(--accent); }
+  .mono-ink { color: var(--ink-2); }
+
+  /* ===== Top bar ===== */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px);
+    background: rgba(230,235,240,0.82);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    align-items: center; height: 56px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-mark {
+    width: 22px; height: 22px;
+  }
+  .brand-name {
+    font-family: var(--sans); font-weight: 600; letter-spacing: -0.01em; font-size: 16px;
+  }
+  .brand-version {
+    font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+    border: 1px solid var(--line-2); padding: 2px 6px; border-radius: 999px;
+    margin-left: 4px;
+  }
+  .nav-links { display: flex; gap: 28px; justify-self: center; }
+  .nav-links a { font-size: 13.5px; color: var(--ink-2); transition: color .15s; }
+  .nav-links a:hover { color: var(--ink); }
+  .nav-cta { justify-self: end; display: flex; align-items: center; gap: 14px; }
+  .nav-cta .docs { font-size: 13.5px; color: var(--ink-2); }
+  .btn {
+    font-family: var(--sans); font-size: 13.5px; font-weight: 500;
+    padding: 8px 14px; border-radius: 6px;
+    transition: transform .12s ease, background .15s, color .15s;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn-primary { background: var(--accent); color: #ffffff; }
+  .btn-primary:hover { background: #006847; }
+  .btn-ghost { color: var(--ink); border: 1px solid var(--line-2); }
+  .btn-ghost:hover { border-color: var(--ink-3); }
+  .btn .caret { transition: transform .15s; }
+  .btn:hover .caret { transform: translateX(2px); }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .waitlist-form {
+    display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 10px;
+    align-items: start;
+  }
+  .waitlist-form input {
+    width: 100%;
+    min-height: 38px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    background: rgba(244,246,249,0.86);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 13.5px;
+    padding: 8px 12px;
+    outline: none;
+  }
+  .waitlist-form input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0,135,90,0.14);
+  }
+  .waitlist-form input::placeholder { color: var(--ink-3); }
+  .waitlist-message {
+    grid-column: 1 / -1;
+    min-height: 18px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+  }
+
+  /* ===== Status pill ===== */
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+    padding: 5px 10px 5px 8px;
+    border: 1px solid var(--line-2); border-radius: 999px;
+    color: var(--ink-2);
+  }
+  .pill .dot {
+    width: 6px; height: 6px; border-radius: 999px; background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0,135,90,0.2);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 3px rgba(0,135,90,0.2); }
+    50% { box-shadow: 0 0 0 5px rgba(0,135,90,0.07); }
+  }
+
+  /* ===== HERO ===== */
+  .hero { position: relative; padding: 96px 0 56px; }
+  .hero-grid {
+    display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 64px;
+    align-items: end;
+  }
+  .eyebrow-row { display: flex; align-items: center; gap: 14px; margin-bottom: 36px; }
+  .eyebrow-line { flex: 1; height: 1px; background: linear-gradient(to right, var(--line-2), transparent); }
+  h1.headline {
+    font-family: var(--sans);
+    font-weight: 400;
+    font-size: clamp(48px, 6vw, 88px);
+    line-height: 0.96;
+    letter-spacing: -0.035em;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+  h1.headline em {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    color: var(--accent);
+  }
+  h1.headline .accent { color: var(--accent); font-style: normal; font-family: var(--sans); background: var(--accent-2); padding: 0 0.15em; }
+  .lede {
+    margin-top: 28px;
+    max-width: 520px;
+    font-size: 18px; line-height: 1.5;
+    color: var(--ink-2);
+  }
+  .hero-cta { margin-top: 36px; display: flex; gap: 12px; align-items: center; }
+  .hero-meta {
+    margin-top: 28px;
+    display: flex; gap: 24px; align-items: center;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+  }
+  .hero-meta .sep { color: var(--line-2); }
+
+  /* Hero right: live workflow card */
+  .workflow-card {
+    border: 1px solid var(--line);
+    background: var(--bg-2);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 30px 60px -30px rgba(12,20,32,0.22), 0 1px 0 rgba(12,20,32,0.05);
+  }
+  .wc-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+  }
+  .wc-header .lights { display: flex; gap: 6px; }
+  .wc-header .lights span { width: 9px; height: 9px; border-radius: 999px; background: var(--line-2); }
+  .wc-body { padding: 18px 18px 22px; }
+
+  /* Rail timeline */
+  .rail {
+    position: relative;
+    padding: 8px 4px 4px;
+  }
+  .rail-line {
+    position: absolute; left: 16px; right: 16px; top: 26px; height: 2px;
+    background: repeating-linear-gradient(to right, var(--line-2) 0 6px, transparent 6px 10px);
+  }
+  .rail-progress {
+    position: absolute; left: 16px; top: 26px; height: 2px;
+    background: var(--accent);
+    width: 62%;
+    transition: width .8s ease;
+  }
+  .rail-stations {
+    position: relative; display: grid; grid-template-columns: repeat(5, 1fr);
+  }
+  .station { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 18px; }
+  .station .node {
+    width: 16px; height: 16px; border-radius: 999px;
+    background: var(--bg-2); border: 2px solid var(--line-2);
+    z-index: 1;
+  }
+  .station.done .node { background: var(--accent); border-color: var(--accent); }
+  .station.active .node {
+    background: var(--bg-2);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(0,135,90,0.2);
+  }
+  .station .label { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.05em; text-transform: uppercase; }
+  .station.done .label, .station.active .label { color: var(--ink); }
+
+  /* Task list inside workflow card */
+  .task-list { margin-top: 22px; border-top: 1px solid var(--line); }
+  .task {
+    display: grid; grid-template-columns: 24px 1fr auto auto;
+    gap: 14px; align-items: center;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13.5px;
+  }
+  .task:last-child { border-bottom: none; }
+  .task .id { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .task .title { color: var(--ink); }
+  .task .title .repo { color: var(--ink-3); font-family: var(--mono); font-size: 11px; margin-left: 8px; }
+  .task .status {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 3px 7px; border-radius: 4px;
+  }
+  .status.running { color: var(--accent); background: rgba(0,135,90,0.08); border: 1px solid rgba(0,135,90,0.25); }
+  .status.review { color: var(--accent-2); background: rgba(255,90,61,0.08); border: 1px solid rgba(255,90,61,0.28); }
+  .status.merged { color: var(--ink-2); background: rgba(12,20,32,0.04); border: 1px solid var(--line-2); }
+  .status.queued { color: var(--ink-3); background: transparent; border: 1px solid var(--line-2); }
+  .task .agent { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .task .agent .av {
+    display: inline-block; width: 16px; height: 16px; border-radius: 4px;
+    background: linear-gradient(135deg, #c4bdac, #8a8f93);
+    margin-right: 6px; vertical-align: -3px;
+    border: 1px solid var(--line-2);
+  }
+
+  /* ===== Section header ===== */
+  section.sec { padding: 100px 0; position: relative; }
+  .sec-header {
+    display: grid; grid-template-columns: 1fr 1.6fr; gap: 64px;
+    align-items: end;
+    margin-bottom: 56px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  .sec-num {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+    color: var(--accent);
+  }
+  .sec-kicker { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .sec-kicker .bar { width: 28px; height: 1px; background: var(--accent); }
+  h2.sec-title {
+    font-family: var(--sans); font-weight: 400;
+    font-size: clamp(36px, 4.4vw, 60px); line-height: 1.0;
+    letter-spacing: -0.025em; color: var(--ink);
+    text-wrap: balance;
+  }
+  h2.sec-title em { font-family: var(--serif); font-style: italic; font-weight: 300; color: var(--accent); }
+  .sec-blurb { font-size: 17px; color: var(--ink-2); max-width: 540px; }
+
+  /* ===== PROBLEM ===== */
+  .problem {
+    background: linear-gradient(180deg, transparent, rgba(12,20,32,0.025));
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .problem-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
+    border-left: 1px solid var(--line);
+  }
+  .problem-cell {
+    border-right: 1px solid var(--line);
+    padding: 36px 28px 40px;
+    min-height: 240px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    position: relative;
+  }
+  .problem-cell .num {
+    font-family: var(--serif); font-style: italic; font-size: 36px; color: var(--accent); font-weight: 300;
+  }
+  .problem-cell h3 {
+    font-family: var(--sans); font-weight: 500; font-size: 22px; line-height: 1.2;
+    letter-spacing: -0.015em; color: var(--ink); margin-top: 16px;
+  }
+  .problem-cell p { color: var(--ink-2); font-size: 14.5px; margin-top: 12px; }
+  .problem-cell .glyph {
+    position: absolute; right: 22px; top: 22px;
+    font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.06em;
+  }
+
+  /* ===== Lifecycle (5 stages) ===== */
+  .lifecycle {
+    display: grid; grid-template-columns: 280px 1fr; gap: 64px;
+  }
+  .stage-list {
+    display: flex; flex-direction: column;
+    border-top: 1px solid var(--line);
+  }
+  .stage-item {
+    display: grid; grid-template-columns: 36px 1fr 14px;
+    gap: 16px; align-items: center;
+    padding: 18px 4px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .stage-item:hover { background: rgba(12,20,32,0.03); }
+  .stage-item .sn { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .stage-item .sname { font-size: 16px; font-weight: 500; letter-spacing: -0.01em; }
+  .stage-item .arrow { color: var(--ink-3); transition: color .15s, transform .15s; }
+  .stage-item.active { background: rgba(0,135,90,0.07); }
+  .stage-item.active .sn { color: var(--accent); }
+  .stage-item.active .sname { color: var(--ink); }
+  .stage-item.active .arrow { color: var(--accent); transform: translateX(2px); }
+
+  .stage-detail {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 32px;
+    background: var(--bg-2);
+    min-height: 380px;
+    display: flex; flex-direction: column;
+    box-shadow: 0 1px 0 rgba(12,20,32,0.04);
+  }
+  .stage-detail .sd-num {
+    font-family: var(--serif); font-style: italic; font-size: 64px; font-weight: 300;
+    color: var(--accent); line-height: 1; opacity: 0.5;
+  }
+  .stage-detail h3 {
+    font-family: var(--sans); font-weight: 500; font-size: 32px;
+    letter-spacing: -0.02em; margin-top: 8px;
+  }
+  .stage-detail h3 em { font-family: var(--serif); font-style: italic; font-weight: 300; color: var(--accent); }
+  .stage-detail .sd-blurb { color: var(--ink-2); font-size: 15.5px; margin-top: 14px; max-width: 540px; }
+  .stage-detail .sd-code {
+    margin-top: auto;
+    background: var(--code-bg);
+    border: 1px solid var(--code-bg);
+    border-radius: 6px;
+    padding: 16px 18px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    color: #a8aeac;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .sd-code .k { color: #c8a8ff; }
+  .sd-code .s { color: #c8ff3e; }
+  .sd-code .c { color: #6b716f; font-style: italic; }
+  .sd-code .f { color: #f0e6d2; }
+  .sd-code .n { color: #ffb37a; }
+
+  /* ===== API surface (capabilities) ===== */
+  .caps {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid var(--line);
+    border-left: 1px solid var(--line);
+  }
+  .cap {
+    padding: 32px 24px;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    min-height: 200px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    position: relative;
+    transition: background .2s;
+  }
+  .cap:hover { background: rgba(0,135,90,0.05); }
+  .cap-icon {
+    width: 32px; height: 32px;
+    color: var(--accent);
+    margin-bottom: 18px;
+  }
+  .cap h4 { font-size: 17px; font-weight: 500; letter-spacing: -0.01em; color: var(--ink); }
+  .cap p { font-size: 13.5px; color: var(--ink-2); margin-top: 8px; line-height: 1.5; }
+  .cap .endpoint {
+    margin-top: 16px;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+  }
+  .cap .endpoint .verb { color: var(--accent); }
+
+  /* ===== CODE BLOCK section ===== */
+  .code-section { padding: 120px 0; }
+  .code-grid {
+    display: grid; grid-template-columns: 1fr 1.2fr; gap: 80px; align-items: center;
+  }
+  .code-window {
+    border: 1px solid #0a0b0a;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--code-bg);
+    box-shadow: 0 30px 60px -30px rgba(12,20,32,0.5);
+  }
+  .code-tabs {
+    display: flex;
+    border-bottom: 1px solid #0a0b0a;
+    background: #0d0e0d;
+  }
+  .code-tab {
+    padding: 11px 18px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em;
+    color: #6b716f;
+    border-right: 1px solid #232624;
+    position: relative;
+  }
+  .code-tab.active {
+    color: var(--code-ink); background: var(--code-bg);
+  }
+  .code-tab.active::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+    background: #c8ff3e;
+  }
+  .code-body {
+    padding: 22px 24px 26px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.75;
+    color: var(--code-ink);
+    white-space: pre;
+    overflow-x: auto;
+    counter-reset: line;
+  }
+  .code-body .line { display: block; }
+  .code-body .line::before {
+    content: counter(line); counter-increment: line;
+    display: inline-block; width: 24px; color: #6b716f;
+    font-size: 11px; text-align: right; margin-right: 16px; user-select: none;
+  }
+  .tk-k { color: #c8a8ff; }            /* keyword */
+  .tk-s { color: #c8ff3e; }             /* string */
+  .tk-f { color: #f0e6d2; }             /* function */
+  .tk-c { color: #6b716f; font-style: italic; } /* comment */
+  .tk-n { color: #ffb37a; }             /* number/literal */
+  .tk-p { color: #a8aeac; }             /* punctuation */
+  .tk-t { color: #7ad4ff; }             /* type */
+
+  /* ===== Comparison ===== */
+  .compare {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .compare-row {
+    display: grid; grid-template-columns: 1.35fr 1fr 1.18fr;
+    border-bottom: 1px solid var(--line);
+  }
+  .compare-row:last-child { border-bottom: none; }
+  .compare-row > div {
+    padding: 18px 22px;
+    border-right: 1px solid var(--line);
+    font-size: 14px;
+    display: flex; align-items: center;
+  }
+  .compare-row > div:last-child { border-right: none; }
+  .compare-head {
+    background: rgba(12,20,32,0.035);
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .compare-head .self { color: var(--accent); }
+  .compare-row .label { color: var(--ink); font-weight: 500; }
+  .compare-cell { gap: 8px; flex-wrap: wrap; }
+  .compare-cell .icon { margin-right: 2px; flex-shrink: 0; }
+  .icon-no { color: #b3afa3; }
+  .icon-half { color: var(--warn); }
+  .icon-yes { color: var(--accent); }
+  .compare-row .self-cell { background: rgba(0,135,90,0.06); }
+  .badge-coming {
+    display: inline-flex; align-items: center;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 6px; border-radius: 4px;
+    color: var(--warn);
+    background: rgba(232,116,31,0.09);
+    border: 1px solid rgba(232,116,31,0.28);
+  }
+  .waitlist-panel {
+    margin-top: 28px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(244,246,249,0.72);
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 28px;
+    align-items: center;
+  }
+  .waitlist-copy h3 {
+    font-size: 24px;
+    line-height: 1.15;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    margin-top: 8px;
+  }
+  .waitlist-copy p {
+    color: var(--ink-2);
+    font-size: 14px;
+    margin-top: 10px;
+    max-width: 560px;
+  }
+
+  /* ===== Stats / metrics ===== */
+  .metrics {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border-top: 1px solid var(--line);
+    border-left: 1px solid var(--line);
+  }
+  .metric {
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 32px 28px;
+  }
+  .metric .num {
+    font-family: var(--sans); font-weight: 300; font-size: 64px;
+    letter-spacing: -0.04em; line-height: 1; color: var(--ink);
+  }
+  .metric .num.word {
+    font-size: clamp(34px, 4vw, 48px);
+    letter-spacing: -0.025em;
+  }
+  .metric .num em { font-family: var(--serif); font-style: italic; color: var(--accent); font-weight: 300; }
+  .metric .num em.highlight { background: var(--accent-2); padding: 0 0.1em; color: var(--accent); }
+  .metric .num .unit { font-size: 28px; color: var(--ink-3); }
+  .metric .desc { color: var(--ink-2); font-size: 13.5px; margin-top: 14px; max-width: 220px; }
+  .metric .src { font-family: var(--mono); font-size: 10px; color: var(--ink-3); margin-top: 10px; letter-spacing: 0.04em; }
+
+  /* ===== Quote ===== */
+  .quote-sec {
+    padding: 120px 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .quote-grid { display: grid; grid-template-columns: 200px 1fr 200px; gap: 48px; align-items: center; }
+  blockquote.quote {
+    font-family: var(--serif); font-style: italic; font-weight: 300;
+    font-size: clamp(28px, 3vw, 40px); line-height: 1.25;
+    color: var(--accent); letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  blockquote.quote .q-mark { color: var(--accent); font-style: normal; font-family: var(--sans); opacity: 0.4; }
+  .quote-author { display: flex; align-items: center; gap: 12px; margin-top: 28px; }
+  .quote-author .avatar {
+    width: 36px; height: 36px; border-radius: 999px;
+    background: linear-gradient(135deg, #c4bdac, #8a8f93);
+    border: 1px solid var(--line-2);
+  }
+  .quote-author .who { font-size: 14px; }
+  .quote-author .who .name { color: var(--ink); }
+  .quote-author .who .role { color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
+
+  /* ===== CTA ===== */
+  .cta {
+    padding: 140px 0 120px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-rail {
+    position: absolute; left: 0; right: 0; top: 50%;
+    height: 1px; background: var(--line);
+  }
+  .cta-rail::before, .cta-rail::after {
+    content: ''; position: absolute; top: -3px; width: 7px; height: 7px;
+    background: var(--accent); border-radius: 999px;
+  }
+  .cta-rail::before { left: 8%; }
+  .cta-rail::after { right: 8%; }
+  h2.cta-title {
+    font-family: var(--sans); font-weight: 400;
+    font-size: clamp(48px, 6vw, 88px); line-height: 0.96;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+    max-width: 900px; margin: 0 auto;
+    position: relative;
+  }
+  h2.cta-title em { font-family: var(--serif); font-style: italic; font-weight: 300; color: var(--accent); }
+  h2.cta-title .accent { color: #ffffff; background: var(--accent); padding: 0 0.12em; }
+  .cta-sub { color: var(--ink-2); font-size: 17px; margin-top: 24px; }
+  .cta-actions { margin-top: 40px; display: flex; gap: 12px; justify-content: center; position: relative; }
+
+  /* ===== Footer ===== */
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 48px 0 32px;
+  }
+  .foot-grid {
+    display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr; gap: 48px;
+  }
+  .foot-col h5 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px; }
+  .foot-col a { display: block; color: var(--ink-2); font-size: 13.5px; padding: 4px 0; transition: color .15s; }
+  .foot-col a:hover { color: var(--ink); }
+  .foot-bottom {
+    margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+  }
+
+  /* ===== Marquee strip ===== */
+  .strip {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 18px 0;
+    overflow: hidden;
+    background: rgba(12,20,32,0.03);
+  }
+  .strip-track {
+    display: flex; gap: 56px;
+    animation: marquee 50s linear infinite;
+    width: max-content;
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+    letter-spacing: 0.04em;
+  }
+  .strip-track span { display: inline-flex; align-items: center; gap: 14px; }
+  .strip-track .glyph { color: var(--accent); }
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  /* ===== Tweaks panel scoped overrides ===== */
+  body.compact .sec { padding: 72px 0; }
+
+  @media (max-width: 960px) {
+    .hero-grid, .sec-header, .lifecycle, .code-grid, .quote-grid { grid-template-columns: 1fr; gap: 32px; }
+    .problem-grid, .caps, .metrics { grid-template-columns: 1fr 1fr; }
+    .compare { overflow-x: auto; }
+    .compare-row { grid-template-columns: 220px 180px 220px; min-width: 620px; font-size: 12px; }
+    .waitlist-panel { grid-template-columns: 1fr; }
+    .waitlist-form { grid-template-columns: 1fr; }
+    .nav-links { display: none; }
+    .foot-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="gridbg" aria-hidden="true"></div>
+
+<!-- ============== NAV ============== -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <!-- Two parallel rails with stations -->
+        <line x1="2" y1="8" x2="22" y2="8"/>
+        <line x1="2" y1="16" x2="22" y2="16"/>
+        <circle cx="6" cy="8" r="1.5" fill="currentColor"/>
+        <circle cx="12" cy="8" r="1.5" fill="currentColor"/>
+        <circle cx="18" cy="8" r="1.5" fill="currentColor"/>
+        <circle cx="6" cy="16" r="1.5" fill="currentColor"/>
+        <circle cx="12" cy="16" r="1.5" fill="#c8ff3e" stroke="#c8ff3e"/>
+        <circle cx="18" cy="16" r="1.5" fill="currentColor"/>
+      </svg>
+      <span class="brand-name">AgentRail</span>
+      <span class="brand-version">open source</span>
+    </div>
+    <nav class="nav-links">
+      <a href="#product">Product</a>
+      <a href="#lifecycle">Lifecycle</a>
+      <a href="#sdk">SDK</a>
+      <a href="#docs">Docs</a>
+      <a href="#cloud-waitlist">Cloud (Waitlist)</a>
+      <a href="#changelog">Changelog</a>
+    </nav>
+    <div class="nav-cta">
+      <a href="https://github.com/agentrail/agentrail" class="docs">GitHub</a>
+      <a href="https://github.com/agentrail/agentrail" class="btn btn-primary">
+        Star on GitHub
+        <svg class="caret" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+      </a>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- ============== HERO ============== -->
+<section class="hero">
+  <div class="wrap">
+    <div class="eyebrow-row">
+      <span class="pill"><span class="dot"></span>v0.4 · open source</span>
+      <span class="eyebrow-line"></span>
+      <span class="mono">A&nbsp;·&nbsp;R&nbsp;/&nbsp;Q2&nbsp;2026</span>
+    </div>
+
+    <div class="hero-grid">
+      <div>
+        <h1 class="headline">
+          Open-source <em>infrastructure</em><br/>
+          for coding<br/>agents.
+        </h1>
+        <p class="lede">
+          Run AgentRail on your machine<br/>with your own API keys. Give your agents<br/>
+          structured task lifecycles,<br/>CI feedback loops, and event streams —
+          <br/>without sending anything<br/>to a third party.
+        </p>
+        <div class="hero-cta">
+          <a href="#" class="btn btn-primary">
+            Star on GitHub
+            <svg class="caret" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+          </a>
+          <a href="#sdk" class="btn btn-ghost">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 3l-3 3.5L4 10M9 3l3 3.5L9 10"/></svg>
+            Read the docs
+          </a>
+        </div>
+        <div class="hero-meta">
+          <span>npm i agentrail · pip install agentrail · MIT License</span>
+        </div>
+      </div>
+
+      <!-- Right: live workflow card -->
+      <div class="workflow-card">
+        <div class="wc-header">
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div class="lights"><span></span><span></span><span></span></div>
+            <span>agentrail · runs / live</span>
+          </div>
+          <span style="color:var(--accent);">● 12 active</span>
+        </div>
+        <div class="wc-body">
+          <div class="rail">
+            <div class="rail-line"></div>
+            <div class="rail-progress" id="railProgress"></div>
+            <div class="rail-stations">
+              <div class="station done"><div class="node"></div><div class="label">Queue</div></div>
+              <div class="station done"><div class="node"></div><div class="label">Plan</div></div>
+              <div class="station done"><div class="node"></div><div class="label">Execute</div></div>
+              <div class="station active"><div class="node"></div><div class="label">Review</div></div>
+              <div class="station"><div class="node"></div><div class="label">Ship</div></div>
+            </div>
+          </div>
+
+          <div class="task-list">
+            <div class="task">
+              <div class="id">#A41</div>
+              <div class="title">Migrate auth handler to v2 API<span class="repo">acme/payments</span></div>
+              <div class="status review">In review</div>
+              <div class="agent"><span class="av"></span>cursor-3</div>
+            </div>
+            <div class="task">
+              <div class="id">#A40</div>
+              <div class="title">Fix flaky test in checkout suite<span class="repo">acme/web</span></div>
+              <div class="status running">Running</div>
+              <div class="agent"><span class="av"></span>claude-code</div>
+            </div>
+            <div class="task">
+              <div class="id">#A39</div>
+              <div class="title">Add Stripe webhook for refunds<span class="repo">acme/payments</span></div>
+              <div class="status merged">Merged</div>
+              <div class="agent"><span class="av"></span>devin-prod</div>
+            </div>
+            <div class="task">
+              <div class="id">#A38</div>
+              <div class="title">Refactor logger to OTel spans<span class="repo">acme/core</span></div>
+              <div class="status queued">Queued</div>
+              <div class="agent"><span class="av"></span>internal-01</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== Marquee strip ============== -->
+<div class="strip" aria-hidden="true">
+  <div class="strip-track">
+    <span><span class="glyph">◆</span> open source</span>
+    <span><span class="glyph">◇</span> MIT license</span>
+    <span><span class="glyph">◆</span> runs locally</span>
+    <span><span class="glyph">◇</span> bring your own keys</span>
+    <span><span class="glyph">◆</span> structured task lifecycle</span>
+    <span><span class="glyph">◇</span> CI feedback loop</span>
+    <span><span class="glyph">◆</span> event stream</span>
+    <span><span class="glyph">◇</span> TypeScript SDK</span>
+    <span><span class="glyph">◆</span> Python SDK</span>
+    <!-- duplicate for marquee -->
+    <span><span class="glyph">◆</span> open source</span>
+    <span><span class="glyph">◇</span> MIT license</span>
+    <span><span class="glyph">◆</span> runs locally</span>
+    <span><span class="glyph">◇</span> bring your own keys</span>
+    <span><span class="glyph">◆</span> structured task lifecycle</span>
+    <span><span class="glyph">◇</span> CI feedback loop</span>
+    <span><span class="glyph">◆</span> event stream</span>
+    <span><span class="glyph">◇</span> TypeScript SDK</span>
+    <span><span class="glyph">◆</span> Python SDK</span>
+  </div>
+</div>
+
+<!-- ============== PROBLEM ============== -->
+<section class="sec problem" id="problem">
+  <div class="wrap">
+    <div class="sec-header">
+      <div>
+        <div class="sec-kicker"><span class="bar"></span><span class="sec-num">01 / The problem</span></div>
+        <h2 class="sec-title">Coding agents are <em>brilliant</em> at typing.<br/>Less so at shipping.</h2>
+      </div>
+      <p class="sec-blurb">
+        Today's coding agents handle the easy part — writing code. The rest of the
+        software lifecycle is glued together with brittle scripts, unscoped tokens,
+        and ad-hoc prompts. AgentRail is the open-source layer that fills the gap.
+      </p>
+    </div>
+
+    <div class="problem-grid">
+      <div class="problem-cell">
+        <div class="num">i.</div>
+        <span class="glyph">PROBLEM</span>
+        <div>
+          <h3>No lifecycle, just a prompt and a prayer.</h3>
+          <p>Agents lose context between turns, retry on the wrong commits, and re-ask the same question because nothing tracks state.</p>
+        </div>
+      </div>
+      <div class="problem-cell">
+        <div class="num">ii.</div>
+        <span class="glyph">PROBLEM</span>
+        <div>
+          <h3>Personal access tokens with full repo scope.</h3>
+          <p>Most agent stacks reuse the developer's GitHub PAT — meaning every run holds keys to every repository in the org.</p>
+        </div>
+      </div>
+      <div class="problem-cell">
+        <div class="num">iii.</div>
+        <span class="glyph">PROBLEM</span>
+        <div>
+          <h3>CI is a wall, not a feedback&nbsp;loop.</h3>
+          <p>Test failures arrive as opaque logs ten minutes after the agent moved on, with no structured signal to act on.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== PRODUCT / CAPS ============== -->
+<section class="sec" id="product">
+  <div class="wrap">
+    <div class="sec-header">
+      <div>
+        <div class="sec-kicker"><span class="bar"></span><span class="sec-num">02 / The platform</span></div>
+        <h2 class="sec-title">Eight primitives.<br/>One <em>open-source</em> backbone.</h2>
+      </div>
+      <p class="sec-blurb">
+        AgentRail is the open-source middle layer between your agent and the rest
+        of software delivery. Run it locally, extend it freely, and own your data.
+        Each primitive is a narrow API with a typed SDK on top.
+      </p>
+    </div>
+
+    <div class="caps">
+      <div class="cap">
+        <div>
+          <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="3" y="4" width="18" height="5" rx="1"/>
+            <rect x="3" y="11" width="18" height="5" rx="1"/>
+            <rect x="3" y="18" width="18" height="2" rx="1"/>
+            <circle cx="7" cy="6.5" r="0.8" fill="currentColor"/>
+            <circle cx="7" cy="13.5" r="0.8" fill="currentColor"/>
+          </svg>
+          <h4>Tasks</h4>
+          <p>Structured lifecycle objects with state, retries, and idempotent transitions. The unit of work for every agent.</p>
+        </div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/tasks</div>
+      </div>
+      <div class="cap">
+        <div>
+          <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M12 2v4M12 18v4M4 12H2M22 12h-2M5 5l3 3M16 16l3 3M5 19l3-3M16 8l3-3"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          <h4>Runs</h4>
+          <p>Sandboxed execution contexts with provisioned environments, timeouts, and replayable transcripts.</p>
+        </div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/runs</div>
+      </div>
+      <div class="cap">
+        <div>
+          <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <path d="M3 9h18M9 3v18"/>
+            <path d="M13 14l2 2 4-4" stroke="#c8ff3e"/>
+          </svg>
+          <h4>CI Feedback</h4>
+          <p>Structured test, lint, and build results streamed to the agent as typed events — not log scraping.</p>
+        </div>
+        <div class="endpoint"><span class="verb">GET</span>&nbsp;/v1/runs/:id/checks</div>
+      </div>
+      <div class="cap">
+        <div>
+          <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="4" y="10" width="16" height="11" rx="2"/>
+            <path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+            <circle cx="12" cy="15.5" r="1.2" fill="currentColor"/>
+          </svg>
+          <h4>Scoped Auth</h4>
+          <p>Credential policies are modeled per task — repo, branch, and label scopes are explicit so org-wide tokens can be phased out as adapters mature.</p>
+        </div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/credentials</div>
+      </div>
+      <div class="cap">
+        <div>
+          <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M3 12h4l2-7 4 14 2-7h6"/>
+          </svg>
+          <h4>Event Stream</h4>
+          <p>Server-sent events for every state change. Pipe agent activity into Slack, your IDE, or your own observability stack.</p>
+        </div>
+        <div class="endpoint"><span class="verb">GET</span>&nbsp;/v1/events</div>
+      </div>
+      <div class="cap">
+        <div>
+          <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/>
+            <path d="M8 7l3 9M16 7l-3 9"/>
+          </svg>
+          <h4>Webhooks</h4>
+          <p>Typed delivery with retries, signatures, and replay. Wire AgentRail into the rest of your delivery pipeline.</p>
+        </div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/webhooks</div>
+      </div>
+      <div class="cap">
+        <div>
+          <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M4 7h16M4 12h16M4 17h10"/>
+            <circle cx="19" cy="17" r="2"/>
+          </svg>
+          <h4>Audit Log</h4>
+          <p>Every action taken, every token used, every file touched — append-only and exportable.</p>
+        </div>
+        <div class="endpoint"><span class="verb">GET</span>&nbsp;/v1/audit</div>
+      </div>
+      <div class="cap">
+        <div>
+          <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M21 12a9 9 0 1 1-3-6.7"/>
+            <path d="M21 4v5h-5"/>
+          </svg>
+          <h4>Replay &amp; Rollback</h4>
+          <p>Re-run any task from any prior state with the exact same inputs. Roll back a merge with one call.</p>
+        </div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/tasks/:id/replay</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== LIFECYCLE ============== -->
+<section class="sec" id="lifecycle" style="border-top: 1px solid var(--line);">
+  <div class="wrap">
+    <div class="sec-header">
+      <div>
+        <div class="sec-kicker"><span class="bar"></span><span class="sec-num">03 / Task lifecycle</span></div>
+        <h2 class="sec-title">Five stations.<br/>One <em>typed</em> rail.</h2>
+      </div>
+      <p class="sec-blurb">
+        Every task on AgentRail moves through five well-defined stages.
+        Transitions are atomic, observable, and reversible — agents can fail
+        loudly, retry safely, and never lose context mid-flight.
+      </p>
+    </div>
+
+    <div class="lifecycle">
+      <div class="stage-list" id="stageList">
+        <div class="stage-item active" data-stage="0">
+          <span class="sn">01</span><span class="sname">Queue</span>
+          <svg class="arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+        </div>
+        <div class="stage-item" data-stage="1">
+          <span class="sn">02</span><span class="sname">Plan</span>
+          <svg class="arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+        </div>
+        <div class="stage-item" data-stage="2">
+          <span class="sn">03</span><span class="sname">Execute</span>
+          <svg class="arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+        </div>
+        <div class="stage-item" data-stage="3">
+          <span class="sn">04</span><span class="sname">Review</span>
+          <svg class="arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+        </div>
+        <div class="stage-item" data-stage="4">
+          <span class="sn">05</span><span class="sname">Ship</span>
+          <svg class="arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+        </div>
+      </div>
+
+      <div class="stage-detail" id="stageDetail">
+        <div class="sd-num">01</div>
+        <h3 id="sdTitle">Queue&nbsp;— <em>everything starts as an intent</em></h3>
+        <p class="sd-blurb" id="sdBlurb">
+          Tasks enter the queue from anywhere — a webhook, a Slack thread, a Linear
+          ticket, an SDK call. Each gets a stable ID, a typed payload, and a
+          deterministic priority. No work happens until the queue dispatches.
+        </p>
+        <pre class="sd-code" id="sdCode"><span class="c">// queue a task from anywhere</span>
+<span class="k">const</span> task <span class="k">=</span> <span class="k">await</span> <span class="f">agentrail.tasks.create</span>({
+  agent<span class="k">:</span> <span class="s">"claude-code"</span>,
+  repo<span class="k">:</span>  <span class="s">"acme/payments"</span>,
+  intent<span class="k">:</span> <span class="s">"migrate auth handler to v2 API"</span>,
+  priority<span class="k">:</span> <span class="n">"normal"</span>,
+});
+<span class="c">// → task.id = "tsk_8Hk2..."  state = "queued"</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== SDK CODE ============== -->
+<section class="sec code-section" id="sdk" style="border-top: 1px solid var(--line);">
+  <div class="wrap">
+    <div class="code-grid">
+      <div>
+        <div class="sec-kicker"><span class="bar"></span><span class="sec-num">04 / SDK</span></div>
+        <h2 class="sec-title" style="font-size: clamp(36px, 4vw, 52px);">
+          A <em>typed</em> SDK,<br/>not a wrapper.
+        </h2>
+        <p class="sec-blurb" style="margin-top: 24px;">
+          First-class TypeScript and Python clients with full schema generation,
+          streaming, retries, and idempotency baked in. Every event is a typed
+          discriminated union — no <code style="font-family:var(--mono);font-size:13px;color:var(--accent);background:var(--bg-3);padding:1px 6px;border-radius:3px;">any</code> escape hatches.
+          No API key required for local runs.
+        </p>
+        <div style="margin-top: 32px; display: flex; gap: 24px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.04em;">
+          <span>◆ TypeScript 5.4+</span>
+          <span>◇ Python 3.10+</span>
+          <span>◆ ESM &amp; CJS</span>
+        </div>
+      </div>
+
+      <div class="code-window">
+        <div class="code-tabs">
+          <div class="code-tab active">index.ts</div>
+          <div class="code-tab">agent.py</div>
+          <div class="code-tab">schema.ts</div>
+        </div>
+        <pre class="code-body"><span class="line"><span class="tk-k">import</span> <span class="tk-p">{</span> AgentRail <span class="tk-p">}</span> <span class="tk-k">from</span> <span class="tk-s">"@agentrail/sdk"</span><span class="tk-p">;</span></span><span class="line"></span><span class="line"><span class="tk-k">const</span> rail <span class="tk-p">=</span> <span class="tk-k">new</span> <span class="tk-t">AgentRail</span><span class="tk-p">({</span> token<span class="tk-p">:</span> process<span class="tk-p">.</span>env<span class="tk-p">.</span>AR_KEY <span class="tk-p">});</span></span><span class="line"></span><span class="line"><span class="tk-c">// Subscribe to typed events for a running task</span></span><span class="line"><span class="tk-k">for</span> <span class="tk-k">await</span> <span class="tk-p">(</span><span class="tk-k">const</span> event <span class="tk-k">of</span> rail<span class="tk-p">.</span><span class="tk-f">events</span><span class="tk-p">.</span><span class="tk-f">stream</span><span class="tk-p">({</span></span><span class="line">  task<span class="tk-p">:</span> <span class="tk-s">"tsk_8Hk2bV"</span><span class="tk-p">,</span></span><span class="line">  filter<span class="tk-p">:</span> <span class="tk-p">[</span><span class="tk-s">"check.failed"</span><span class="tk-p">,</span> <span class="tk-s">"review.requested"</span><span class="tk-p">],</span></span><span class="line"><span class="tk-p">}))</span> <span class="tk-p">{</span></span><span class="line">  <span class="tk-k">switch</span> <span class="tk-p">(</span>event<span class="tk-p">.</span>type<span class="tk-p">)</span> <span class="tk-p">{</span></span><span class="line">    <span class="tk-k">case</span> <span class="tk-s">"check.failed"</span><span class="tk-p">:</span></span><span class="line">      <span class="tk-k">await</span> rail<span class="tk-p">.</span>tasks<span class="tk-p">.</span><span class="tk-f">retry</span><span class="tk-p">(</span>event<span class="tk-p">.</span>taskId<span class="tk-p">,</span> <span class="tk-p">{</span></span><span class="line">        hint<span class="tk-p">:</span> event<span class="tk-p">.</span>failure<span class="tk-p">.</span>summary<span class="tk-p">,</span></span><span class="line">      <span class="tk-p">});</span></span><span class="line">      <span class="tk-k">break</span><span class="tk-p">;</span></span><span class="line">    <span class="tk-k">case</span> <span class="tk-s">"review.requested"</span><span class="tk-p">:</span></span><span class="line">      <span class="tk-k">await</span> <span class="tk-f">notifySlack</span><span class="tk-p">(</span>event<span class="tk-p">.</span>review<span class="tk-p">.</span>url<span class="tk-p">);</span></span><span class="line">      <span class="tk-k">break</span><span class="tk-p">;</span></span><span class="line">  <span class="tk-p">}</span></span><span class="line"><span class="tk-p">}</span></span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== METRICS ============== -->
+<section class="sec" id="metrics" style="border-top: 1px solid var(--line);">
+  <div class="wrap">
+    <div class="sec-header">
+      <div>
+        <div class="sec-kicker"><span class="bar"></span><span class="sec-num">05 / Availability</span></div>
+        <h2 class="sec-title">What ships today.<br/>What waits for <em>Cloud</em>.</h2>
+      </div>
+      <p class="sec-blurb">
+        The public page separates the open-source package from planned managed
+        features. Cloud roadmap items are marked as waitlist-only until the
+        hosted service is ready.
+      </p>
+    </div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="num word">Today</div>
+        <p class="desc">Run the open-source package locally with your own keys and data.</p>
+        <div class="src">OSS package</div>
+      </div>
+      <div class="metric">
+        <div class="num word">Typed</div>
+        <p class="desc">Use API primitives and SDK shapes instead of ad-hoc prompts.</p>
+        <div class="src">TypeScript + Python</div>
+      </div>
+      <div class="metric">
+        <div class="num word">Scoped</div>
+        <p class="desc">Local runs model credentials with explicit task scope instead of normalizing org-wide token sharing.</p>
+        <div class="src">OSS credential model</div>
+      </div>
+      <div class="metric">
+        <div class="num word"><em>Waitlist</em></div>
+        <p class="desc">Hosted Cloud coordination is planned, not live. Join for managed availability updates.</p>
+        <div class="src">Cloud roadmap</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== COMPARE ============== -->
+<section class="sec" id="compare">
+  <div class="wrap">
+    <div class="sec-header">
+      <div>
+        <div class="sec-kicker"><span class="bar"></span><span class="sec-num">06 / OSS vs Cloud waitlist</span></div>
+        <h2 class="sec-title">Start free.<br/>Join the <em>Cloud waitlist</em>.</h2>
+      </div>
+      <p class="sec-blurb">
+        Everything you need to run coding agents ships in the open-source
+        package. Cloud team features are on the roadmap and waitlist-gated until
+        the managed service is ready.
+      </p>
+    </div>
+
+    <div class="compare">
+      <div class="compare-row compare-head">
+        <div>Feature</div>
+        <div class="self">OSS (free, MIT)</div>
+        <div>Cloud waitlist</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Task lifecycle engine</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">CI feedback loop</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Event stream</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">TypeScript + Python SDKs</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Run locally with your keys</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">GitHub / Linear / CI integration</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Shared team memory</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>&mdash;</div>
+        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Team workspace</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Hosted sync across agents</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>&mdash;</div>
+        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Managed sync</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Run history + dashboards</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>&mdash;</div>
+        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Hosted dashboards</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Managed integrations</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>&mdash;</div>
+        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Managed connectors</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Audit log + compliance</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>Local</div>
+        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Managed audit trail</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Support</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>Community</div>
+        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Planned team support</div>
+      </div>
+    </div>
+
+    <div class="waitlist-panel" id="cloud-waitlist">
+      <div class="waitlist-copy">
+        <span class="mono mono-accent">Cloud waitlist</span>
+        <h3>Cloud is coming, not live.</h3>
+        <p>Join the list for hosted sync, team memory, managed integrations, and compliance workflow updates. The open-source package is ready to install today.</p>
+      </div>
+      <form class="waitlist-form" data-waitlist-form action="mailto:hello@agentrail.dev?subject=AgentRail%20Cloud%20waitlist" method="post" enctype="text/plain">
+        <label class="sr-only" for="cloud-email">Email address</label>
+        <input id="cloud-email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required />
+        <button class="btn btn-primary" type="submit">
+          Join waitlist
+          <svg class="caret" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+        </button>
+        <p class="waitlist-message" data-waitlist-message aria-live="polite"></p>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ============== QUOTE ============== -->
+<section class="quote-sec">
+  <div class="wrap quote-grid">
+    <div class="mono">07&nbsp;/&nbsp;Field notes</div>
+    <div>
+      <blockquote class="quote">
+        <span class="q-mark">“</span>I had agents talking to three different APIs with two
+        different auth models and a cron job holding it together. AgentRail
+        replaced all of it with one local install and five CLI commands.<span class="q-mark">”</span>
+      </blockquote>
+    </div>
+    <div></div>
+  </div>
+</section>
+
+<!-- ============== CTA ============== -->
+<section class="cta">
+  <div class="cta-rail"></div>
+  <div class="wrap">
+    <h2 class="cta-title">
+      Install <em>AgentRail.</em><br/>
+      Ship with <span class="accent">agents today.</span>
+    </h2>
+    <p class="cta-sub">MIT licensed. One npm install. No account required.</p>
+    <div class="cta-actions">
+      <a href="https://github.com/agentrail/agentrail" class="btn btn-primary">
+        View on GitHub
+        <svg class="caret" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
+      </a>
+      <a href="#sdk" class="btn btn-ghost">Read the docs</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============== FOOTER ============== -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-col">
+        <div class="brand" style="margin-bottom: 14px;">
+          <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="2" y1="8" x2="22" y2="8"/>
+            <line x1="2" y1="16" x2="22" y2="16"/>
+            <circle cx="6" cy="8" r="1.5" fill="currentColor"/>
+            <circle cx="12" cy="8" r="1.5" fill="currentColor"/>
+            <circle cx="18" cy="8" r="1.5" fill="currentColor"/>
+            <circle cx="6" cy="16" r="1.5" fill="currentColor"/>
+            <circle cx="12" cy="16" r="1.5" fill="#c8ff3e"/>
+            <circle cx="18" cy="16" r="1.5" fill="currentColor"/>
+          </svg>
+          <span class="brand-name">AgentRail</span>
+        </div>
+        <p style="color: var(--ink-3); font-size: 13px; max-width: 280px;">
+          Open-source infrastructure for coding agents.
+        </p>
+      </div>
+      <div class="foot-col">
+        <h5>Product</h5>
+        <a href="#product">OSS</a><a href="#cloud-waitlist">Cloud waitlist</a><a href="#lifecycle">Lifecycle</a><a href="#sdk">SDK</a>
+      </div>
+      <div class="foot-col">
+        <h5>Developers</h5>
+        <a href="#sdk">Docs</a><a href="#">API reference</a><a href="#">Examples</a><a href="#">Changelog</a>
+      </div>
+      <div class="foot-col">
+        <h5>Community</h5>
+        <a href="https://github.com/agentrail/agentrail">GitHub</a><a href="#">Discussions</a><a href="#">Issues</a><a href="#">Contributing</a>
+      </div>
+      <div class="foot-col">
+        <h5>Company</h5>
+        <a href="#">About</a><a href="#">Blog</a><a href="#">Security</a><a href="#">Contact</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 AgentRail · All rights reserved.</span>
+      <span>cloud waitlist open ●</span>
+    </div>
+  </div>
+</footer>
+
+</main>
+
+<script>
+  // ============== Waitlist form ==============
+  document.querySelectorAll('[data-waitlist-form]').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const input = form.querySelector('input[type="email"]');
+      const message = form.querySelector('[data-waitlist-message]');
+      if (!input.checkValidity()) {
+        input.reportValidity();
+        return;
+      }
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn) { btn.disabled = true; }
+      message.textContent = '';
+      try {
+        const res = await fetch('/waitlist', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: input.value.trim() })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          message.textContent = data.alreadyExists
+            ? "You're already on the list — we'll be in touch!"
+            : "You're on the list! Check your inbox for a confirmation.";
+          if (!data.alreadyExists) form.reset();
+        } else {
+          message.textContent = data.error?.message || 'Something went wrong. Please try again.';
+        }
+      } catch {
+        message.textContent = 'Network error. Please check your connection and try again.';
+      } finally {
+        if (btn) { btn.disabled = false; }
+      }
+    });
+  });
+
+  // ============== Lifecycle stage switcher ==============
+  const STAGES = [
+    {
+      title: 'Queue&nbsp;— <em>everything starts as an intent</em>',
+      blurb: `Tasks enter the queue from anywhere — a webhook, a Slack thread, a Linear ticket, an SDK call. Each gets a stable ID, a typed payload, and a deterministic priority. No work happens until the queue dispatches.`,
+      code: `<span class="c">// queue a task from anywhere</span>
+<span class="k">const</span> task <span class="k">=</span> <span class="k">await</span> <span class="f">agentrail.tasks.create</span>({
+  agent<span class="k">:</span> <span class="s">"claude-code"</span>,
+  repo<span class="k">:</span>  <span class="s">"acme/payments"</span>,
+  intent<span class="k">:</span> <span class="s">"migrate auth handler to v2 API"</span>,
+  priority<span class="k">:</span> <span class="n">"normal"</span>,
+});
+<span class="c">// → task.id = "tsk_8Hk2..."  state = "queued"</span>`
+    },
+    {
+      title: 'Plan&nbsp;— <em>the agent commits to a path</em>',
+      blurb: `Before any code is written, the agent emits a structured plan: files it will touch, tests it will run, side-effects it expects. Plans are reviewable, diff-able, and can be auto-rejected against policy rules.`,
+      code: `<span class="c">// inspect &amp; gate the plan</span>
+<span class="k">const</span> plan <span class="k">=</span> <span class="k">await</span> <span class="f">rail.tasks.plan</span>(task.id);
+
+<span class="k">if</span> (plan.touches.<span class="f">includes</span>(<span class="s">"infra/"</span>)) {
+  <span class="k">await</span> <span class="f">rail.tasks.requestApproval</span>(task.id, {
+    reviewer<span class="k">:</span> <span class="s">"@platform-team"</span>,
+  });
+}`
+    },
+    {
+      title: 'Execute&nbsp;— <em>sandboxed, observable, retriable</em>',
+      blurb: `Each run gets an isolated environment with scoped credentials, a writable workspace, and a typed transcript. Sandboxes are reproducible — replay any step from any prior state.`,
+      code: `<span class="c">// stream the agent's actions live</span>
+<span class="k">for await</span> (<span class="k">const</span> step <span class="k">of</span> <span class="f">rail.runs.stream</span>(task.id)) {
+  <span class="k">if</span> (step.type <span class="k">===</span> <span class="s">"file.write"</span>) {
+    <span class="f">log</span>(<span class="s">"✎"</span>, step.path, step.diff.added <span class="k">+</span> <span class="s">"+"</span>);
+  }
+  <span class="k">if</span> (step.type <span class="k">===</span> <span class="s">"shell.exec"</span>) {
+    <span class="f">log</span>(<span class="s">"$"</span>, step.cmd);
+  }
+}`
+    },
+    {
+      title: 'Review&nbsp;— <em>CI as a typed feedback loop</em>',
+      blurb: `Test, lint, and build results stream back to the agent as discriminated-union events with structured failure summaries. The agent reasons over data, not log scraping.`,
+      code: `<span class="c">// react to typed CI feedback</span>
+<span class="k">for await</span> (<span class="k">const</span> ev <span class="k">of</span> <span class="f">rail.events.stream</span>({ task: task.id })) {
+  <span class="k">if</span> (ev.type <span class="k">===</span> <span class="s">"check.failed"</span>) {
+    <span class="k">await</span> <span class="f">rail.tasks.retry</span>(task.id, {
+      hint<span class="k">:</span> ev.failure.summary,
+      maxAttempts<span class="k">:</span> <span class="n">3</span>,
+    });
+  }
+}`
+    },
+    {
+      title: 'Ship&nbsp;— <em>merge, deploy, or roll back</em>',
+      blurb: `Once review passes, AgentRail merges via your protected-branch policy, posts a deploy event to your pipeline, and stays attached for the post-deploy window. Roll back any task with a single call.`,
+      code: `<span class="c">// merge with policy + post-deploy guard</span>
+<span class="k">await</span> <span class="f">rail.tasks.ship</span>(task.id, {
+  strategy<span class="k">:</span> <span class="s">"squash"</span>,
+  watchFor<span class="k">:</span> [<span class="s">"deploy.failed"</span>, <span class="s">"sentry.spike"</span>],
+  rollback<span class="k">:</span> <span class="s">"automatic"</span>,
+});</span>`
+    },
+  ];
+
+  const list = document.getElementById('stageList');
+  const sdTitle = document.getElementById('sdTitle');
+  const sdBlurb = document.getElementById('sdBlurb');
+  const sdCode = document.getElementById('sdCode');
+  const sdNum = document.querySelector('.stage-detail .sd-num');
+  const railProgress = document.getElementById('railProgress');
+
+  function selectStage(idx) {
+    list.querySelectorAll('.stage-item').forEach((el, i) => {
+      el.classList.toggle('active', i === idx);
+    });
+    const s = STAGES[idx];
+    sdTitle.innerHTML = s.title;
+    sdBlurb.textContent = s.blurb;
+    sdCode.innerHTML = s.code;
+    sdNum.textContent = String(idx + 1).padStart(2, '0');
+    if (railProgress) {
+      const pct = [12, 32, 52, 72, 100][idx];
+      railProgress.style.width = pct + '%';
+    }
+  }
+
+  list.querySelectorAll('.stage-item').forEach((el) => {
+    el.addEventListener('click', () => selectStage(parseInt(el.dataset.stage, 10)));
+    el.addEventListener('mouseenter', () => selectStage(parseInt(el.dataset.stage, 10)));
+  });
+
+  // Auto-cycle stages slowly
+  let auto = 3;
+  let stopped = false;
+  list.addEventListener('mouseenter', () => { stopped = true; });
+  setInterval(() => {
+    if (stopped) return;
+    auto = (auto + 1) % STAGES.length;
+    selectStage(auto);
+  }, 3500);
+</script>
+
+</body>
+</html>

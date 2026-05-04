@@ -37,6 +37,7 @@ scripts/test-github-submit.sh
 waitlist-server.mjs
 openapi/waitlist.yaml
 index-light.html
+!landing/index-light.html
 original-index-light.html
 docs/dogfood-setup.md
 docs/cloud.md
