@@ -282,6 +282,8 @@ export class GitHubIssuesTaskStore {
     const status = mapStatus(issue.state ?? "open", labels);
     const acceptanceCriteria = extractAcceptanceCriteria(issue.body ?? null);
     const availableActions = computeAvailableActions(status);
+    const source = this.findTaskSourceEntry(issueNumber);
+    const reviewMode = (source?.source?.reviewMode ?? "team") as string;
 
     return {
       data: {
@@ -295,6 +297,7 @@ export class GitHubIssuesTaskStore {
           ? { id: `gh_${issue.assignees[0].login}`, name: issue.assignees[0].login }
           : null,
         acceptanceCriteria,
+        reviewMode,
         links: {
           issue: issue.html_url ?? null,
         },
