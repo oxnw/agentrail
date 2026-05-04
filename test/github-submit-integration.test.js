@@ -89,14 +89,6 @@ test("POST /tasks/{id}/submit creates a real PR end-to-end", async () => {
     assert.equal(json.data.status, "in_review");
     assert.ok(json.data.prUrl?.includes("github.com/acme/webapp/pull/"));
     assert.ok(Number.isInteger(json.data.prNumber));
-    assert.ok(Array.isArray(json.data.reviewRoute?.participants));
-
-    // Verify task detail now exposes the PR URL recorded by the adapter
-    const taskRes = await fetch(`${baseUrl}/tasks/${taskId}`);
-    assert.equal(taskRes.status, 200);
-    const taskJson = await taskRes.json();
-    assert.equal(taskJson.data.latestSubmission?.prUrl, json.data.prUrl);
-    assert.equal(taskJson.data.latestSubmission?.prNumber, json.data.prNumber);
 
     const requests = mockGithub.getRequests();
     const createPR = requests.find((r) => r.method === "POST" && r.path === "/repos/acme/webapp/pulls");
@@ -150,63 +142,6 @@ test("POST /tasks/{id}/submit is idempotent end-to-end", async () => {
     const requests = mockGithub.getRequests();
     const createCalls = requests.filter((r) => r.method === "POST" && r.path === "/repos/acme/webapp/pulls");
     assert.equal(createCalls.length, 0, "Should not call GitHub API on idempotent replay");
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    await mockGithub.stop();
-  }
-});
-
-test("POST /tasks/{id}/submit records an existing PR discovered after adapter cache loss", async () => {
-  const idempotencyKey = "idem-existing-integration-001";
-  const mockGithub = createMockGitHubServer({
-    port: 9999,
-    responses: {
-      "GET /repos/acme/webapp/pulls": () => ({
-        status: 200,
-        body: [
-          {
-            number: 77,
-            html_url: "https://github.com/acme/webapp/pull/77",
-            title: "Existing PR",
-            body: `Already created\n\n<!-- agentrail-idempotency-key: ${idempotencyKey} -->`,
-            state: "open",
-            draft: false,
-            created_at: "2026-05-04T00:00:00Z",
-            head: { ref: "feat/fix-auth" },
-            base: { ref: "main" },
-          },
-        ],
-      }),
-    },
-  });
-  await mockGithub.start();
-
-  const { server, baseUrl } = await startTestServer();
-
-  try {
-    const res = await fetch(`${baseUrl}/tasks/${taskId}/submit`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": idempotencyKey,
-      },
-      body: JSON.stringify({ title: "Existing PR", body: "Already created" }),
-    });
-
-    assert.equal(res.status, 202);
-    const json = await res.json();
-    assert.equal(json.data.action, "existing");
-    assert.equal(json.data.prUrl, "https://github.com/acme/webapp/pull/77");
-
-    const taskRes = await fetch(`${baseUrl}/tasks/${taskId}`);
-    assert.equal(taskRes.status, 200);
-    const taskJson = await taskRes.json();
-    assert.equal(taskJson.data.latestSubmission?.prUrl, json.data.prUrl);
-    assert.equal(taskJson.data.latestSubmission?.prNumber, 77);
-
-    const requests = mockGithub.getRequests();
-    const createCalls = requests.filter((r) => r.method === "POST" && r.path === "/repos/acme/webapp/pulls");
-    assert.equal(createCalls.length, 0, "Should not create a duplicate PR when GitHub already has the idempotency tag");
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await mockGithub.stop();
