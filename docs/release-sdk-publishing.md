@@ -23,6 +23,8 @@ Rejected:
   checks, smoke tests, and artifact trail
 - reusing the existing `v0.1.0` tag after the npm package rename because PyPI
   has already published `agentrail==0.1.0`
+- npm provenance for this release while the source repository is private; npm
+  rejects provenance bundles from private GitHub repositories
 
 ## GitHub Secret Location
 

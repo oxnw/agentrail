@@ -131,7 +131,7 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
       - name: Publish @agentrail-core/sdk
-        run: npm publish release/typescript-sdk/*.tgz --access public --provenance
+        run: npm publish release/typescript-sdk/*.tgz --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
