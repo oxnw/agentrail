@@ -56,30 +56,40 @@ Configure PyPI to trust this repository's GitHub Actions workflow instead.
 
 ### If `agentrail` already exists on PyPI
 
-Open PyPI and go to:
+1. Open `pypi.org` and sign in as a maintainer or owner of the `agentrail`
+   project.
+2. Go to:
 
 `Your projects` -> `agentrail` -> `Manage` -> `Publishing`
 
-Add a GitHub Actions trusted publisher with:
+3. In the GitHub Actions publisher section, add a trusted publisher with:
 
 - Owner: `oxnw`
 - Repository name: `agentrail`
 - Workflow filename: `release.yml`
+- Environment name: leave blank
 
 ### If `agentrail` does not exist on PyPI yet
 
-Open PyPI and go to:
+1. Open `pypi.org` and sign in as the account that should own the first
+   `agentrail` release.
+2. Go to:
 
 account sidebar -> `Publishing`
 
-Create a pending GitHub Actions publisher for project `agentrail` with:
+3. Add a pending GitHub Actions publisher with:
 
+- PyPI project name: `agentrail`
 - Owner: `oxnw`
 - Repository name: `agentrail`
 - Workflow filename: `release.yml`
+- Environment name: leave blank
 
 The first successful release will create the project and convert the pending
 publisher into a normal one.
+
+PyPI's workflow filename field expects only `release.yml`, not the full
+`.github/workflows/release.yml` path.
 
 ## Release Trigger
 
