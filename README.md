@@ -161,7 +161,7 @@ Example `AGENTRAIL_TASK_SOURCES` entry for CircleCI:
 TypeScript local usage:
 
 ```ts
-import { AgentRailClient } from "@agentrail/sdk";
+import { AgentRailClient } from "@agentrail-core/sdk";
 
 const client = new AgentRailClient({
   baseUrl: "http://127.0.0.1:3000",

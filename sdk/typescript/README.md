@@ -1,11 +1,11 @@
-# @agentrail/sdk
+# @agentrail-core/sdk
 
 TypeScript SDK for the AgentRail Task Lifecycle API.
 
 ## Install
 
 ```bash
-npm install @agentrail/sdk
+npm install @agentrail-core/sdk
 ```
 
 Requires Node.js >= 18.0.0 (uses native `fetch`).
@@ -19,7 +19,7 @@ npm start
 ```
 
 ```typescript
-import { AgentRailClient } from "@agentrail/sdk";
+import { AgentRailClient } from "@agentrail-core/sdk";
 
 const client = new AgentRailClient({
   baseUrl: "http://127.0.0.1:3000",
@@ -127,7 +127,7 @@ import {
   NotFoundError,
   RateLimitError,
   ValidationError,
-} from "@agentrail/sdk";
+} from "@agentrail-core/sdk";
 
 try {
   await client.shipTask(taskId, request, idempotencyKey);
@@ -149,7 +149,7 @@ try {
 Register a webhook subscription and verify incoming events:
 
 ```typescript
-import { AgentRailClient, parseWebhookEvent } from "@agentrail/sdk";
+import { AgentRailClient, parseWebhookEvent } from "@agentrail-core/sdk";
 
 // Register
 const sub = await client.createWebhookSubscription(

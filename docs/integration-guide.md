@@ -193,13 +193,13 @@ curl -s -X POST 'http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/ship' \
 Install the SDK:
 
 ```bash
-npm install @agentrail/sdk
+npm install @agentrail-core/sdk
 ```
 
 Complete lifecycle:
 
 ```typescript
-import { AgentRailClient } from "@agentrail/sdk";
+import { AgentRailClient } from "@agentrail-core/sdk";
 
 const client = new AgentRailClient({
   baseUrl: process.env.AGENTRAIL_BASE_URL ?? "http://127.0.0.1:3000",
@@ -243,7 +243,7 @@ if (ci.data.overallStatus === "passed" && review.data.latestDecision?.outcome ==
 Error handling:
 
 ```typescript
-import { ConflictError, NotFoundError, RateLimitError } from "@agentrail/sdk";
+import { ConflictError, NotFoundError, RateLimitError } from "@agentrail-core/sdk";
 
 try {
   await client.shipTask(taskId, request, idempotencyKey);
@@ -361,7 +361,7 @@ const sub = await client.createWebhookSubscription(
 Verify incoming events:
 
 ```typescript
-import { parseWebhookEvent } from "@agentrail/sdk";
+import { parseWebhookEvent } from "@agentrail-core/sdk";
 
 const event = parseWebhookEvent(rawBody, secret, headers);
 // event.type is one of "task.updated", "task.reviewed", "task.shipped"

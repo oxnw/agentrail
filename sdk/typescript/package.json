@@ -1,5 +1,5 @@
 {
-  "name": "@agentrail/sdk",
+  "name": "@agentrail-core/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for the AgentRail Task Lifecycle API",
   "type": "module",

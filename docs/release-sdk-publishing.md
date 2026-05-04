@@ -9,6 +9,9 @@ Chosen:
 
 - keep `NPM_TOKEN` as a GitHub Actions repository secret because npm publishing
   still requires registry authentication from CI
+- publish the TypeScript SDK as `@agentrail-core/sdk`; the original
+  `@agentrail/sdk` name is blocked because npm denied the `agentrail`
+  organization/scope
 - use PyPI Trusted Publishing for `agentrail`, which removes the need to store a
   long-lived `PYPI_API_TOKEN` in GitHub
 
@@ -18,6 +21,8 @@ Rejected:
   stronger OIDC-based path for GitHub Actions
 - manual local publishing because it bypasses the release workflow's version
   checks, smoke tests, and artifact trail
+- reusing the existing `v0.1.0` tag after the npm package rename because PyPI
+  has already published `agentrail==0.1.0`
 
 ## GitHub Secret Location
 
@@ -34,7 +39,7 @@ Repository-level storage is sufficient for the current
 
 ## Where `NPM_TOKEN` Comes From
 
-Generate it in npm for an account that can publish the `@agentrail/sdk`
+Generate it in npm for an account that can publish the `@agentrail-core/sdk`
 package:
 
 `npmjs.com` -> profile menu -> `Access Tokens` -> `Generate New Token`
@@ -42,7 +47,8 @@ package:
 Use a granular token with:
 
 - read and write package permissions
-- access limited to the `@agentrail` scope or `@agentrail/sdk` package
+- access limited to the `@agentrail-core` scope or `@agentrail-core/sdk`
+  package
 - bypass 2FA for write actions if the publishing account enforces 2FA on writes
 
 Copy the token once at creation time and paste it into the GitHub `NPM_TOKEN`
@@ -106,8 +112,21 @@ The workflow will:
 - verify the tag matches both SDK versions
 - build both SDK distributions
 - smoke-test clean installs from the built artifacts
-- publish `@agentrail/sdk` to npm
+- publish `@agentrail-core/sdk` to npm
 - publish `agentrail` to PyPI via OIDC
+
+### npm-only Recovery for `0.1.0`
+
+PyPI `agentrail==0.1.0` is already live. To publish the renamed TypeScript SDK
+without trying to republish duplicate PyPI files, use the manual GitHub Actions
+workflow:
+
+1. Open GitHub Actions -> `Release` -> `Run workflow`.
+2. Use `main`.
+3. Set `version` to `0.1.0`.
+4. Run the workflow.
+
+Manual dispatch validates and publishes only the TypeScript SDK package.
 
 ## npm 2FA Publish Failure
 
@@ -125,28 +144,28 @@ files for an existing release.
 
 If the npm publish job fails with:
 
-`404 Not Found - PUT https://registry.npmjs.org/@agentrail%2fsdk`
+`404 Not Found - PUT https://registry.npmjs.org/@agentrail-core%2fsdk`
 
-confirm that the `agentrail` scope exists on npm as either a user scope or an
-npm organization, and that the token owner can publish packages to that scope.
+confirm that the `agentrail-core` scope exists on npm as either a user scope or
+an npm organization, and that the token owner can publish packages to that scope.
 For an organization-scoped package, npm requires the organization to exist
-before publishing packages under `@agentrail/*`.
+before publishing packages under `@agentrail-core/*`.
 
-For a first publish where `@agentrail/sdk` does not exist yet, create the
-granular token with access to the `@agentrail` scope or organization rather than
-access to only a pre-existing package.
+For a first publish where `@agentrail-core/sdk` does not exist yet, create the
+granular token with access to the `@agentrail-core` scope or organization rather
+than access to only a pre-existing package.
 
 ### Package Name vs Scope Ownership
 
-`@agentrail/sdk` has two parts:
+`@agentrail-core/sdk` has two parts:
 
-- `agentrail` is the npm scope, which must map to an npm user or organization
-  we control.
+- `agentrail-core` is the npm scope, which must map to an npm user or
+  organization we control.
 - `sdk` is the package name inside that scope.
 
 An unpublished package can still be blocked if the scope is unavailable. In this
-case, `@agentrail/sdk` is not live on npm, but publishing it still requires
-control of the `agentrail` npm user or organization scope.
+case, `@agentrail-core/sdk` is not live on npm, but publishing it still requires
+control of the `agentrail-core` npm user or organization scope.
 
 npm documents this model in its [scope documentation][npm-scope-docs]: each npm
 user or organization has a matching scope, and only that account can add
@@ -154,10 +173,10 @@ packages in that scope.
 
 ## npm Scope Creation Denied
 
-If npm denies creation of the `agentrail` organization, the planned
-`@agentrail/sdk` package cannot be published until the scope is available to an
-account we control. This is a naming/ownership blocker, not a CI or token
-blocker.
+The original planned package was `@agentrail/sdk`. npm denied creation of the
+`agentrail` organization, so that package cannot be published until the scope is
+available to an account we control. This is a naming/ownership blocker, not a CI
+or token blocker.
 
 Do not switch the package name inside the existing `v0.1.0` release. PyPI has
 already published `agentrail==0.1.0`, and retagging or republishing a different
@@ -166,10 +185,10 @@ ambiguous.
 
 Available paths:
 
-- appeal the npm organization denial and keep `@agentrail/sdk`
-- choose a controlled npm scope, such as `@oxnw/agentrail`, then update package
-  metadata, README examples, release workflow labels, and smoke tests in a new
-  release revision
+- keep the pivot to `@agentrail-core/sdk`, then configure the npm
+  `agentrail-core` scope and token
+- appeal the npm organization denial if we later want to reserve
+  `@agentrail/sdk`
 
 Do not use the unscoped `agentrail` npm name unless ownership is transferred to
 AgentRail. The public npm registry already has an `agentrail` package owned by

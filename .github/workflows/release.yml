@@ -4,10 +4,16 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "TypeScript SDK version to publish for npm-only recovery"
+        required: true
+        default: "0.1.0"
 
 jobs:
   verify-release-version:
-    name: Verify release tag
+    name: Verify release version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.value }}
@@ -23,13 +29,19 @@ jobs:
           python-version: "3.11"
       - name: Derive version from tag
         id: version
-        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
       - name: Validate TypeScript SDK version
         run: |
           EXPECTED_VERSION='${{ steps.version.outputs.value }}'
           ACTUAL_VERSION="$(node -p "require('./sdk/typescript/package.json').version")"
           test "$ACTUAL_VERSION" = "$EXPECTED_VERSION"
       - name: Validate Python SDK version
+        if: github.event_name == 'push'
         env:
           EXPECTED_VERSION: ${{ steps.version.outputs.value }}
         run: |
@@ -77,6 +89,7 @@ jobs:
   build-python-sdk:
     name: Build Python SDK
     needs: verify-release-version
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,7 +130,7 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
-      - name: Publish @agentrail/sdk
+      - name: Publish @agentrail-core/sdk
         run: npm publish release/typescript-sdk/*.tgz --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -125,6 +138,7 @@ jobs:
   publish-pypi:
     name: Publish PyPI package
     needs: build-python-sdk
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       id-token: write

@@ -1,4 +1,4 @@
-# @agentrail/sdk (Python)
+# AgentRail Python SDK
 
 Python SDK for the **AgentRail Task Lifecycle API**.
 

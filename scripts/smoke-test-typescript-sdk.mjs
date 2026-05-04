@@ -37,7 +37,7 @@ try {
   await writeFile(
     path.join(tempDir, "smoke.mjs"),
     [
-      'import { AgentRailClient, DEFAULT_BASE_URL } from "@agentrail/sdk";',
+      'import { AgentRailClient, DEFAULT_BASE_URL } from "@agentrail-core/sdk";',
       "",
       'const client = new AgentRailClient({ apiKey: "smoke-test-key" });',
       'if (!(client instanceof AgentRailClient)) throw new Error("Client export missing");',
