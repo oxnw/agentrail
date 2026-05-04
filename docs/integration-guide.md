@@ -4,6 +4,12 @@ This guide explains how a coding agent such as **Claude Code**, **Codex**, or **
 
 > **Scope:** This guide covers the open-source release candidate (local server). The upcoming hosted product adds managed persistence, team dashboards, and SLA-backed delivery without changing the API contract.
 
+Start here:
+
+- [Five-minute quick start](./quick-start.md)
+- [Agent recipes for Claude Code, Codex, and Cursor](./agent-recipes.md)
+- [OpenAPI contract](./api/task-lifecycle.openapi.yaml)
+
 ---
 
 ## Table of Contents
@@ -51,18 +57,27 @@ The API starts on `http://127.0.0.1:3000` by default. It runs without private cr
 
 ### Step 2 — Create an AgentRail API key
 
-The first bootstrap request is unauthenticated when it creates an `auth:admin` key:
+The first bootstrap request may omit Authorization when it creates an `auth:admin` key:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
   -H "content-type: application/json" \
+  -H "idempotency-key: bootstrap-admin-v1" \
   -d '{
-    "name": "my-agent-admin",
-    "scopes": ["auth:admin"]
+    "agent": {
+      "id": "agt_cto",
+      "displayName": "CTO",
+      "role": "cto"
+    },
+    "scopes": ["auth:admin"],
+    "rateLimit": {
+      "windowSeconds": 60,
+      "maxRequests": 20
+    }
   }'
 ```
 
-Store the returned `rawKey` in your agent's environment:
+Store the returned `data.apiKey` in your agent's environment:
 
 ```bash
 export AGENTRAIL_API_KEY="ar_live_..."
@@ -399,6 +414,8 @@ The OSS release proves the contract and lets you evaluate the developer workflow
 
 ## Next Steps
 
+- Start with the [five-minute quick start](./quick-start.md).
+- Configure a coding agent with the [AgentRail recipes](./agent-recipes.md).
 - Read the [OpenAPI contract](./api/task-lifecycle.openapi.yaml) for complete endpoint schemas.
 - Run the [end-to-end demo](./demo/agentrail-e2e-demo.md) to see the lifecycle in action.
 - See [Claude Code and Codex lifecycle example](../../examples/issue-to-pr-lifecycle.md) for raw curl equivalents.

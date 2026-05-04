@@ -117,7 +117,7 @@ const client = new AgentRailClient({
 });
 ```
 
-For AgentRail Cloud, pass `baseUrl: "https://api.agentrail.dev/v1"` explicitly.
+For AgentRail Cloud, pass `baseUrl: "https://api.agentrail.app/v1"` explicitly.
 
 Rate-limited responses (429) respect the `Retry-After` header automatically.
 

@@ -902,6 +902,8 @@ async function handleShipTask({ request, response, taskLifecycleStore, taskId }:
 
   try {
     const payload = await readJsonBody(request);
+    await assertShipAvailable(taskLifecycleStore, taskId);
+
     const body = await (taskLifecycleStore as { shipTask: (taskId: string, payload: unknown, key: string | undefined) => Promise<unknown> }).shipTask(
       taskId,
       payload,
@@ -915,6 +917,28 @@ async function handleShipTask({ request, response, taskLifecycleStore, taskId }:
     }
 
     throw error;
+  }
+}
+
+async function assertShipAvailable(taskLifecycleStore: unknown, taskId: string) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { getTask?: unknown }).getTask !== "function") {
+    return;
+  }
+
+  const taskBody = await (taskLifecycleStore as { getTask: (id: string) => Promise<any> | any }).getTask(taskId);
+  const availableActions = Array.isArray(taskBody?.data?.availableActions)
+    ? taskBody.data.availableActions
+    : Array.isArray(taskBody?.availableActions)
+      ? taskBody.availableActions
+      : [];
+  const currentStatus = taskBody?.data?.status ?? null;
+
+  if (!availableActions.includes("ship")) {
+    throw new TaskLifecycleError(409, "conflict", "Task is not ready to ship.", {
+      taskId,
+      currentStatus,
+      availableActions: availableActions.length > 0 ? availableActions : ["get_task"]
+    });
   }
 }
 
@@ -936,19 +960,28 @@ async function handleRollbackTask({ request, response, taskLifecycleStore, rollb
 
   try {
     const payload = await readJsonBody(request);
+    const idempotencyKey = request.headers["idempotency-key"] as string | undefined;
+
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"]
+      });
+    }
+
+    await assertRollbackAvailable(taskLifecycleStore, taskId);
 
     let body: unknown;
     if (rollbackAdapter && typeof rollbackAdapter.rollbackTask === "function") {
       body = await rollbackAdapter.rollbackTask(
         taskId,
         payload,
-        request.headers["idempotency-key"] as string
+        idempotencyKey
       );
     } else {
       body = await (taskLifecycleStore as { rollbackTask: (taskId: string, payload: unknown, key: string | undefined) => Promise<unknown> }).rollbackTask(
         taskId,
         payload,
-        request.headers["idempotency-key"] as string | undefined
+        idempotencyKey
       );
     }
     writeJson(response, 202, body);
@@ -964,6 +997,28 @@ async function handleRollbackTask({ request, response, taskLifecycleStore, rollb
     }
 
     throw error;
+  }
+}
+
+async function assertRollbackAvailable(taskLifecycleStore: unknown, taskId: string) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { getTask?: unknown }).getTask !== "function") {
+    return;
+  }
+
+  const taskBody = await (taskLifecycleStore as { getTask: (id: string) => Promise<any> | any }).getTask(taskId);
+  const availableActions = Array.isArray(taskBody?.data?.availableActions)
+    ? taskBody.data.availableActions
+    : Array.isArray(taskBody?.availableActions)
+      ? taskBody.availableActions
+      : [];
+  const currentStatus = taskBody?.data?.status ?? null;
+
+  if (!availableActions.includes("rollback") && currentStatus !== "rolled_back") {
+    throw new TaskLifecycleError(409, "conflict", "Task is not in a shipped state.", {
+      taskId,
+      currentStatus,
+      availableActions: availableActions.length > 0 ? availableActions : ["get_task"]
+    });
   }
 }
 

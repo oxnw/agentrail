@@ -157,7 +157,7 @@ client = AgentRailClient(
 )
 ```
 
-For AgentRail Cloud, pass `base_url="https://api.agentrail.dev/v1"` explicitly.
+For AgentRail Cloud, pass `base_url="https://api.agentrail.app/v1"` explicitly.
 
 Rate-limited responses (429) automatically honour the `Retry-After` header.
 

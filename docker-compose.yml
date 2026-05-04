@@ -1,0 +1,32 @@
+services:
+  agentrail-api:
+    build:
+      context: .
+    image: agentrail-local:latest
+    ports:
+      - "3000:3000"
+    environment:
+      AGENTRAIL_HOST: 0.0.0.0
+      AGENTRAIL_PORT: 3000
+      AGENTRAIL_PUBLIC_BASE_URL: http://127.0.0.1:3000
+      AGENTRAIL_EVENT_STORE_PATH: /data/task-events.ndjson
+      AGENTRAIL_LOG_FORMAT: json
+      AGENTRAIL_OBSERVABILITY: "true"
+      AGENTRAIL_FALLBACK_MODE: "false"
+    volumes:
+      - agentrail-event-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  agentrail-event-data:

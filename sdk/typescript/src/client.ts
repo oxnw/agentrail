@@ -13,6 +13,8 @@ import type {
   TaskLifecycleEvent,
   TaskListResponse,
   TaskReviewFeedbackResponse,
+  TaskRollbackRequest,
+  TaskRollbackResponse,
   TaskShipRequest,
   TaskShipResponse,
   TaskSubmissionResponse,
@@ -116,6 +118,17 @@ export class AgentRailClient {
     idempotencyKey: string,
   ): Promise<TaskShipResponse> {
     return this.request("POST", `/tasks/${encodeURIComponent(taskId)}/ship`, {
+      body: request,
+      headers: { "Idempotency-Key": idempotencyKey },
+    });
+  }
+
+  async rollbackTask(
+    taskId: string,
+    request: TaskRollbackRequest,
+    idempotencyKey: string,
+  ): Promise<TaskRollbackResponse> {
+    return this.request("POST", `/tasks/${encodeURIComponent(taskId)}/rollback`, {
       body: request,
       headers: { "Idempotency-Key": idempotencyKey },
     });

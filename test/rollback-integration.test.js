@@ -191,6 +191,72 @@ test("POST /tasks/{id}/rollback routes through GitHubRollbackAdapter when config
   }
 });
 
+test("POST /tasks/{id}/rollback rejects live rollback before task exposes rollback action", async () => {
+  const mockGithub = buildMockGitHubServer();
+  await mockGithub.start();
+
+  const now = () => new Date("2026-05-04T00:00:00Z");
+  const eventStore = new TaskEventStore({ now });
+  const demoStore = createAgentShipCycleDemoStore({ now, eventStore });
+
+  const taskSources = new Map([
+    [
+      taskId,
+      {
+        owner: "acme",
+        repo: "webapp",
+        branch: "feat/fix-auth",
+        baseBranch: "main",
+        issueNumber: 42,
+        mergedSha: DEMO_HEAD_SHA,
+      },
+    ],
+  ]);
+
+  const rollbackAdapter = new GitHubRollbackAdapter({
+    taskSources,
+    githubToken: "ghs_test",
+    apiBaseUrl: mockGithubUrl,
+    fetch: globalThis.fetch,
+  });
+
+  const server = createServer({
+    store: eventStore,
+    taskLifecycleStore: demoStore,
+    ciStatusAdapter: demoStore,
+    reviewFeedbackAdapter: demoStore,
+    rollbackAdapter,
+    now,
+  });
+
+  await new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+    server.on("error", reject);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const res = await fetch(`${baseUrl}/tasks/${taskId}/rollback`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "rollback-before-ship",
+      },
+      body: JSON.stringify({ reason: "Should be blocked" }),
+    });
+
+    assert.equal(res.status, 409);
+    const json = await res.json();
+    assert.equal(json.error.code, "conflict");
+
+    const requests = mockGithub.getRequests();
+    assert.equal(requests.length, 0, "Rollback must not call GitHub before task is shipped");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await mockGithub.stop();
+  }
+});
+
 test("POST /tasks/{id}/rollback is idempotent end-to-end through GitHubRollbackAdapter", async () => {
   const mockGithub = buildMockGitHubServer();
   await mockGithub.start();
