@@ -4,10 +4,6 @@ import { createAgentShipCycleDemoStore } from "./agent-ship-cycle-demo.js";
 import { createServer } from "./app.js";
 import { CircleCiStatusAdapter } from "./circleci-status-adapter.js";
 import { GitHubActionsCiAdapter } from "./github-actions-ci-adapter.js";
-import { GitHubIssuesTaskStore } from "./github-issues-task-store.js";
-import { GitHubReviewFeedbackAdapter } from "./github-review-feedback-adapter.js";
-import { GitHubRollbackAdapter } from "./github-rollback-adapter.js";
-import { GitHubShipAdapter } from "./github-ship-adapter.js";
 import { GitHubSubmitAdapter } from "./github-submit-adapter.js";
 import { MultiCiStatusAdapter } from "./multi-ci-status-adapter.js";
 import { TaskEventStore } from "./task-event-store.js";
@@ -31,59 +27,29 @@ const demoStore = createAgentShipCycleDemoStore({
 });
 
 const githubToken = process.env.GITHUB_TOKEN || null;
-const githubApiBaseUrl = process.env.GITHUB_API_BASE_URL || undefined;
 const circleciToken = process.env.CIRCLECI_TOKEN || null;
 const taskSourcesJson = process.env.AGENTRAIL_TASK_SOURCES || null;
 let taskSources: Map<string, unknown> | null = null;
 
-let taskLifecycleStore: any = demoStore;
-let reviewFeedbackAdapter: any = demoStore;
-let rollbackAdapter: GitHubRollbackAdapter | null = null;
+let taskLifecycleStore: GitHubSubmitAdapter | ReturnType<typeof createAgentShipCycleDemoStore> = demoStore;
 if (taskSourcesJson) {
   try {
     const parsed = JSON.parse(taskSourcesJson);
     taskSources = new Map(Object.entries(parsed));
     if (githubToken) {
-      const githubIssuesStore = new GitHubIssuesTaskStore({
-        taskSources,
-        githubToken,
-        apiBaseUrl: githubApiBaseUrl,
-      });
       taskLifecycleStore = new GitHubSubmitAdapter({
         taskSources,
         githubToken,
-        apiBaseUrl: githubApiBaseUrl,
         delegate: demoStore,
       });
-      // Delegate read methods to the live GitHub Issues store; wire live ship adapter.
+      // Delegate non-submit methods back to demo store
       const storeWithFallback = taskLifecycleStore as unknown as ReturnType<typeof createAgentShipCycleDemoStore>;
-      storeWithFallback.listMyTasks = githubIssuesStore.listMyTasks.bind(githubIssuesStore);
-      storeWithFallback.getTask = githubIssuesStore.getTask.bind(githubIssuesStore);
+      storeWithFallback.listMyTasks = demoStore.listMyTasks.bind(demoStore);
+      storeWithFallback.getTask = demoStore.getTask.bind(demoStore);
       storeWithFallback.getTaskCiStatus = demoStore.getTaskCiStatus.bind(demoStore);
       storeWithFallback.getTaskReviewFeedback = demoStore.getTaskReviewFeedback.bind(demoStore);
-      const gitHubShipAdapter = new GitHubShipAdapter({
-        taskSources,
-        githubToken,
-        apiBaseUrl: githubApiBaseUrl,
-        delegate: demoStore,
-        eventStore,
-        now,
-        publicBaseUrl,
-      });
-      storeWithFallback.shipTask = gitHubShipAdapter.shipTask.bind(gitHubShipAdapter);
-
-      reviewFeedbackAdapter = new GitHubReviewFeedbackAdapter({
-        taskSources,
-        githubToken,
-        apiBaseUrl: githubApiBaseUrl,
-      });
-
-      rollbackAdapter = new GitHubRollbackAdapter({
-        taskSources,
-        githubToken,
-        apiBaseUrl: githubApiBaseUrl,
-        delegate: demoStore,
-      });
+      storeWithFallback.shipTask = demoStore.shipTask.bind(demoStore);
+      storeWithFallback.rollbackTask = demoStore.rollbackTask.bind(demoStore);
     }
   } catch {
     process.stderr.write("Warning: AGENTRAIL_TASK_SOURCES is not valid JSON; using demo store.\n");
@@ -94,16 +60,14 @@ const ciStatusAdapter = buildCiStatusAdapter({
   taskSources,
   githubToken,
   circleciToken,
-  demoStore,
-  githubApiBaseUrl
+  demoStore
 });
 
 const server = createServer({
   store: eventStore,
   taskLifecycleStore,
   ciStatusAdapter,
-  reviewFeedbackAdapter,
-  rollbackAdapter,
+  reviewFeedbackAdapter: demoStore,
   now,
   publicBaseUrl,
   fallbackMode,
@@ -159,12 +123,11 @@ function stripQuotes(value: string): string {
   return value;
 }
 
-function buildCiStatusAdapter({ taskSources, githubToken, circleciToken, demoStore, githubApiBaseUrl }: {
+function buildCiStatusAdapter({ taskSources, githubToken, circleciToken, demoStore }: {
   taskSources: Map<string, unknown> | null;
   githubToken: string | null;
   circleciToken: string | null;
   demoStore: ReturnType<typeof createAgentShipCycleDemoStore>;
-  githubApiBaseUrl?: string;
 }) {
   const adapters = [];
 
@@ -172,8 +135,7 @@ function buildCiStatusAdapter({ taskSources, githubToken, circleciToken, demoSto
     adapters.push(
       new GitHubActionsCiAdapter({
         taskSources,
-        githubToken,
-        apiBaseUrl: githubApiBaseUrl
+        githubToken
       })
     );
   }

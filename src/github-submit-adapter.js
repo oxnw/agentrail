@@ -39,9 +39,9 @@ export class GitHubSubmitAdapter {
 
     const key = `submit:${idempotencyKey}`;
     const fingerprint = JSON.stringify(payload);
-    const cached = this.idempotencyRecords.get(key);
-    if (cached) {
-      if (cached.fingerprint !== fingerprint) {
+    const existing = this.idempotencyRecords.get(key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
         throw new TaskLifecycleError(
           409,
           "conflict",
@@ -49,21 +49,7 @@ export class GitHubSubmitAdapter {
           { idempotencyKey, availableActions: ["retry"] },
         );
       }
-      // Re-attempt reviewer assignment if it previously failed
-      const replayResponse = structuredClone(cached.response);
-      if (cached.reviewerWarnings && source.reviewers?.length > 0) {
-        const prNumber = replayResponse.data?.prNumber;
-        if (prNumber) {
-          try {
-            await this.requestReviewers(source, prNumber, source.reviewers);
-            delete cached.reviewerWarnings;
-            replayResponse.data.warnings = undefined;
-          } catch {
-            // keep previous warning
-          }
-        }
-      }
-      return replayResponse;
+      return structuredClone(existing.response);
     }
 
     const head = payload.head ?? source.branch;
@@ -77,9 +63,8 @@ export class GitHubSubmitAdapter {
 
     const existingPR = await this.findExistingPR(source, head, base, idempotencyKey);
     if (existingPR) {
-      const response = buildExistingResponse(taskId, existingPR, idempotencyKey, source.reviewers);
+      const response = buildExistingResponse(taskId, existingPR, idempotencyKey);
       this.idempotencyRecords.set(key, { fingerprint, response: structuredClone(response) });
-      await this.recordSubmission(taskId, response.data);
       return response;
     }
 
@@ -94,44 +79,18 @@ export class GitHubSubmitAdapter {
 
     const pr = await this.createPR(source, { title, body, head, base, draft: payload.draft ?? false });
 
-    const reviewers = payload.reviewers ?? source.reviewers ?? [];
-    let reviewerWarnings = null;
-    if (reviewers.length > 0) {
-      try {
-        await this.requestReviewers(source, pr.number, reviewers);
-      } catch (err) {
-        reviewerWarnings = {
-          code: "reviewer_assignment_failed",
-          message: err instanceof TaskLifecycleError ? err.message : String(err),
-          reviewers,
-        };
-      }
+    if (payload.reviewers?.length > 0 || source.reviewers?.length > 0) {
+      const reviewers = payload.reviewers ?? source.reviewers;
+      await this.requestReviewers(source, pr.number, reviewers).catch(() => {});
     }
 
     if (source.issueNumber) {
       await this.postIssueComment(source, source.issueNumber, pr).catch(() => {});
     }
 
-    const response = buildCreatedResponse(taskId, pr, idempotencyKey, reviewers, reviewerWarnings);
-    this.idempotencyRecords.set(key, {
-      fingerprint,
-      response: structuredClone(response),
-      ...(reviewerWarnings ? { reviewerWarnings } : {}),
-    });
-
-    await this.recordSubmission(taskId, response.data);
-
+    const response = buildCreatedResponse(taskId, pr, idempotencyKey);
+    this.idempotencyRecords.set(key, { fingerprint, response: structuredClone(response) });
     return response;
-  }
-
-  async recordSubmission(taskId, submissionData) {
-    if (this.delegate && typeof this.delegate.recordSubmission === "function") {
-      try {
-        await this.delegate.recordSubmission(taskId, submissionData);
-      } catch {
-        // ignore delegate recording errors
-      }
-    }
   }
 
   async findExistingPR(source, head, base, idempotencyKey) {
@@ -253,47 +212,34 @@ function extractIdempotencyKey(body) {
   return body.slice(start, end).trim();
 }
 
-function buildReviewRoute(reviewers) {
-  if (!reviewers || reviewers.length === 0) {
-    return { participants: [] };
-  }
-  return {
-    participants: reviewers.map((login) => ({ id: login, role: "reviewer" })),
-  };
-}
-
-function buildExistingResponse(taskId, pr, idempotencyKey, reviewers = [], reviewerWarnings = null) {
+function buildExistingResponse(taskId, pr, idempotencyKey) {
   return {
     data: {
       submissionId: `ghpr_${pr.number}`,
       taskId,
       status: "in_review",
-      reviewRoute: buildReviewRoute(reviewers),
       prUrl: pr.html_url,
       prNumber: pr.number,
       action: "existing",
       acceptedAt: pr.created_at ?? new Date().toISOString(),
       ...(idempotencyKey ? { idempotencyKey } : {}),
-      ...(reviewerWarnings ? { warnings: [reviewerWarnings] } : {}),
       availableActions: ["view_review_feedback", "view_ci_status"],
     },
     availableActions: ["view_review_feedback"],
   };
 }
 
-function buildCreatedResponse(taskId, pr, idempotencyKey, reviewers = [], reviewerWarnings = null) {
+function buildCreatedResponse(taskId, pr, idempotencyKey) {
   return {
     data: {
       submissionId: `ghpr_${pr.number}`,
       taskId,
       status: "in_review",
-      reviewRoute: buildReviewRoute(reviewers),
       prUrl: pr.html_url,
       prNumber: pr.number,
       action: "created",
       acceptedAt: pr.created_at ?? new Date().toISOString(),
       ...(idempotencyKey ? { idempotencyKey } : {}),
-      ...(reviewerWarnings ? { warnings: [reviewerWarnings] } : {}),
       availableActions: ["view_review_feedback", "view_ci_status"],
     },
     availableActions: ["view_review_feedback"],

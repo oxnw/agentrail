@@ -260,39 +260,3 @@ test("extractIdempotencyKey round-trip", () => {
   assert.equal(extractIdempotencyKey(body), key);
   assert.equal(extractIdempotencyKey("no key here"), null);
 });
-
-test("surfaces reviewer assignment failure as warnings and re-attempts on replay", async () => {
-  const pr = makePR();
-  let reviewerCallCount = 0;
-
-  const adapter = new GitHubSubmitAdapter({
-    githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
-    fetch: async (url, options) => {
-      if (options?.method === "POST" && String(url).endsWith("/pulls")) return jsonResponse(pr);
-      if (String(url).includes("/requested_reviewers")) {
-        reviewerCallCount++;
-        if (reviewerCallCount === 1) {
-          return new Response(JSON.stringify({ message: "Not Found" }), { status: 404, headers: { "content-type": "application/json" } });
-        }
-        return jsonResponse({ requested_reviewers: [{ login: "reviewer1" }] });
-      }
-      if (String(url).includes("/comments") && options?.method === "POST") return jsonResponse({ id: 1 });
-      if (String(url).includes("/pulls?")) return jsonResponse([]);
-      return jsonResponse({});
-    },
-  });
-
-  const payload = { summary: "Fixed auth", artifacts: [{ type: "commit", sha: "abc" }] };
-
-  const first = await adapter.submitTask(taskId, payload, "idem-reviewer-001");
-  assert.equal(first.data.action, "created");
-  assert.ok(first.data.warnings, "should include warnings on first attempt");
-  assert.equal(first.data.warnings[0].code, "reviewer_assignment_failed");
-  assert.equal(reviewerCallCount, 1);
-
-  const second = await adapter.submitTask(taskId, payload, "idem-reviewer-001");
-  assert.equal(second.data.action, "created");
-  assert.equal(reviewerCallCount, 2, "should re-attempt reviewer assignment on replay");
-  assert.ok(!second.data.warnings, "should clear warnings after successful retry");
-});

@@ -100,28 +100,7 @@ test("getTaskReviewFeedback unifies reviews, review comments, and issue comments
   assert.equal(comments[3].id, "ic_200");
 });
 
-test("getTaskReviewFeedback returns approved decision in solo mode when no reviews exist", async () => {
-  const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: {
-      tsk_solo: { owner: "acme", repo: "web", pullNumber: 42, reviewMode: "solo" }
-    },
-    fetch: mockFetch({
-      "pulls/42/reviews": jsonResponse([]),
-      "pulls/42/comments": jsonResponse([]),
-      "issues/42/comments": jsonResponse([])
-    })
-  });
-
-  const result = await adapter.getTaskReviewFeedback("tsk_solo");
-
-  assert.equal(result.data.latestDecision.outcome, "approved");
-  assert.equal(result.data.latestDecision.reviewer.id, "solo");
-  assert.equal(result.data.latestDecision.reviewer.role, "author");
-  assert.equal(result.data.comments.length, 0);
-  assert.deepEqual(result.data.availableActions, ["view_ci_status", "ship"]);
-});
-
-test("getTaskReviewFeedback returns pending decision in team mode when no reviews exist", async () => {
+test("getTaskReviewFeedback returns pending decision when no reviews exist", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
     taskSources: {
       tsk_abc: { owner: "acme", repo: "web", pullNumber: 42 }

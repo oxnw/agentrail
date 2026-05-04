@@ -45,15 +45,13 @@ export class GitHubReviewFeedbackAdapter {
 
     validateTaskSource(source);
 
-    const reviewMode = source.reviewMode ?? "team";
-
     const [reviews, reviewComments, issueComments] = await Promise.all([
       this.listPullReviews(source),
       this.listReviewComments(source),
       this.listIssueComments(source)
     ]);
 
-    const latestDecision = deriveLatestDecision(reviews, reviewMode, source);
+    const latestDecision = deriveLatestDecision(reviews);
     const feedbackItems = unifyFeedback({ reviews, reviewComments, issueComments });
     const availableActions = actionsForDecision(latestDecision.outcome);
 
@@ -141,20 +139,10 @@ function validateTaskSource(source) {
   }
 }
 
-function deriveLatestDecision(reviews, reviewMode = "team", source = null) {
+function deriveLatestDecision(reviews) {
   const decisionalReviews = reviews
     .filter((review) => review.state === "APPROVED" || review.state === "CHANGES_REQUESTED")
     .sort((left, right) => new Date(right.submitted_at).getTime() - new Date(left.submitted_at).getTime());
-
-  // Solo mode: if no external reviews exist, treat as approved with a documented self-review note.
-  if (reviewMode === "solo" && decisionalReviews.length === 0) {
-    return {
-      outcome: "approved",
-      reviewer: { id: "solo", role: "author" },
-      createdAt: new Date().toISOString(),
-      summary: "Solo mode: no external reviewer required. Self-review acknowledged."
-    };
-  }
 
   if (decisionalReviews.length === 0) {
     return {
