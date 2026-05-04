@@ -37,7 +37,10 @@ export class AgentRailClient {
   private readonly retry: Required<RetryOptions>;
 
   constructor(options: AgentRailClientOptions) {
-    this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    if (!options.baseUrl) {
+      throw new TypeError("AgentRailClient requires baseUrl");
+    }
+    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.apiKey = options.apiKey;
     this.retry = { ...DEFAULT_RETRY, ...options.retry };
   }
