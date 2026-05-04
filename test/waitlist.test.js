@@ -2,7 +2,7 @@
 import http from "node:http";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { WaitlistStore, WaitlistValidationError } from "../src/waitlist-store.js";
+import { WaitlistStore, WaitlistValidationError } from "../src/waitlist-store.ts";
 import { createServer } from "../src/app.js";
 
 describe("WaitlistStore", () => {
