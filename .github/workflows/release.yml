@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  verify-release-version:
+    name: Verify release tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Use Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Derive version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Validate TypeScript SDK version
+        run: |
+          EXPECTED_VERSION='${{ steps.version.outputs.value }}'
+          ACTUAL_VERSION="$(node -p "require('./sdk/typescript/package.json').version")"
+          test "$ACTUAL_VERSION" = "$EXPECTED_VERSION"
+      - name: Validate Python SDK version
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import tomllib
+
+          pyproject = tomllib.loads(Path("sdk/python/pyproject.toml").read_text())
+          actual = pyproject["project"]["version"]
+          expected = os.environ["EXPECTED_VERSION"]
+          if actual != expected:
+              raise SystemExit(f"Python SDK version {actual} does not match tag {expected}")
+          PY
+
+  build-typescript-sdk:
+    name: Build TypeScript SDK
+    needs: verify-release-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Install SDK dependencies
+        run: npm --prefix sdk/typescript ci
+      - name: Build TypeScript SDK
+        run: npm --prefix sdk/typescript run build
+      - name: Pack TypeScript SDK
+        run: |
+          cd sdk/typescript
+          npm pack
+      - name: Smoke test TypeScript SDK package
+        run: node scripts/smoke-test-typescript-sdk.mjs sdk/typescript/*.tgz
+      - name: Upload TypeScript SDK package
+        uses: actions/upload-artifact@v4
+        with:
+          name: typescript-sdk-package
+          path: sdk/typescript/*.tgz
+          if-no-files-found: error
+
+  build-python-sdk:
+    name: Build Python SDK
+    needs: verify-release-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install release tooling
+        run: python -m pip install --upgrade build twine
+      - name: Build Python SDK
+        run: python -m build sdk/python
+      - name: Verify Python distributions
+        run: python -m twine check sdk/python/dist/*
+      - name: Smoke test Python SDK wheel
+        run: PYTHON_BIN=python ./scripts/smoke-test-python-sdk.sh sdk/python/dist/agentrail-*.whl
+      - name: Upload Python SDK distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: sdk/python/dist/*
+          if-no-files-found: error
+
+  publish-npm:
+    name: Publish npm package
+    needs: build-typescript-sdk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download TypeScript SDK package
+        uses: actions/download-artifact@v4
+        with:
+          name: typescript-sdk-package
+          path: release/typescript-sdk
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Publish @agentrail/sdk
+        run: npm publish release/typescript-sdk/*.tgz --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-pypi:
+    name: Publish PyPI package
+    needs: build-python-sdk
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Download Python SDK distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: release/python-sdk
+      - name: Publish agentrail
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release/python-sdk/

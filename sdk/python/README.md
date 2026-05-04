@@ -1,8 +1,10 @@
 # @agentrail/sdk (Python)
 
-Python SDK for the **AgentRail Task Lifecycle API** (v0.3.0).
+Python SDK for the **AgentRail Task Lifecycle API**.
 
 Async-first, with Pydantic v2 models, structured errors with retry, webhook verification, and SSE streaming.
+
+Requires Python >= 3.10.
 
 ## Install
 

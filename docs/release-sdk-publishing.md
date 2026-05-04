@@ -1,0 +1,100 @@
+# SDK Publishing Setup
+
+This document covers the operator steps for publishing the AgentRail SDKs from
+GitHub Actions.
+
+## Decision
+
+Chosen:
+
+- keep `NPM_TOKEN` as a GitHub Actions repository secret because npm publishing
+  still requires registry authentication from CI
+- use PyPI Trusted Publishing for `agentrail`, which removes the need to store a
+  long-lived `PYPI_API_TOKEN` in GitHub
+
+Rejected:
+
+- keeping a long-lived `PYPI_API_TOKEN` in GitHub because PyPI supports a
+  stronger OIDC-based path for GitHub Actions
+- manual local publishing because it bypasses the release workflow's version
+  checks, smoke tests, and artifact trail
+
+## GitHub Secret Location
+
+For `NPM_TOKEN`, open the GitHub repository and go to:
+
+`Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`
+
+Create this secret:
+
+- `NPM_TOKEN`
+
+Repository-level storage is sufficient for the current
+[release workflow](../.github/workflows/release.yml).
+
+## Where `NPM_TOKEN` Comes From
+
+Generate it in npm for an account that can publish the `@agentrail/sdk`
+package:
+
+`npmjs.com` -> profile menu -> `Access Tokens` -> `Generate New Token`
+
+Use a granular token with:
+
+- read and write package permissions
+- access limited to the `@agentrail` scope or `@agentrail/sdk` package
+- bypass 2FA for write actions if the publishing account enforces 2FA on writes
+
+Copy the token once at creation time and paste it into the GitHub `NPM_TOKEN`
+secret.
+
+## PyPI Setup
+
+No GitHub secret is needed for PyPI.
+
+Configure PyPI to trust this repository's GitHub Actions workflow instead.
+
+### If `agentrail` already exists on PyPI
+
+Open PyPI and go to:
+
+`Your projects` -> `agentrail` -> `Manage` -> `Publishing`
+
+Add a GitHub Actions trusted publisher with:
+
+- Owner: `oxnw`
+- Repository name: `agentrail`
+- Workflow filename: `release.yml`
+
+### If `agentrail` does not exist on PyPI yet
+
+Open PyPI and go to:
+
+account sidebar -> `Publishing`
+
+Create a pending GitHub Actions publisher for project `agentrail` with:
+
+- Owner: `oxnw`
+- Repository name: `agentrail`
+- Workflow filename: `release.yml`
+
+The first successful release will create the project and convert the pending
+publisher into a normal one.
+
+## Release Trigger
+
+After the npm token exists and PyPI trusted publishing is configured, push the
+release tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow will:
+
+- verify the tag matches both SDK versions
+- build both SDK distributions
+- smoke-test clean installs from the built artifacts
+- publish `@agentrail/sdk` to npm
+- publish `agentrail` to PyPI via OIDC
