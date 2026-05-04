@@ -135,3 +135,26 @@ before publishing packages under `@agentrail/*`.
 For a first publish where `@agentrail/sdk` does not exist yet, create the
 granular token with access to the `@agentrail` scope or organization rather than
 access to only a pre-existing package.
+
+## npm Scope Creation Denied
+
+If npm denies creation of the `agentrail` organization, the planned
+`@agentrail/sdk` package cannot be published until the scope is available to an
+account we control. This is a naming/ownership blocker, not a CI or token
+blocker.
+
+Do not switch the package name inside the existing `v0.1.0` release. PyPI has
+already published `agentrail==0.1.0`, and retagging or republishing a different
+npm package under the same release would make the release artifact trail
+ambiguous.
+
+Available paths:
+
+- appeal the npm organization denial and keep `@agentrail/sdk`
+- choose a controlled npm scope, such as `@oxnw/agentrail`, then update package
+  metadata, README examples, release workflow labels, and smoke tests in a new
+  release revision
+
+Do not use the unscoped `agentrail` npm name unless ownership is transferred to
+AgentRail. The public npm registry already has an `agentrail` package owned by
+someone else.
