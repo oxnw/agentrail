@@ -69,6 +69,7 @@ const server = createServer({
   ciStatusAdapter,
   reviewFeedbackAdapter: demoStore,
   now,
+  publicBaseUrl,
   fallbackMode,
 });
 

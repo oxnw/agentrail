@@ -50,8 +50,8 @@ function createTaskUpdatedEvent(overrides = {}) {
       summary: "Submission accepted and routed to CEO review.",
       availableActions: ["ship"],
       links: {
-        task: "https://api.agentrail.dev/v1/tasks/tsk_target",
-        reviewFeedback: "https://api.agentrail.dev/v1/tasks/tsk_target/review-feedback",
+        task: "https://api.agentrail.app/v1/tasks/tsk_target",
+        reviewFeedback: "https://api.agentrail.app/v1/tasks/tsk_target/review-feedback",
         ciStatus: null,
         shipOperation: null
       }
