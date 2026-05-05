@@ -173,6 +173,41 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.deepStrictEqual(stored!.source!.labels, ["enhancement", "high-priority"]);
   });
 
+  it("preserves existing task fields when sparse webhook updates omit optional payload fields", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const first = await adapter.ingest({
+      issueNumber: 22,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/22",
+      issueTitle: "Original title",
+      body: "Keep the current task details.\n\n## Acceptance Criteria\n- [ ] Preserve existing task state on sparse updates.",
+      labels: ["critical"],
+      state: "closed",
+      repository: { owner: "oxnw", repo: "agentrail" },
+      assignees: [{ login: "alice" }],
+    }, "idemp_sparse_first");
+
+    await adapter.ingest({
+      issueNumber: 22,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/22",
+      issueTitle: "Edited title only",
+    }, "idemp_sparse_second");
+
+    const stored = queue.getRawTask(first.taskId);
+    assert.strictEqual(stored!.title, "Edited title only");
+    assert.strictEqual(stored!.description, "Keep the current task details.\n\n## Acceptance Criteria\n- [ ] Preserve existing task state on sparse updates.");
+    assert.strictEqual(stored!.status, "done");
+    assert.strictEqual(stored!.priority, "critical");
+    assert.deepStrictEqual(stored!.assignee, { id: "alice", name: "alice" });
+    assert.deepStrictEqual(stored!.acceptanceCriteria, [
+      "Preserve existing task state on sparse updates.",
+    ]);
+    assert.strictEqual(stored!.context.project, "oxnw/agentrail");
+    assert.deepStrictEqual(stored!.source!.labels, ["critical"]);
+    assert.deepStrictEqual(stored!.source!.assignees, ["alice"]);
+  });
+
   it("handles malformed payload gracefully", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
@@ -201,19 +236,22 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(result.identifier, "github:acme/widgets:issues/30");
 
     const stored = queue.getRawTask(result.taskId);
-    assert.strictEqual(stored!.context.project, null);
+    assert.strictEqual(stored!.context.project, "acme/widgets");
+    assert.strictEqual(stored!.source!.owner, "acme");
+    assert.strictEqual(stored!.source!.repo, "widgets");
   });
 
-  it("builds fallback identifier when url is unparseable and no repo", async () => {
+  it("rejects payloads that omit repository context and provide an unparseable issue url", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
 
-    const result = await adapter.ingest({
-      issueNumber: 99,
-      issueUrl: "not-a-url",
-      issueTitle: "Fallback",
-    });
-
-    assert.strictEqual(result.identifier, "github:issues/99");
+    await assert.rejects(
+      adapter.ingest({
+        issueNumber: 99,
+        issueUrl: "not-a-url",
+        issueTitle: "Fallback",
+      }),
+      (err: any) => err.statusCode === 400
+    );
   });
 });

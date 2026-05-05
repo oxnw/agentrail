@@ -201,3 +201,74 @@ test("operator intake route records a task assignment and exposes audit lookup",
     server.close();
   }
 });
+
+test("routing endpoints default availableActions and emit unique req_ ids even in the same millisecond", async () => {
+  const now = () => new Date("2026-05-05T12:00:00Z");
+  const eventStore = new TaskEventStore({ now });
+  const authStore = new AgentAuthStore({ now });
+  const originalDateNow = Date.now;
+
+  const { data: operatorKey } = authStore.createKey({
+    agent: { id: "agt_operator", displayName: "Operator", role: "cto", externalIdentities: [] },
+    scopes: ["routing:admin", "routing:evaluate"],
+  }, "idemp_operator_endpoint_guard");
+
+  const server = createServer({
+    store: eventStore,
+    authStore,
+    routingControlPlane: {
+      async evaluate() {
+        return { decision: { matched: true } };
+      },
+      async ingestProviderIssue() {
+        return {
+          id: "rdec_endpoint_guard",
+          taskId: "tsk_endpoint_guard",
+          assignment: {
+            assigneeAgentId: "agt_cto",
+            assignmentSource: "deterministic_rule",
+          },
+        };
+      },
+    },
+    now,
+  });
+
+  const baseUrl = await listen(server);
+
+  try {
+    Date.now = () => 1746446400000;
+
+    const evaluationRes = await fetch(`${baseUrl}/operator/routing/evaluations`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${operatorKey.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ providerIssueId: "github:oxnw/agentrail:issues/201" }),
+    });
+
+    assert.equal(evaluationRes.status, 200);
+    const evaluationJson = await evaluationRes.json();
+    assert.deepEqual(evaluationJson.availableActions, []);
+    assert.match(evaluationJson.meta.requestId, /^req_/);
+
+    const intakeRes = await fetch(`${baseUrl}/operator/intake/provider-issues`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${operatorKey.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ providerIssueId: "github:oxnw/agentrail:issues/202" }),
+    });
+
+    assert.equal(intakeRes.status, 202);
+    const intakeJson = await intakeRes.json();
+    assert.deepEqual(intakeJson.availableActions, []);
+    assert.match(intakeJson.meta.requestId, /^req_/);
+    assert.notEqual(evaluationJson.meta.requestId, intakeJson.meta.requestId);
+  } finally {
+    Date.now = originalDateNow;
+    server.close();
+  }
+});

@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { AgentAuthStore } from "./agent-auth-store.ts";
@@ -944,8 +945,12 @@ function handleGetAgentApiKeyUsage({ response, authStore, keyId }: GetUsageOptio
 
 function responseMeta() {
   return {
-    requestId: `req_${Date.now().toString(36)}`
+    requestId: `req_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`
   };
+}
+
+function normalizeAvailableActions(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((action): action is string => typeof action === "string") : [];
 }
 
 function ensureRoutingControlPlane({
@@ -1111,7 +1116,7 @@ async function handleEvaluateRouting({
     const data = await routingControlPlane.evaluate(payload as Parameters<RoutingControlPlane["evaluate"]>[0]);
     writeJson(response, 200, {
       data,
-      availableActions: data.availableActions,
+      availableActions: normalizeAvailableActions((data as { availableActions?: unknown }).availableActions),
       meta: responseMeta()
     });
   } catch (error) {
@@ -1144,7 +1149,7 @@ async function handleIngestProviderIssue({
     );
     writeJson(response, 202, {
       data,
-      availableActions: data.availableActions,
+      availableActions: normalizeAvailableActions((data as { availableActions?: unknown }).availableActions),
       meta: responseMeta()
     });
   } catch (error) {

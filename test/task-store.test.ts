@@ -147,6 +147,30 @@ test("TaskStore migrates legacy multi-record JSONL files and preserves all tasks
   }
 });
 
+test("TaskStore rejects legacy task records whose description is not a string", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-taskstore-"));
+  const storagePath = path.join(tempDir, "tasks.ndjson");
+  const invalidLegacyTask = {
+    ...makePersistedTask({
+      id: "tsk_invalid_legacy",
+      identifier: "AGEA-100",
+      title: "Invalid legacy task",
+    }),
+    description: { markdown: "not allowed" },
+  };
+
+  try {
+    await writeFile(storagePath, JSON.stringify(invalidLegacyTask) + "\n", "utf8");
+
+    assert.throws(
+      () => new TaskStore({ now, storagePath }),
+      /Unsupported TaskStore state format/
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("TaskStore supports per-agent filtering", async () => {
   const store = new TaskStore({ now });
   const t1 = store.createTask(makeTask({ identifier: "A-1", title: "Alpha", assignee: { id: "agt_alice", name: "Alice" } }));
