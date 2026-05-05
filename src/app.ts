@@ -39,7 +39,6 @@ export interface CreateServerOptions {
   waitlistStore?: WaitlistStore | null;
   publicBaseUrl?: string | null;
   fallbackMode?: boolean;
-  demoAssetsEnabled?: boolean;
   emailWebhookUrl?: string | null;
   emailWebhookToken?: string | null;
   resendApiKey?: string | null;
@@ -64,7 +63,6 @@ export function createServer({
   waitlistStore = null,
   publicBaseUrl = process.env.AGENTRAIL_PUBLIC_BASE_URL || null,
   fallbackMode = false,
-  demoAssetsEnabled = false,
   emailWebhookUrl = process.env.WAITLIST_EMAIL_WEBHOOK_URL || null,
   emailWebhookToken = process.env.WAITLIST_EMAIL_WEBHOOK_TOKEN || null,
   resendApiKey = process.env.RESEND_API_KEY || null,
@@ -95,7 +93,6 @@ export function createServer({
       waitlistStore: resolvedWaitlistStore,
       publicBaseUrl,
       fallbackMode,
-      demoAssetsEnabled,
       emailWebhookUrl,
       emailWebhookToken,
       resendApiKey,
@@ -146,7 +143,6 @@ async function routeRequest({
   waitlistStore,
   publicBaseUrl = null,
   fallbackMode = false,
-  demoAssetsEnabled = false,
   emailWebhookUrl = null,
   emailWebhookToken = null,
   resendApiKey = null,
@@ -218,11 +214,6 @@ async function routeRequest({
       publicBaseUrl,
       routePrefix
     })));
-    return;
-  }
-
-  if (demoAssetsEnabled && request.method === "GET" && pathname === "/demo.mp4") {
-    serveStaticFile(response, path.join(__dirname, "..", "docs", "demo", "agentrail-e2e-demo.mp4"), "video/mp4");
     return;
   }
 

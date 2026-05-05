@@ -8,141 +8,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = parseArgs(process.argv.slice(2));
-const mode = args.mode ?? "demo";
+const mode = args.mode ?? "live";
 
-if (!["demo", "live"].includes(mode)) {
-  throw new Error(`Unsupported mode "${mode}". Use --mode demo or --mode live.`);
+if (mode !== "live") {
+  throw new Error(`Unsupported mode "${mode}". Use --mode live.`);
 }
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-sandbox-smoke-"));
 
 try {
-  const report = mode === "demo"
-    ? await runDemoSmoke(tempDir)
-    : await runLiveSmoke(tempDir);
+  const report = await runLiveSmoke(tempDir);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 } finally {
   await rm(tempDir, { recursive: true, force: true });
-}
-
-async function runDemoSmoke(tempDir) {
-  const port = resolvePort();
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const server = startServer({
-    scriptName: "demo:server",
-    env: {
-      AGENTRAIL_HOST: "127.0.0.1",
-      AGENTRAIL_PORT: String(port),
-      AGENTRAIL_PUBLIC_BASE_URL: baseUrl,
-      AGENTRAIL_EVENT_STORE_PATH: path.join(tempDir, "events.json"),
-    },
-  });
-
-  try {
-    await waitForHealth({ baseUrl, server });
-    const { AgentRailClient } = await loadTypescriptSdk();
-    const client = new AgentRailClient({
-      baseUrl,
-      apiKey: "ar_local_demo_key",
-      retry: { maxAttempts: 1 },
-    });
-
-    const health = await fetchJson(`${baseUrl}/health`);
-    assertEqual(health.status, "ok", "health status");
-
-    const steps = [];
-    const tasks = await client.listMyTasks({ status: "in_progress", limit: 1 });
-    const task = tasks.data[0];
-    if (!task) {
-      throw new Error("Demo smoke expected one in_progress task.");
-    }
-    steps.push("list_my_tasks");
-
-    await client.submitTask(
-      task.id,
-      {
-        summary: "Sandbox smoke first attempt.",
-        mode: "artifact",
-        artifacts: [
-          { type: "pull_request", url: "https://github.com/oxnw/agentrail-e2e-sandbox/pull/1" },
-        ],
-        checks: [{ name: "unit-tests", status: "failed" }],
-        notes: "Intentional first-pass failure for the validation gate.",
-      },
-      "sandbox-demo-submit-1",
-    );
-    steps.push("submit_first_pass");
-
-    const failedCi = await client.getTaskCiStatus(task.id);
-    assertEqual(failedCi.data.overallStatus, "failed", "first CI status");
-    steps.push("read_failed_ci");
-
-    const requestedChanges = await client.getTaskReviewFeedback(task.id);
-    assertEqual(
-      requestedChanges.data.latestDecision.outcome,
-      "changes_requested",
-      "first review outcome",
-    );
-    steps.push("read_review_feedback");
-
-    await client.submitTask(
-      task.id,
-      {
-        summary: "Sandbox smoke corrected attempt.",
-        mode: "artifact",
-        artifacts: [
-          { type: "pull_request", url: "https://github.com/oxnw/agentrail-e2e-sandbox/pull/1" },
-          { type: "commit", url: "https://github.com/oxnw/agentrail-e2e-sandbox/commit/b5bc7f86" },
-        ],
-        checks: [{ name: "unit-tests", status: "passed" }],
-        notes: null,
-      },
-      "sandbox-demo-submit-2",
-    );
-    steps.push("submit_fix");
-
-    const greenCi = await client.getTaskCiStatus(task.id);
-    assertEqual(greenCi.data.overallStatus, "passed", "final CI status");
-    steps.push("read_green_ci");
-
-    const approvedReview = await client.getTaskReviewFeedback(task.id);
-    assertEqual(
-      approvedReview.data.latestDecision.outcome,
-      "approved",
-      "final review outcome",
-    );
-    steps.push("read_approved_review");
-
-    const ship = await client.shipTask(
-      task.id,
-      {
-        mode: "merge_and_deploy",
-        targetEnvironment: "production",
-        expectedHeadSha: "b5bc7f86b9ad94f4f18f83d28bdf3e27a31e53a0",
-      },
-      "sandbox-demo-ship-1",
-    );
-    assertEqual(ship.data.status, "queued", "demo ship status");
-    steps.push("ship");
-
-    return {
-      mode: "demo",
-      entrypoint: "npm run demo:server",
-      sdk: "sdk/typescript/dist/index.js",
-      baseUrl,
-      taskId: task.id,
-      steps,
-      result: {
-        firstCiStatus: failedCi.data.overallStatus,
-        firstReviewOutcome: requestedChanges.data.latestDecision.outcome,
-        finalCiStatus: greenCi.data.overallStatus,
-        finalReviewOutcome: approvedReview.data.latestDecision.outcome,
-        shipStatus: ship.data.status,
-      },
-    };
-  } finally {
-    await stopServer(server);
-  }
 }
 
 async function runLiveSmoke(tempDir) {

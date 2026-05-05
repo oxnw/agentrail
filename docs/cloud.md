@@ -17,7 +17,7 @@ operations exist and are explicitly launched.
 
 The public repository should stay useful without a hosted account:
 
-- Local API server and deterministic demo mode.
+- Local API server and explicit self-hosted bootstrap examples.
 - Task lifecycle API contract and SDKs.
 - Single-instance/self-managed runtime path.
 - Local event streaming and webhook primitives.

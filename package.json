@@ -12,13 +12,9 @@
   },
   "scripts": {
     "start": "node src/server.ts",
-    "demo:server": "AGENTRAIL_MODE=demo node src/server.ts",
-    "demo": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-e2e-demo.mjs",
-    "demo:json": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-e2e-demo.mjs --json",
     "smoke:sdk:typescript": "node scripts/smoke-test-sdk-packages.mjs --typescript",
     "smoke:sdk:python": "node scripts/smoke-test-sdk-packages.mjs --python",
     "smoke:sdk": "node scripts/smoke-test-sdk-packages.mjs --all",
-    "smoke:sandbox:demo": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-sandbox-smoke.mjs --mode demo",
     "smoke:sandbox:live": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-sandbox-smoke.mjs --mode live",
     "lint:openapi": "spectral lint docs/api/task-lifecycle.openapi.yaml docs/api/intake-routing-admin.openapi.yaml -r .spectral.yaml",
     "test": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && npm run test:service",

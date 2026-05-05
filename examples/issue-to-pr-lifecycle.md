@@ -43,7 +43,7 @@ curl -s 'http://127.0.0.1:3000/tasks/mine?status=in_progress&limit=1'
 
 2. Submit the first PR attempt:
 
-The PR URL below is a deterministic demo placeholder. Real automation should
+The PR URL below is a placeholder example. Real automation should
 prefer adapter-managed submit, where AgentRail creates or reuses the provider PR
 and returns the PR URL through lifecycle state.
 

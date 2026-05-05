@@ -36,22 +36,22 @@ Self-managed OSS can run that shared infrastructure for a small deployment, but
 it is not the same promise as AgentRail Cloud operating the team control plane
 with managed connectors, access control, audit, support, and reliability.
 
-## Current / Demo / Planned Capability Labels
+## Current / Legacy / Planned Capability Labels
 
 This repository mixes working OSS runtime paths with operator contracts for the
 planned control plane. Use these labels when deciding what an integration can
 rely on today:
 
-| Capability | Current live adapter support | Current demo support | Planned MVP control-plane behavior |
+| Capability | Current live adapter support | Legacy demo note | Planned MVP control-plane behavior |
 | --- | --- | --- | --- |
-| Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the OSS server does not yet run a live provider intake worker. | **Demo:** The demo starts from a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
-| Routing | **Current:** Routing rules, dry-run evaluation, assignment, and audit are specified as operator/admin contracts. | **Demo:** The demo task is already assigned, so no routing decision is executed at runtime. | **Planned:** The control plane evaluates deterministic rules, stores `routingReason`, wakes the selected agent, and exposes audit history. |
-| Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented when the server is wired with `AgentAuthStore`. | **Demo:** `AGENTRAIL_MODE=demo` leaves protected routes open and uses `ar_local_demo_key` only as an SDK placeholder. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
-| Local/self-hosted setup | **Current:** Setup is manual: copy `.env.example`, start the demo or server process, export `AGENTRAIL_BASE_URL`, and use the documented auth bootstrap path for auth-enabled runs. No `agentrail` setup CLI is implemented yet. | **Demo:** `npm run demo:server` serves the deterministic task store, and `ar_local_demo_key` is only a local SDK placeholder. | **Planned:** The setup CLI follows `agentrail init` -> `agentrail server start` -> `agentrail agent create/connect`, writes local `.agentrail` config/env output, creates the agent identity/profile/key/routing state, and verifies `/tasks/mine`. |
-| Live task store | **Current:** Default server mode requires configured task sources and provider credentials, and it returns `404` instead of falling back to demo data. | **Demo:** Demo mode uses a deterministic in-memory task lifecycle store with optional local event replay persistence. | **Planned:** The control plane persists assigned tasks, routing decisions, lifecycle state, and event cursors in managed storage. |
-| Submit | **Current:** `mode: "adapter_managed"` lets the GitHub submit adapter create or reuse provider PRs from configured task sources. | **Demo:** `mode: "artifact"` accepts a placeholder pull request artifact so the local issue-to-ship loop runs without provider credentials. | **Planned:** Submit is always mediated by provider adapters, with idempotent create-or-reuse behavior and compact response state. |
-| CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries for configured task sources. | **Demo:** Deterministic CI and review transitions prove the agent loop without live checks or reviewers. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
-| Ship | **Current:** Ship and rollback routes are implemented behind adapter interfaces with idempotency keys and common state/error handling. | **Demo:** The local demo queues a deterministic ship result after CI passes and review approves. | **Planned:** Managed control-plane deployments coordinate merge, deploy, rollback, and audit with least-privilege provider permissions. |
+| Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the OSS server does not yet run a live provider intake worker. | **Legacy:** The removed demo used a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
+| Routing | **Current:** Routing rules, dry-run evaluation, assignment, and audit are specified as operator/admin contracts. | **Legacy:** The removed demo skipped routing by starting with a pre-assigned task. | **Planned:** The control plane evaluates deterministic rules, stores `routingReason`, wakes the selected agent, and exposes audit history. |
+| Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented on the default server path. | **Legacy:** Placeholder demo keys are no longer valid on the core runtime. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
+| Local/self-hosted setup | **Current:** Setup is manual: copy `.env.example`, seed task-store and task-source files, start `npm start`, and bootstrap an API key. No `agentrail` setup CLI is implemented yet. | **Legacy:** The removed demo runtime used a built-in fixture task instead of explicit task-store configuration. | **Planned:** The setup CLI follows `agentrail init` -> `agentrail server start` -> `agentrail agent create/connect`, writes local `.agentrail` config/env output, creates the agent identity/profile/key/routing state, and verifies `/tasks/mine`. |
+| Live task store | **Current:** The server reads durable task records from `AGENTRAIL_TASK_STORE_PATH` and never falls back to hidden fixture data. | **Legacy:** The removed demo used an in-memory deterministic lifecycle store. | **Planned:** The control plane persists assigned tasks, routing decisions, lifecycle state, and event cursors in managed storage. |
+| Submit | **Current:** `mode: "adapter_managed"` lets the GitHub submit adapter create or reuse provider PRs from configured task sources. | **Legacy:** Artifact-style placeholder PR examples remain documentation-only; they are not a runtime mode. | **Planned:** Submit is always mediated by provider adapters, with idempotent create-or-reuse behavior and compact response state. |
+| CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries for configured task sources. | **Legacy:** The removed demo simulated CI and review transitions locally. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
+| Ship | **Current:** Ship and rollback routes are implemented behind adapter interfaces with idempotency keys and common state/error handling. | **Legacy:** The removed demo returned a deterministic queued ship result. | **Planned:** Managed control-plane deployments coordinate merge, deploy, rollback, and audit with least-privilege provider permissions. |
 
 ## Intended End-to-End Flow
 
@@ -91,31 +91,45 @@ on a human pasting a PR URL into AgentRail.
 
 ## Choose an Integration Track
 
-### Track A: Local OSS Demo
+### Track A: Local Self-Hosted Bootstrap
 
-Use this when you want to see the deterministic issue -> PR -> CI -> review ->
-ship loop without tokens or private services.
+Use this when you want to run the real server locally with explicit task-store
+and task-source configuration.
 
 ```bash
 git clone https://github.com/oxnw/agentrail.git
 cd agentrail
 npm install
 cp .env.example .env
-npm run demo:server
+cp examples/self-hosted-task-store.json .agentrail.tasks.json
+cp examples/self-hosted-task-sources.json .agentrail.task-sources.json
 ```
 
-In a second terminal:
+Edit the copied JSON files to match your repository, issue, branch, and agent
+id, then start the server:
 
 ```bash
-npm run demo
+export GITHUB_TOKEN=ghp_your_token
+export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
+export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
+npm start
 ```
 
-The demo server listens on `http://127.0.0.1:3000` by default. The local demo
-uses an in-memory task store with task `tsk_DEMOISSUETOSHIP01`.
+Bootstrap an API key before calling protected routes:
 
-Authentication note: `AGENTRAIL_MODE=demo` does not configure the agent auth
-store. Protected routes are open in this local demo mode, and SDK examples use
-`ar_local_demo_key` only as a constructor placeholder.
+```bash
+curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
+  -H "content-type: application/json" \
+  -H "idempotency-key: bootstrap-local-admin" \
+  -d '{
+    "agent": {
+      "id": "agt_local_agent",
+      "displayName": "Local Agent",
+      "role": "developer"
+    },
+    "scopes": ["auth:admin", "tasks:read", "tasks:write", "ci:read", "reviews:read", "ship:write"]
+  }'
+```
 
 Cloud boundary note: Track A proves the local lifecycle contract. It does not
 include managed provider connectors, team access control, audited fleet routing,
@@ -143,7 +157,7 @@ Example:
 ```bash
 cd /path/to/target-repo
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=ar_local_demo_key
+export AGENTRAIL_API_KEY=ar_live_replace_with_real_key
 ```
 
 Claude Code interactive launch:
@@ -279,7 +293,7 @@ import { AgentRailClient } from "@agentrail-core/sdk";
 
 const client = new AgentRailClient({
   baseUrl: process.env.AGENTRAIL_BASE_URL ?? "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY ?? "ar_local_demo_key",
+  apiKey: process.env.AGENTRAIL_API_KEY!,
 });
 
 const tasks = await client.listMyTasks({ status: "in_progress", limit: 1 });
@@ -335,7 +349,7 @@ from agentrail import AgentRailClient, TaskStatus
 async def main():
     async with AgentRailClient(
         base_url=os.getenv("AGENTRAIL_BASE_URL", "http://127.0.0.1:3000"),
-        api_key=os.getenv("AGENTRAIL_API_KEY", "ar_local_demo_key"),
+        api_key=os.environ["AGENTRAIL_API_KEY"],
     ) as client:
         tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS, limit=1)
         if not tasks.data:
@@ -353,10 +367,9 @@ asyncio.run(main())
 
 ## Auth-Enabled Operation
 
-Agent auth is supported by the API and tests, but `AGENTRAIL_MODE=demo`
-intentionally runs the OSS demo without an auth store. In an auth-enabled
-deployment, the server must be created with `AgentAuthStore`; then the first
-bootstrap request can create an `auth:admin` key.
+Agent auth is supported on the default server path. The first bootstrap request
+creates an `auth:admin` key, and subsequent task routes require the returned
+secret `data.apiKey`.
 
 Current behavior: auth-enabled setup is an operator/server wiring path, not a
 one-command local CLI. Planned behavior: `agentrail agent create/connect` wraps
@@ -450,7 +463,7 @@ events.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `auth_store_unavailable` from `/agent-api-keys` | You are using `AGENTRAIL_MODE=demo` or another server without an auth store | Use `ar_local_demo_key` for the local demo, or run an auth-enabled server that wires `AgentAuthStore`. |
+| `auth_store_unavailable` from `/agent-api-keys` | The server was started without auth wiring or an older runtime is still running | Restart with the current default server entrypoint and retry the bootstrap request. |
 | `401 Unauthorized` | Auth-enabled server received a missing or wrong bearer key | Use the one-time `data.apiKey` secret, not the `akey_...` id. |
 | `403 insufficient_scope` | The key lacks the route's required scope | Create or rotate a key with the minimum required scope. |
 | `409 conflict` on submit or ship | The idempotency key was reused with a different body, or the task is not in a valid state | Use a new key for a new attempt, or follow `availableActions`. |

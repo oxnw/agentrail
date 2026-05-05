@@ -4,7 +4,7 @@ AgentRail now treats checked-in TypeScript as the canonical implementation sourc
 
 ## Decision
 
-- Use `src/server.ts` as the service entrypoint for `npm start` and `npm run demo:server`.
+- Use `src/server.ts` as the service entrypoint for `npm start`.
 - Keep root `tsconfig.json` focused on TypeScript only; JavaScript tests may remain as test harnesses, but they import implementation modules through `.ts` paths.
 - Author the TypeScript SDK source with `.ts` relative imports and use `rewriteRelativeImportExtensions` so `npm --prefix sdk/typescript run build` emits package-safe `.js` imports in `dist`.
 - Reject side-by-side checked-in JavaScript shims beside TypeScript sources. They made runtime ownership ambiguous and let stale JS survive after a TypeScript migration.
@@ -14,7 +14,6 @@ AgentRail now treats checked-in TypeScript as the canonical implementation sourc
 Runtime source duplicates removed from `src/`:
 
 - `agent-auth-store.js` / `agent-auth-store.ts`
-- `agent-ship-cycle-demo.js` / `agent-ship-cycle-demo.ts`
 - `agent-task-queue.js` / `agent-task-queue.ts`
 - `app.js` / `app.ts`
 - `circleci-status-adapter.js` / `circleci-status-adapter.ts`
@@ -50,7 +49,7 @@ Duplicate migrated test files removed:
 
 - JavaScript test files without TypeScript counterparts remain as harnesses, not implementation sources. They now import `../src/*.ts`.
 - `test/mock-github-server.js` and `test/fixtures/circleci-fixtures.js` remain JavaScript fixtures because they have no side-by-side TypeScript duplicate.
-- `scripts/*.mjs` remain Node scripts; `scripts/agentrail-e2e-demo.mjs` now imports service modules from `src/*.ts`.
+- `scripts/*.mjs` remain Node scripts for packaging, smoke, and release workflows.
 - SDK JavaScript belongs in generated `sdk/typescript/dist`, not beside `sdk/typescript/src`.
 
 ## External sandbox compatibility
@@ -61,7 +60,7 @@ Current finding: the sandbox repository contains only `README.md`. It has no pac
 
 Future sandbox validation should consume AgentRail through documented runtime/package entrypoints:
 
-- Service startup: `npm start` or `npm run demo:server`, both backed by `src/server.ts`.
+- Service startup: `npm start`, backed by `src/server.ts`.
 - SDK consumers: generated package output from `sdk/typescript/dist`, not SDK source shims.
 - Live provider fixtures: sandbox repository data and GitHub API state, not checked-in AgentRail implementation files.
 

@@ -229,7 +229,7 @@ Expected local files:
 For the current repo, the manual equivalent remains:
 
 ```bash
-npm run demo:server
+npm start
 ```
 
 The planned CLI wrapper is:
@@ -238,9 +238,9 @@ The planned CLI wrapper is:
 agentrail server start
 ```
 
-`agentrail server start` reads `.agentrail/config.json`, binds local demo mode to
-`127.0.0.1` by default, and refuses real provider mode when required provider
-token env vars are absent.
+`agentrail server start` reads `.agentrail/config.json`, binds the local server
+to `127.0.0.1` by default, and refuses real provider mode when required
+provider token env vars are absent.
 
 ### Phase 2: Agent Registration
 
@@ -524,11 +524,11 @@ the shared AgentRail contract from [agent recipes](../agent-recipes.md).
 
 ## Migration Path
 
-The first implementation plan should preserve the current quick-start while
-adding the setup path incrementally:
+The first implementation plan should preserve the current self-hosted
+quick-start while adding the setup path incrementally:
 
-1. Keep `npm run demo:server`, Docker Compose, and the deterministic demo task
-   working for existing users.
+1. Keep `npm start`, Docker Compose, and the explicit task-store/task-source
+   bootstrap examples working for existing users.
 2. Add the interactive CLI wizard as a wrapper over existing and planned
    OpenAPI operations, leaving raw HTTP examples as reference material rather
    than the primary UX.

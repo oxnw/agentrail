@@ -9,7 +9,7 @@ import test from "node:test";
 import { TaskStore } from "../src/task-store.ts";
 const DEMO_TASK_ID = "tsk_DEMOISSUETOSHIP01";
 
-test("default non-demo server mode does not expose deterministic demo task", async (t) => {
+test("server mode does not expose a seeded lifecycle fixture by default", async (t) => {
   const port = 34000 + Math.floor(Math.random() * 1000);
   const server = spawn(process.execPath, ["src/server.ts"], {
     env: {
@@ -26,7 +26,6 @@ test("default non-demo server mode does not expose deterministic demo task", asy
         }
       }),
       GITHUB_TOKEN: "ghp_testtoken",
-      AGENTRAIL_MODE: "",
       CIRCLECI_TOKEN: "",
       CIRCLECI_WEBHOOK_SECRET: ""
     },
@@ -69,7 +68,7 @@ test("default non-demo server mode does not expose deterministic demo task", asy
   });
   const mineBody = await mineRes.json();
   assert.equal(mineRes.status, 200);
-  assert.equal(mineBody.data.length, 0, "server mode should not expose demo tasks in per-agent queue");
+  assert.equal(mineBody.data.length, 0, "server mode should not expose fixture tasks in the per-agent queue");
 
   const response = await fetch(`http://127.0.0.1:${port}/tasks/${DEMO_TASK_ID}`, {
     headers: { authorization: `Bearer ${apiKey}` },
@@ -162,7 +161,6 @@ test("server mode serves configured durable task store records", async (t) => {
         },
       }),
       GITHUB_TOKEN: "ghp_testtoken",
-      AGENTRAIL_MODE: "server",
       CIRCLECI_TOKEN: "",
       CIRCLECI_WEBHOOK_SECRET: "",
     },

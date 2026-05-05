@@ -210,7 +210,6 @@ export function buildSetupPlan(config: SetupConfig): string[] {
     "Write .agentrail/config.json",
     "Write .agentrail/agent.env.example",
     "Write .agentrail/README.md",
-    "Seed GitHub and CircleCI provider placeholders without storing secrets",
   ];
 
   if (config.exports.markdown.enabled) {
@@ -218,7 +217,6 @@ export function buildSetupPlan(config: SetupConfig): string[] {
   }
 
   steps.push(`Prepare local API config for ${config.server.baseUrl}`);
-  steps.push("Leave .agentrail/agent.env for the later registration step only");
 
   return steps;
 }

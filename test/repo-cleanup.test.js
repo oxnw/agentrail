@@ -39,9 +39,7 @@ const removedInternalArtifacts = [
 
 const keptPublicArtifacts = [
   "landing/index-light.html",
-  "scripts/agentrail-e2e-demo.mjs",
   "docs/cloud.md",
-  "docs/demo/agentrail-e2e-demo.md",
   "docs/api/task-lifecycle.openapi.yaml"
 ];
 
@@ -94,7 +92,9 @@ test("runtime scripts execute TypeScript entrypoints directly", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 
   assert.equal(packageJson.scripts.start, "node src/server.ts");
-  assert.equal(packageJson.scripts["demo:server"], "AGENTRAIL_MODE=demo node src/server.ts");
+  assert.equal(packageJson.scripts["demo:server"], undefined);
+  assert.equal(packageJson.scripts.demo, undefined);
+  assert.equal(packageJson.scripts["demo:json"], undefined);
   assert.match(packageJson.scripts["test:service"], /test\/\*\.test\.ts/);
   assert.doesNotMatch(JSON.stringify(packageJson.scripts), /src\/[^"]+\.js/);
 

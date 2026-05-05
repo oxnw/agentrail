@@ -127,7 +127,7 @@ test("resolveTaskSource resolves pullNumber from submission when missing in pers
   assert.equal(source?.pullNumber, 99);
 });
 
-test("resolveTaskSource works for explicitly configured/demo tasks", () => {
+test("resolveTaskSource works for explicitly configured task sources", () => {
   const taskSources = new Map([
     ["tsk_demo", { provider: "github", owner: "demo", repo: "app", pullNumber: 1, branch: "demo-branch" }],
   ]);

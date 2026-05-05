@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 
 import { createServer } from "../src/app.ts";
-import { createAgentShipCycleDemoStore } from "../src/agent-ship-cycle-demo.ts";
+import { createAgentShipCycleDemoStore } from "./helpers/deterministic-lifecycle-store.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
 async function listen(server) {
@@ -27,7 +27,7 @@ async function requestJson(baseUrl, path, options = {}) {
   return { response, body };
 }
 
-test("agent can complete issue to ship cycle through AgentRail lifecycle endpoints", async (t) => {
+test("agent can complete a deterministic lifecycle flow through AgentRail endpoints", async (t) => {
   const now = () => new Date("2026-05-01T10:00:00Z");
   const eventStore = new TaskEventStore({ now });
   const taskLifecycleStore = createAgentShipCycleDemoStore({

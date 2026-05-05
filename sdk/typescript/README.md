@@ -12,7 +12,8 @@ Requires Node.js >= 18.0.0 (uses native `fetch`).
 
 ## Quickstart
 
-Start the local OSS demo API from the repository root:
+Start the local AgentRail API from the repository root after configuring
+`GITHUB_TOKEN`, `AGENTRAIL_TASK_STORE_PATH`, and `AGENTRAIL_TASK_SOURCES`:
 
 ```bash
 npm start
@@ -23,7 +24,7 @@ import { AgentRailClient } from "@agentrail-core/sdk";
 
 const client = new AgentRailClient({
   baseUrl: "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY ?? "ar_local_demo_key",
+  apiKey: process.env.AGENTRAIL_API_KEY!,
 });
 
 // List assigned tasks
@@ -70,15 +71,10 @@ const ship = await client.shipTask(
 );
 ```
 
-For the default OSS `npm start` server, `ar_local_demo_key` is only a local
-placeholder because agent auth is not enabled. In an auth-enabled deployment,
-use the returned `data.apiKey` value from key creation; it starts with
-`ar_live_`. The `akey_...` value is the key ID, not the secret.
-
-The default OSS demo can still use `mode: "artifact"` with a deterministic
-`pull_request` URL when no provider credentials are configured. Production and
-dogfood automation should use `mode: "adapter_managed"` so AgentRail owns PR
-creation and returns the PR state.
+Use the returned `data.apiKey` value from key creation; it starts with
+`ar_live_`. The `akey_...` value is the key ID, not the secret. For provider
+automation, prefer `mode: "adapter_managed"` so AgentRail owns PR creation and
+returns the PR state.
 
 ## Authentication
 
@@ -115,7 +111,7 @@ The client retries failed requests with exponential backoff. Customize behavior:
 ```typescript
 const client = new AgentRailClient({
   baseUrl: process.env.AGENTRAIL_BASE_URL ?? "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY ?? "ar_local_demo_key",
+  apiKey: process.env.AGENTRAIL_API_KEY!,
   retry: {
     maxAttempts: 5,          // default: 3
     initialDelayMs: 500,      // default: 1000

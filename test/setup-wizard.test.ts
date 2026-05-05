@@ -7,7 +7,7 @@ import {
   PromptCancelledError,
   type ClackPromptsLike,
 } from "../src/cli/prompt.ts";
-import type { DetectedRepoContext } from "../src/cli/setup-config.ts";
+import type { DetectedRepoContext, SetupConfig } from "../src/cli/setup-config.ts";
 import type { PromptChoice, PromptSession } from "../src/cli/prompt.ts";
 
 const detectedRepo: DetectedRepoContext = {
@@ -20,7 +20,7 @@ const detectedRepo: DetectedRepoContext = {
 test("runCli starts the guided setup wizard in TTY mode by default", async () => {
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
-  const writes: Array<{ repoRoot: string; config: { targetRepo: { path: string; allowlist: string[]; defaultBranch: string }; server: { baseUrl: string } } }> = [];
+  const writes: Array<{ repoRoot: string; config: SetupConfig }> = [];
   const prompt = new ScriptedPromptSession([
     { kind: "input", value: "/tmp/custom-agentrail" },
     { kind: "input", value: "custom/agentrail" },

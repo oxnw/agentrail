@@ -52,17 +52,6 @@ export async function runSetupWizard({
 }: RunSetupWizardOptions): Promise<SetupWizardResult> {
   const detectedAllowlist = detectedRepo.remoteSlug ?? detectedRepo.repoPath;
   const detectedBaseUrl = flags.baseUrl ?? "http://127.0.0.1:3000";
-  await prompt.note({
-    title: "What these settings do",
-    body: [
-      "- Target GitHub repo: local repository where AgentRail writes `.agentrail/` and reads repo context.",
-      "- GitHub remote repository: will be stored as the initial allowed GitHub repository.",
-      "- Default branch: branch AgentRail assumes for new work and pull requests.",
-      "- Local API base URL: where local agents call the AgentRail API server.",
-      "- GitHub and CircleCI tokens: init writes placeholders now, but live secrets still stay blank during setup so they do not get echoed back into the terminal or committed beside repo-scoped setup files.",
-      "- Markdown/Obsidian export: optional read-only notes written under `.agentrail/notes`.",
-    ].join("\n"),
-  });
   await prompt.message(`Local git repo detected: ${detectedRepo.repoPath}`);
   const repoPath = flags.repo ?? resolvePromptValue(
     await prompt.input({
@@ -121,7 +110,7 @@ export async function runSetupWizard({
   await prompt.note({
     title: "Before you confirm",
     body: [
-      "Wait setup wizard will do:",
+      "What setup wizard will do:",
       ...planLines.map((line) => `- ${line}`),
       "",
       "Nothing is written until you answer yes.",
@@ -136,6 +125,16 @@ export async function runSetupWizard({
     })
       ? "write"
       : "cancelled";
+
+    await prompt.note({
+      title: "Next steps",
+      body: [
+        "Add tokens to .agentrail/agent.env file in this repository",
+        "Template at .agentrail/agent.env.example",
+        "\n",
+        " - Happy building!"
+      ].join("\n"),
+    });
 
   return {
     action,

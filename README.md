@@ -53,40 +53,51 @@ Node setup:
 git clone https://github.com/oxnw/agentrail.git
 cd agentrail
 cp .env.example .env
-npm run demo:server
+npm install
+cp examples/self-hosted-task-store.json .agentrail.tasks.json
+cp examples/self-hosted-task-sources.json .agentrail.task-sources.json
 ```
 
-The demo API runs without private credentials and serves the deterministic demo
-task store. The default `npm start` path is production-like server mode and
-requires live task sources plus provider credentials.
+Edit the copied example files so the repository owner, repo, issue number,
+branch, and assignee match your local setup. Then start the server with real
+GitHub credentials:
+
+```bash
+export GITHUB_TOKEN=ghp_your_token
+export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
+export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
+npm start
+```
 
 Current local setup is manual. The planned self-hosted setup CLI contract is
 documented in
 [docs/architecture/local-self-hosted-setup-cli-contract.md](docs/architecture/local-self-hosted-setup-cli-contract.md):
 `agentrail init` writes local config, `agentrail server start` starts the
 configured server, and `agentrail agent create/connect` creates the
-AgentIdentity, scoped key, AgentProfile, and starter routing/demo state needed
+AgentIdentity, scoped key, AgentProfile, and starter routing state needed
 for an LLM agent to call `/tasks/mine`.
 
-In a second terminal, run the issue-to-ship demo:
+Bootstrap the first admin API key:
 
 ```bash
-npm run demo
-```
-
-Expected result:
-
-- The agent lists an assigned task.
-- It submits a first PR attempt.
-- CI and review request a fix.
-- It submits a corrected attempt.
-- CI passes, review approves, and ship is queued.
-- The report includes estimated token savings versus raw GitHub-shaped payloads.
-
-Machine-readable demo output:
-
-```bash
-npm run demo:json
+curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: bootstrap-local-admin' \
+  -d '{
+    "agent": {
+      "id": "agt_local_agent",
+      "displayName": "Local Agent",
+      "role": "developer"
+    },
+    "scopes": [
+      "auth:admin",
+      "tasks:read",
+      "tasks:write",
+      "ci:read",
+      "reviews:read",
+      "ship:write"
+    ]
+  }'
 ```
 
 Run tests:
@@ -107,29 +118,36 @@ docker run --rm -p 3000:3000 agentrail
 List the current agent's task:
 
 ```bash
-curl -s http://127.0.0.1:3000/tasks/mine?status=in_progress
+export AGENTRAIL_API_KEY=ar_live_replace_with_bootstrap_secret
+
+curl -s http://127.0.0.1:3000/tasks/mine?status=in_progress \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY"
 ```
 
 Submit work for review:
 
 ```bash
-curl -s -X POST http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/submit \
+curl -s -X POST http://127.0.0.1:3000/tasks/tsk_SELFHOSTED000000000001/submit \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY" \
   -H 'content-type: application/json' \
   -H 'idempotency-key: submit-local-1' \
   -d '{
-    "summary": "Implemented the failing endpoint and opened a pull request.",
-    "mode": "artifact",
-    "artifacts": [
-      { "type": "pull_request", "url": "https://github.com/oxnw/agentrail/pull/42" }
-    ]
+    "summary": "Implemented the assigned change.",
+    "mode": "adapter_managed",
+    "pullRequest": {
+      "title": "Validate the self-hosted AgentRail loop",
+      "draft": false
+    }
   }'
 ```
 
 Read CI and review feedback:
 
 ```bash
-curl -s http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/ci-status
-curl -s http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/review-feedback
+curl -s http://127.0.0.1:3000/tasks/tsk_SELFHOSTED000000000001/ci-status \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY"
+curl -s http://127.0.0.1:3000/tasks/tsk_SELFHOSTED000000000001/review-feedback \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY"
 ```
 
 ## Architecture
@@ -141,22 +159,20 @@ The repository is intentionally API-first:
   contract for provider issue intake, routing decisions, assignment, and audit.
 - `docs/architecture/intake-routing-engine.md` records the routing engine
   boundary and assignment model.
-- `src/app.js` exposes the HTTP routes.
-- `src/agent-ship-cycle-demo.js` provides a deterministic lifecycle store for
-  local demos and tests.
-- `src/task-event-store.js` stores and replays compact lifecycle events.
-- `src/task-webhook-store.js` and `src/task-webhook-delivery-worker.js` model
+- `src/app.ts` exposes the HTTP routes.
+- `src/task-event-store.ts` stores and replays compact lifecycle events.
+- `src/task-webhook-store.ts` and `src/task-webhook-delivery-worker.ts` model
   webhook subscriptions and delivery retries.
-- `src/github-actions-ci-adapter.js`, `src/circleci-status-adapter.js`, and
-  `src/github-review-feedback-adapter.js` show the adapter pattern for external
+- `src/github-actions-ci-adapter.ts`, `src/circleci-status-adapter.ts`, and
+  `src/github-review-feedback-adapter.ts` show the adapter pattern for external
   developer tools.
 - `sdk/typescript` and `sdk/python` are the generated SDK surfaces agents should
   use instead of hand-rolled HTTP calls.
 
-Technical decision: the public MVP uses deterministic local adapters by
-explicit demo mode. Live GitHub/CI integrations are behind adapter interfaces so
-the OSS demo is reproducible without secrets, while the default server runtime
-does not depend on demo tasks or silently fall back to fixture data.
+Technical decision: the public MVP is server-only. Local evaluation uses
+explicit task-store and task-source examples, while GitHub/CI behavior stays
+behind adapter interfaces. The runtime never silently falls back to fixture
+tasks.
 
 Rejected: a hosted-only demo. That would make the release depend on paid API
 access and would obscure whether the local agent lifecycle contract works.
@@ -194,11 +210,9 @@ Example `AGENTRAIL_TASK_SOURCES` entry for CircleCI:
 
 ## SDKs
 
-For the local OSS demo server, agent auth is not enabled, so
-`ar_local_demo_key` is only a local placeholder required by the SDK constructor.
-In an auth-enabled deployment, create an AgentRail API key and use the returned
-secret `data.apiKey` value, which starts with `ar_live_`. The `akey_...` value is
-the key ID, not the secret.
+Create an AgentRail API key and use the returned secret `data.apiKey` value,
+which starts with `ar_live_`. The `akey_...` value is the key ID, not the
+secret.
 
 TypeScript local usage:
 
@@ -207,7 +221,7 @@ import { AgentRailClient } from "@agentrail-core/sdk";
 
 const client = new AgentRailClient({
   baseUrl: "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY ?? "ar_local_demo_key",
+  apiKey: process.env.AGENTRAIL_API_KEY!,
 });
 
 const tasks = await client.listMyTasks({ status: "in_progress" });
@@ -216,11 +230,12 @@ const tasks = await client.listMyTasks({ status: "in_progress" });
 Python local usage:
 
 ```py
+import os
 from agentrail import AgentRailClient, TaskStatus
 
 async with AgentRailClient(
     base_url="http://127.0.0.1:3000",
-    api_key="ar_local_demo_key",
+    api_key=os.environ["AGENTRAIL_API_KEY"],
 ) as client:
     tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS)
 ```
@@ -233,15 +248,16 @@ path for this OSS release candidate.
 ## Release Scope
 
 This public repo is intentionally limited to the runnable OSS contract: the
-local API server, SDKs, demo flow, and operator-facing integration docs.
+local API server, SDKs, self-hosted bootstrap examples, and operator-facing
+integration docs.
 Internal planning and architecture decision records are kept outside the public
 release bundle.
 
 ## OSS vs Cloud Boundary
 
 The OSS product should stay fully runnable for local evaluation and
-self-managed use. It includes the lifecycle API, SDKs, deterministic demo,
-single-instance server path, event/webhook primitives, and adapter interfaces.
+self-managed use. It includes the lifecycle API, SDKs, single-instance server
+path, event/webhook primitives, and adapter interfaces.
 
 AgentRail Cloud is planned as the managed team/fleet layer, not merely a hosted
 copy of this Node process. Cloud should own managed provider connectors,
@@ -285,7 +301,6 @@ See [Cloud boundary](./docs/cloud.md).
 - [Intake routing operator OpenAPI](./docs/api/intake-routing-admin.openapi.yaml)
 - [Railway production deployment runbook](./docs/deployment/railway-production.md)
 - [Live sandbox validation gate](./docs/deployment/live-sandbox-validation.md)
-- [End-to-end demo](./docs/demo/agentrail-e2e-demo.md)
 - [Claude Code and Codex lifecycle example](./examples/issue-to-pr-lifecycle.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)

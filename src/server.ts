@@ -1,6 +1,5 @@
 import fs from "node:fs";
 
-import { createAgentShipCycleDemoStore } from "./agent-ship-cycle-demo.ts";
 import { createServer } from "./app.ts";
 import { AgentAuthStore } from "./agent-auth-store.ts";
 import { CircleCiStatusAdapter } from "./circleci-status-adapter.ts";
@@ -22,7 +21,6 @@ const publicBaseUrl =
 const storagePath = process.env.AGENTRAIL_EVENT_STORE_PATH || undefined;
 
 const fallbackMode = (process.env.AGENTRAIL_FALLBACK_MODE ?? "false").toLowerCase() === "true";
-const runtimeMode = resolveRuntimeMode(process.env.AGENTRAIL_MODE);
 
 const now = () => new Date();
 const eventStore = new TaskEventStore({ now, storagePath });
@@ -35,7 +33,6 @@ let server: ReturnType<typeof createServer> | null = null;
 
 try {
   const runtime = buildRuntime({
-    mode: runtimeMode,
     taskSourcesJson,
     githubToken,
     circleciToken,
@@ -44,7 +41,7 @@ try {
     publicBaseUrl
   });
 
-  const authStore = runtimeMode === "server" ? new AgentAuthStore({ now }) : null;
+  const authStore = new AgentAuthStore({ now });
 
   server = createServer({
     store: eventStore,
@@ -57,11 +54,10 @@ try {
     now,
     publicBaseUrl,
     fallbackMode,
-    demoAssetsEnabled: runtime.mode === "demo",
   });
 
   server.listen(port, host, () => {
-    process.stdout.write(`AgentRail ${runtime.mode} API listening on ${publicBaseUrl}\n`);
+    process.stdout.write(`AgentRail API listening on ${publicBaseUrl}\n`);
   });
 
   process.on("SIGTERM", shutdown);
@@ -115,20 +111,7 @@ function stripQuotes(value: string): string {
   return value;
 }
 
-type RuntimeMode = "server" | "demo";
-type DemoStore = ReturnType<typeof createAgentShipCycleDemoStore>;
-
-function resolveRuntimeMode(value: string | undefined): RuntimeMode {
-  const normalized = (value || "server").toLowerCase();
-  if (normalized === "server" || normalized === "demo") {
-    return normalized;
-  }
-
-  throw new Error(`AGENTRAIL_MODE must be "server" or "demo"; received "${value}".`);
-}
-
 function buildRuntime({
-  mode,
   taskSourcesJson,
   githubToken,
   circleciToken,
@@ -136,7 +119,6 @@ function buildRuntime({
   eventStore,
   publicBaseUrl
 }: {
-  mode: RuntimeMode;
   taskSourcesJson: string | null;
   githubToken: string | null;
   circleciToken: string | null;
@@ -144,26 +126,10 @@ function buildRuntime({
   eventStore: TaskEventStore;
   publicBaseUrl: string;
 }) {
-  if (mode === "demo") {
-    const demoStore = createAgentShipCycleDemoStore({
-      now,
-      eventStore,
-      apiBaseUrl: publicBaseUrl,
-    });
-
-    return {
-      mode,
-      taskLifecycleStore: demoStore,
-      ciStatusAdapter: demoStore,
-      reviewFeedbackAdapter: demoStore,
-      rollbackAdapter: null
-    };
-  }
-
   const taskSources = parseTaskSources(taskSourcesJson);
   if (!githubToken) {
     throw new Error(
-      "AGENTRAIL_MODE=server requires GITHUB_TOKEN for live task lifecycle adapters. Use AGENTRAIL_MODE=demo for the deterministic local demo."
+      "GITHUB_TOKEN is required for GitHub-backed submit, review, and CI adapters."
     );
   }
 
@@ -185,7 +151,6 @@ function buildRuntime({
   });
 
   return {
-    mode,
     taskLifecycleStore: agentQueue,
     ciStatusAdapter: buildCiStatusAdapter({
       taskSources,
@@ -208,9 +173,7 @@ function buildRuntime({
 
 function parseTaskSources(taskSourcesJson: string | null): Map<string, unknown> {
   if (!taskSourcesJson) {
-    throw new Error(
-      "AGENTRAIL_MODE=server requires AGENTRAIL_TASK_SOURCES. Use AGENTRAIL_MODE=demo for the deterministic local demo."
-    );
+    throw new Error("AGENTRAIL_TASK_SOURCES is required and must be a JSON object keyed by task id.");
   }
 
   try {

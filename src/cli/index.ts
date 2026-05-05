@@ -166,14 +166,6 @@ async function finalizeInit({
   });
   const envPath = path.join(config.targetRepo.path, ".agentrail", "agent.env");
   const envExamplePath = path.join(config.targetRepo.path, ".agentrail", "agent.env.example");
-
-  stdout.write([
-    "Next steps:",
-    `- Add your provider tokens to ${envPath} when you wire live providers.`,
-    `- Use ${envExamplePath} as the template.`,
-    "- Happy hacking!",
-    "",
-  ].join("\n"));
   return 0;
 }
 
