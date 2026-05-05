@@ -156,11 +156,13 @@ function buildRuntime({
     ciStatusAdapter: buildCiStatusAdapter({
       taskSources,
       githubToken,
-      circleciToken
+      circleciToken,
+      getTask: (taskId) => agentQueue.getRawTask(taskId),
     }),
     reviewFeedbackAdapter: new GitHubReviewFeedbackAdapter({
       taskSources,
-      githubToken
+      githubToken,
+      getTask: (taskId) => agentQueue.getRawTask(taskId),
     }),
     rollbackAdapter: new GitHubRollbackAdapter({
       taskSources,
@@ -188,10 +190,11 @@ function parseTaskSources(taskSourcesJson: string | null): Map<string, unknown> 
   }
 }
 
-function buildCiStatusAdapter({ taskSources, githubToken, circleciToken }: {
+function buildCiStatusAdapter({ taskSources, githubToken, circleciToken, getTask }: {
   taskSources: Map<string, unknown> | null;
   githubToken: string | null;
   circleciToken: string | null;
+  getTask?: ((taskId: string) => unknown) | null;
 }) {
   const adapters = [];
 
@@ -199,7 +202,8 @@ function buildCiStatusAdapter({ taskSources, githubToken, circleciToken }: {
     adapters.push(
       new GitHubActionsCiAdapter({
         taskSources,
-        githubToken
+        githubToken,
+        getTask: getTask as ((taskId: string) => any) ?? null,
       })
     );
   }
@@ -208,7 +212,8 @@ function buildCiStatusAdapter({ taskSources, githubToken, circleciToken }: {
     adapters.push(
       new CircleCiStatusAdapter({
         taskSources,
-        circleciToken
+        circleciToken,
+        getTask: getTask as ((taskId: string) => any) ?? null,
       })
     );
   }

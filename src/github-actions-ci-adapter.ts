@@ -1,3 +1,6 @@
+import { resolveTaskSource } from "./task-source-resolution.ts";
+import type { TaskRecord } from "./task-store.ts";
+
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 const DEFAULT_RUN_LIMIT = 20;
 const MAX_FAILURE_SUMMARIES = 5;
@@ -22,8 +25,10 @@ export class GitHubActionsCiAdapter {
   declare apiBaseUrl: string;
   declare runLimit: number;
   declare jobsByRunId: Map<string, any>;
+  declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
     taskSources = {},
+    getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
     apiBaseUrl = DEFAULT_GITHUB_API_BASE_URL,
@@ -34,6 +39,7 @@ export class GitHubActionsCiAdapter {
     }
 
     this.taskSources = taskSources;
+    this.getTask = getTask;
     this.githubToken = githubToken;
     this.fetch = fetch;
     this.apiBaseUrl = apiBaseUrl.replace(/\/$/, "");
@@ -42,7 +48,10 @@ export class GitHubActionsCiAdapter {
   }
 
   async getTaskCiStatus(taskId) {
-    const source = lookupTaskSource(this.taskSources, taskId);
+    const source = resolveTaskSource(taskId, {
+      taskSources: this.taskSources,
+      getTask: this.getTask,
+    });
     if (!source) {
       return null;
     }
@@ -285,14 +294,6 @@ export function parseFailureSummaries({ logText, checkName, workflow, maxItems =
       message: fallbackMessage ?? "Job failed; no structured test failure found."
     })
   ];
-}
-
-function lookupTaskSource(taskSources, taskId) {
-  if (taskSources instanceof Map) {
-    return taskSources.get(taskId) ?? null;
-  }
-
-  return taskSources?.[taskId] ?? null;
 }
 
 function validateTaskSource(source) {

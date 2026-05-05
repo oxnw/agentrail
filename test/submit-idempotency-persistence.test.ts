@@ -14,7 +14,7 @@ function createId(): string {
 
 function makeTask(partial: Partial<Omit<TaskRecord, "id">> & { identifier: string; title: string }): TaskRecord {
   const now = new Date().toISOString();
-  return {
+  const task: TaskRecord = {
     id: createId(),
     identifier: partial.identifier,
     title: partial.title,
@@ -37,6 +37,12 @@ function makeTask(partial: Partial<Omit<TaskRecord, "id">> & { identifier: strin
     createdAt: partial.createdAt ?? now,
     version: partial.version ?? 1,
   };
+
+  if (partial.source !== undefined) {
+    task.source = partial.source;
+  }
+
+  return task;
 }
 
 function mockDelegate(response: unknown, delay = 0) {
@@ -113,6 +119,51 @@ test("AgentTaskQueue.persist - stores idempotency and PR metadata on task record
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test("AgentTaskQueue.getTask exposes latest submit metadata in task detail", async () => {
+  const now = new Date("2026-05-05T12:00:00Z");
+  const queue = new AgentTaskQueue({
+    now: () => now,
+    delegate: mockDelegate({
+      data: {
+        submissionId: "ghpr_456",
+        taskId: "TASK_ID",
+        status: "in_review",
+        prUrl: "https://github.com/acme/webapp/pull/456",
+        prNumber: 456,
+        action: "created",
+        acceptedAt: now.toISOString(),
+        availableActions: ["view_review_feedback", "view_ci_status"],
+      },
+      availableActions: ["view_review_feedback"],
+    }),
+  });
+
+  const task = queue.createTask(
+    makeTask({
+      identifier: "AGEA-101",
+      title: "Expose PR metadata",
+      source: {
+        provider: "github",
+        owner: "acme",
+        repo: "webapp",
+        branch: "feat/persist-submit",
+        baseBranch: "main",
+      } as TaskRecord["source"],
+    }),
+  );
+
+  await queue.submitTask(task.id, { summary: "Ship it" }, "idem-101-detail");
+
+  const detail = queue.getTask(task.id);
+  assert.equal(detail.data.status, "in_review");
+  assert.equal((detail.data as any).submissionId, "ghpr_456");
+  assert.equal((detail.data as any).prUrl, "https://github.com/acme/webapp/pull/456");
+  assert.equal((detail.data as any).prNumber, 456);
+  assert.equal((detail.data as any).branch, "feat/persist-submit");
+  assert.equal((detail.data as any).baseBranch, "main");
+  assert.deepEqual(detail.data.availableActions, ["ship", "view_ci_status", "view_review_feedback"]);
 });
 
 test("AgentTaskQueue rejects submit without idempotency key", async () => {

@@ -161,6 +161,7 @@ test("server mode serves configured durable task store records", async (t) => {
         },
       }),
       GITHUB_TOKEN: "ghp_testtoken",
+      AGENTRAIL_MODE: "server",
       CIRCLECI_TOKEN: "",
       CIRCLECI_WEBHOOK_SECRET: "",
     },
