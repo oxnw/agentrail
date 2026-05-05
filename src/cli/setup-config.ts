@@ -191,7 +191,7 @@ export function buildInitCommand(config: SetupConfig): string {
     `--provider-mode ${config.providers.github.mode}`,
     `--persistence ${config.persistence.kind}`,
     `--repo ${quoteShell(config.targetRepo.path, { force: true })}`,
-    `--repo-allowlist ${config.targetRepo.allowlist.map(quoteShell).join(",")}`,
+    `--repo-allowlist ${config.targetRepo.allowlist.map(value => quoteShell(value)).join(",")}`,
     `--default-branch ${quoteShell(config.targetRepo.defaultBranch)}`,
   ];
 
@@ -207,6 +207,7 @@ export function buildSetupPlan(config: SetupConfig): string[] {
     "Write .agentrail/config.json",
     "Write .agentrail/agent.env.example",
     "Write .agentrail/README.md",
+    "Seed GitHub and CircleCI provider placeholders without storing secrets",
   ];
 
   if (config.exports.markdown.enabled) {
@@ -222,7 +223,8 @@ export function buildSetupPlan(config: SetupConfig): string[] {
 export function buildDetectedSummary(config: SetupConfig, detectedRepo: DetectedRepoContext): string[] {
   return [
     "Detected:",
-    `- Target repo: ${detectedRepo.remoteSlug ?? config.targetRepo.path}`,
+    `- Target GitHub repo: ${detectedRepo.remoteSlug ?? config.targetRepo.path}`,
+    `- GitHub repo allowlist: ${config.targetRepo.allowlist.join(", ")}`,
     `- Default branch: ${config.targetRepo.defaultBranch}`,
     `- Local API: ${config.server.baseUrl}`,
     `- Provider mode: ${config.providers.github.mode}`,

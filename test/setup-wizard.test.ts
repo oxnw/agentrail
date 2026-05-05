@@ -20,6 +20,7 @@ const detectedRepo: DetectedRepoContext = {
 test("runCli starts the guided setup wizard in TTY mode by default", async () => {
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
+  const writes: Array<{ repoRoot: string; config: { targetRepo: { path: string; allowlist: string[]; defaultBranch: string }; server: { baseUrl: string } } }> = [];
   const prompt = new ScriptedPromptSession([
     { kind: "select", value: "demo" },
     { kind: "input", value: "/tmp/custom-agentrail" },
@@ -27,7 +28,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
     { kind: "input", value: "develop" },
     { kind: "input", value: "http://127.0.0.1:4100" },
     { kind: "confirm", value: false },
-    { kind: "select", value: "print_only" },
+    { kind: "confirm", value: true },
   ]);
 
   const exitCode = await runCli(["init"], {
@@ -38,18 +39,65 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
     stderr,
     detectRepoContext: async () => detectedRepo,
     createPrompt: () => prompt,
+    writeSetupFiles: async ({ repoRoot, config }) => {
+      writes.push({ repoRoot, config });
+      return {
+        writtenPaths: [
+          `${repoRoot}/.agentrail/config.json`,
+          `${repoRoot}/.agentrail/agent.env.example`,
+          `${repoRoot}/.agentrail/README.md`,
+        ],
+      };
+    },
   });
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(prompt.calls, ["select", "input", "input", "input", "input", "confirm", "select"]);
+  assert.deepEqual(prompt.calls, ["select", "input", "input", "input", "input", "confirm", "confirm"]);
+  assert.equal(prompt.interactions[1]?.message, "Target GitHub repo checkout path");
+  assert.equal(prompt.interactions[2]?.message, "GitHub repo allowlist (owner/repo)");
   assert.match(stdout.toString(), /AgentRail local setup/i);
   assert.match(stdout.toString(), /Review setup plan/i);
-  assert.match(stdout.toString(), /agentrail init --mode demo/);
-  assert.match(stdout.toString(), /--repo '\/tmp\/custom-agentrail'/);
-  assert.match(stdout.toString(), /--repo-allowlist custom\/agentrail/);
-  assert.match(stdout.toString(), /--default-branch develop/);
-  assert.match(stdout.toString(), /--base-url http:\/\/127\.0\.0\.1:4100/);
+  assert.match(stdout.toString(), /Wrote setup files:/);
+  assert.doesNotMatch(stdout.toString(), /Equivalent command:/);
   assert.equal(stderr.toString(), "");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0]?.repoRoot, "/tmp/custom-agentrail");
+  assert.deepEqual(writes[0]?.config.targetRepo.allowlist, ["custom/agentrail"]);
+  assert.equal(writes[0]?.config.targetRepo.defaultBranch, "develop");
+  assert.equal(writes[0]?.config.server.baseUrl, "http://127.0.0.1:4100");
+});
+
+test("runCli lets the user cancel instead of writing files at the final confirmation step", async () => {
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const prompt = new ScriptedPromptSession([
+    { kind: "select", value: "demo" },
+    { kind: "input", value: detectedRepo.repoPath },
+    { kind: "input", value: detectedRepo.remoteSlug ?? detectedRepo.repoPath },
+    { kind: "input", value: detectedRepo.defaultBranch },
+    { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: false },
+  ]);
+  let didWrite = false;
+
+  const exitCode = await runCli(["init"], {
+    cwd: detectedRepo.repoPath,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stdout,
+    stderr,
+    detectRepoContext: async () => detectedRepo,
+    createPrompt: () => prompt,
+    writeSetupFiles: async () => {
+      didWrite = true;
+      throw new Error("writeSetupFiles should not run after cancellation");
+    },
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(didWrite, false);
+  assert.match(stderr.toString(), /Setup cancelled\./);
 });
 
 test("runCli requires explicit flags in non-TTY mode", async () => {
@@ -153,7 +201,7 @@ test("createPromptSession passes detected defaults through the Clack text placeh
   });
 
   const value = await session.input({
-    message: "Target repo path",
+    message: "Target GitHub repo checkout path",
     defaultValue: "/tmp/agentrail",
   });
 
@@ -211,6 +259,7 @@ function createMemoryWriter() {
 
 class ScriptedPromptSession implements PromptSession {
   readonly calls: string[] = [];
+  readonly interactions: Array<{ kind: "select" | "confirm" | "input"; message?: string; defaultValue?: string | boolean }> = [];
   readonly #steps: Array<{ kind: "select" | "confirm" | "input"; value: string | boolean }>;
 
   constructor(steps: Array<{ kind: "select" | "confirm" | "input"; value: string | boolean }>) {
@@ -223,20 +272,35 @@ class ScriptedPromptSession implements PromptSession {
     defaultValue?: string;
   }): Promise<string> {
     this.calls.push("select");
+    this.interactions.push({
+      kind: "select",
+      message: options.message,
+      defaultValue: options.defaultValue,
+    });
     const step = this.#next("select");
     const values = options.choices.map((choice) => choice.value);
     assert.ok(values.includes(String(step.value)));
     return String(step.value);
   }
 
-  async confirm(): Promise<boolean> {
+  async confirm(options: { message?: string; defaultValue?: boolean } = {}): Promise<boolean> {
     this.calls.push("confirm");
+    this.interactions.push({
+      kind: "confirm",
+      message: options.message,
+      defaultValue: options.defaultValue,
+    });
     const step = this.#next("confirm");
     return Boolean(step.value);
   }
 
-  async input(): Promise<string> {
+  async input(options: { message?: string; defaultValue?: string } = {}): Promise<string> {
     this.calls.push("input");
+    this.interactions.push({
+      kind: "input",
+      message: options.message,
+      defaultValue: options.defaultValue,
+    });
     const step = this.#next("input");
     return String(step.value);
   }

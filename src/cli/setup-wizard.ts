@@ -66,7 +66,7 @@ export async function runSetupWizard({
   }) as SetupMode;
   const repoPath = flags.repo ?? resolvePromptValue(
     await prompt.input({
-      message: "Target repo path",
+      message: "Target GitHub repo checkout path",
       defaultValue: detectedRepo.repoPath,
     }),
     detectedRepo.repoPath,
@@ -74,7 +74,7 @@ export async function runSetupWizard({
   const repoAllowlist = flags.repoAllowlist ?? [
     resolvePromptValue(
       await prompt.input({
-        message: "Repo allowlist",
+        message: "GitHub repo allowlist (owner/repo)",
         defaultValue: detectedAllowlist,
       }),
       detectedAllowlist,
@@ -126,15 +126,12 @@ export async function runSetupWizard({
 
   const action = flags.printOnly
     ? "print_only"
-    : await prompt.select({
-      message: "Continue",
-      defaultValue: "write",
-      choices: [
-        { label: "Yes, write files", value: "write" },
-        { label: "No, print commands only", value: "print_only" },
-        { label: "Cancel", value: "cancelled" },
-      ],
-    }) as SetupWizardResult["action"];
+    : await prompt.confirm({
+      message: "Complete setup and write local files?",
+      defaultValue: true,
+    })
+      ? "write"
+      : "cancelled";
 
   return {
     action,
