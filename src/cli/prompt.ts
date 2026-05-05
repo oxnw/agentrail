@@ -36,6 +36,9 @@ export interface ClackPromptsLike {
     input?: Readable;
     output?: Writable;
   }): Promise<string | symbol>;
+  log?: {
+    message(message: string, options?: { symbol?: string }): void;
+  };
   note?(message?: string, title?: string, opts?: { input?: Readable; output?: Writable }): void;
   cancel(message?: string, opts?: { input?: Readable; output?: Writable }): void;
   isCancel(value: unknown): boolean;
@@ -67,6 +70,7 @@ export interface PromptSession {
     title?: string;
     body: string;
   }): Promise<void>;
+  message(body: string): Promise<void>;
   confirm(options?: {
     message?: string;
     defaultValue?: boolean;
@@ -127,6 +131,16 @@ export function createPromptSession({
       }
 
       output.write(`${title ? `${title}\n` : ""}${body}\n`);
+    },
+
+    async message(body) {
+      ensureIntro();
+      if (clackPrompts.log?.message) {
+        clackPrompts.log.message(body, { symbol: "\u001b[32m|\u001b[0m" });
+        return;
+      }
+
+      output.write(`${body}\n`);
     },
 
     async confirm({ message = "Continue?", defaultValue = true } = {}) {

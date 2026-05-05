@@ -53,12 +53,11 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
 
   assert.equal(exitCode, 0);
   assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "select", "confirm", "confirm"]);
-  assert.equal(prompt.notes[0]?.title, "Local git repo detected");
-  assert.equal(prompt.notes[0]?.body, "/tmp/agentrail");
-  assert.equal(prompt.notes[1]?.title, "What these settings do");
-  assert.match(prompt.notes[1]?.body ?? "", /Target GitHub repo/);
-  assert.match(prompt.notes[1]?.body ?? "", /GitHub remote/);
-  assert.equal(prompt.notes[2]?.title, "Before you confirm");
+  assert.equal(prompt.notes[0]?.title, "What these settings do");
+  assert.match(prompt.notes[0]?.body ?? "", /Target GitHub repo/);
+  assert.match(prompt.notes[0]?.body ?? "", /GitHub remote/);
+  assert.equal(prompt.messages[0], "Local git repo detected: /tmp/agentrail");
+  assert.equal(prompt.notes[1]?.title, "Before you confirm");
   assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
   assert.equal(prompt.interactions[1]?.message, "GitHub remote (owner/repo)");
   assert.doesNotMatch(stdout.toString(), /AgentRail local setup/i);
@@ -216,6 +215,34 @@ test("createPromptSession forwards explanatory notes to Clack", async () => {
   assert.deepEqual(calls[0], ["note", "What this setting does", "AgentRail writes .agentrail/ here."]);
 });
 
+test("createPromptSession forwards inline messages to Clack log.message", async () => {
+  const calls: Array<[string, unknown, unknown]> = [];
+  const session = createPromptSession({
+    output: createMemoryWriter() as never,
+    clack: {
+      intro() {},
+      select: async () => "demo",
+      confirm: async () => true,
+      text: async () => "",
+      note() {},
+      log: {
+        message(message, options) {
+          calls.push(["message", message, options]);
+        },
+      },
+      cancel() {},
+      isCancel() {
+        return false;
+      },
+    } satisfies ClackPromptsLike,
+  });
+
+  await session.message("Local git repo detected: /tmp/agentrail");
+
+  assert.equal(calls[0]?.[0], "message");
+  assert.equal(calls[0]?.[1], "Local git repo detected: /tmp/agentrail");
+});
+
 test("createPromptSession passes detected defaults through the Clack text placeholder path", async () => {
   const calls: Array<[string, unknown]> = [];
   const session = createPromptSession({
@@ -297,6 +324,7 @@ class ScriptedPromptSession implements PromptSession {
   readonly calls: string[] = [];
   readonly interactions: Array<{ kind: "select" | "confirm" | "input"; message?: string; defaultValue?: string | boolean }> = [];
   readonly notes: Array<{ title?: string; body: string }> = [];
+  readonly messages: string[] = [];
   readonly #steps: Array<{ kind: "select" | "confirm" | "input"; value: string | boolean }>;
 
   constructor(steps: Array<{ kind: "select" | "confirm" | "input"; value: string | boolean }>) {
@@ -344,6 +372,10 @@ class ScriptedPromptSession implements PromptSession {
 
   async note(options: { title?: string; body: string }): Promise<void> {
     this.notes.push(options);
+  }
+
+  async message(body: string): Promise<void> {
+    this.messages.push(body);
   }
 
   async close(): Promise<void> {

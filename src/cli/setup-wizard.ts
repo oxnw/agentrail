@@ -53,10 +53,6 @@ export async function runSetupWizard({
   const detectedAllowlist = detectedRepo.remoteSlug ?? detectedRepo.repoPath;
   const detectedBaseUrl = flags.baseUrl ?? "http://127.0.0.1:3000";
   await prompt.note({
-    title: "Local git repo detected",
-    body: detectedRepo.repoPath,
-  });
-  await prompt.note({
     title: "What these settings do",
     body: [
       "- Target GitHub repo: local repository where AgentRail writes `.agentrail/` and reads repo context.",
@@ -67,6 +63,7 @@ export async function runSetupWizard({
       "- Markdown/Obsidian export: optional read-only notes written under `.agentrail/notes`.",
     ].join("\n"),
   });
+  await prompt.message(`Local git repo detected: ${detectedRepo.repoPath}`);
   const repoPath = flags.repo ?? resolvePromptValue(
     await prompt.input({
       message: "Target GitHub repo",
