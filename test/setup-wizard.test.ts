@@ -22,11 +22,11 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   const stderr = createMemoryWriter();
   const writes: Array<{ repoRoot: string; config: { targetRepo: { path: string; allowlist: string[]; defaultBranch: string }; server: { baseUrl: string } } }> = [];
   const prompt = new ScriptedPromptSession([
-    { kind: "select", value: "demo" },
     { kind: "input", value: "/tmp/custom-agentrail" },
     { kind: "input", value: "custom/agentrail" },
     { kind: "input", value: "develop" },
     { kind: "input", value: "http://127.0.0.1:4100" },
+    { kind: "select", value: "demo" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
   ]);
@@ -52,14 +52,17 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   });
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(prompt.calls, ["select", "input", "input", "input", "input", "confirm", "confirm"]);
+  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "select", "confirm", "confirm"]);
   assert.equal(prompt.notes[0]?.title, "What these settings do");
-  assert.match(prompt.notes[0]?.body ?? "", /Target GitHub repo checkout path/);
-  assert.match(prompt.notes[0]?.body ?? "", /GitHub repo allowlist/);
-  assert.equal(prompt.interactions[1]?.message, "Target GitHub repo checkout path");
-  assert.equal(prompt.interactions[2]?.message, "GitHub repo allowlist (owner/repo)");
+  assert.match(prompt.notes[0]?.body ?? "", /Target GitHub repo/);
+  assert.match(prompt.notes[0]?.body ?? "", /GitHub remote/);
+  assert.equal(prompt.notes[1]?.title, "Before you confirm");
+  assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
+  assert.equal(prompt.interactions[1]?.message, "GitHub remote (owner/repo)");
   assert.match(stdout.toString(), /AgentRail local setup/i);
+  assert.match(stdout.toString(), /Local git repo detected: \/tmp\/agentrail/);
   assert.match(stdout.toString(), /Review setup plan/i);
+  assert.doesNotMatch(stdout.toString(), /Detected:/);
   assert.match(stdout.toString(), /Wrote setup files:/);
   assert.doesNotMatch(stdout.toString(), /Equivalent command:/);
   assert.equal(stderr.toString(), "");
@@ -74,11 +77,11 @@ test("runCli lets the user cancel instead of writing files at the final confirma
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const prompt = new ScriptedPromptSession([
-    { kind: "select", value: "demo" },
     { kind: "input", value: detectedRepo.repoPath },
     { kind: "input", value: detectedRepo.remoteSlug ?? detectedRepo.repoPath },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "select", value: "demo" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: false },
   ]);
@@ -232,7 +235,7 @@ test("createPromptSession passes detected defaults through the Clack text placeh
   });
 
   const value = await session.input({
-    message: "Target GitHub repo checkout path",
+    message: "Target GitHub repo",
     defaultValue: "/tmp/agentrail",
   });
 

@@ -1,5 +1,4 @@
 import {
-  buildDetectedSummary,
   buildInitCommand,
   buildSetupPlan,
   createSetupConfig,
@@ -52,6 +51,7 @@ export async function runSetupWizard({
   writeLine,
 }: RunSetupWizardOptions): Promise<SetupWizardResult> {
   writeLine("AgentRail local setup");
+  writeLine(`Local git repo detected: ${detectedRepo.repoPath}`);
   writeLine("");
 
   const detectedAllowlist = detectedRepo.remoteSlug ?? detectedRepo.repoPath;
@@ -59,25 +59,17 @@ export async function runSetupWizard({
   await prompt.note({
     title: "What these settings do",
     body: [
-      "- Setup mode: demo stays local and token-free; server prepares real GitHub and CircleCI providers.",
-      "- Target GitHub repo checkout path: local repository where AgentRail writes `.agentrail/` and reads repo context.",
-      "- GitHub repo allowlist: which `owner/repo` slugs the agent is allowed to operate on.",
+      "- Target GitHub repo: local repository where AgentRail writes `.agentrail/` and reads repo context.",
+      "- GitHub remote (owner/repo): remote slug AgentRail stores as the initial allowed GitHub repository.",
       "- Default branch: branch AgentRail assumes for new work and pull requests.",
       "- Local API base URL: where local agents call the AgentRail API server.",
+      "- Setup mode: demo stays local and token-free; server prepares real GitHub and CircleCI providers.",
       "- Markdown/Obsidian export: optional read-only notes written under `.agentrail/notes`.",
     ].join("\n"),
   });
-  const mode = flags.mode ?? await prompt.select({
-    message: "Setup mode",
-    defaultValue: "demo",
-    choices: [
-      { label: "Demo, no provider tokens", value: "demo" },
-      { label: "Self-hosted with real GitHub/CI providers", value: "server" },
-    ],
-  }) as SetupMode;
   const repoPath = flags.repo ?? resolvePromptValue(
     await prompt.input({
-      message: "Target GitHub repo checkout path",
+      message: "Target GitHub repo",
       defaultValue: detectedRepo.repoPath,
     }),
     detectedRepo.repoPath,
@@ -85,7 +77,7 @@ export async function runSetupWizard({
   const repoAllowlist = flags.repoAllowlist ?? [
     resolvePromptValue(
       await prompt.input({
-        message: "GitHub repo allowlist (owner/repo)",
+        message: "GitHub remote (owner/repo)",
         defaultValue: detectedAllowlist,
       }),
       detectedAllowlist,
@@ -105,6 +97,14 @@ export async function runSetupWizard({
     }),
     detectedBaseUrl,
   );
+  const mode = flags.mode ?? await prompt.select({
+    message: "Setup mode",
+    defaultValue: "demo",
+    choices: [
+      { label: "Demo, no provider tokens", value: "demo" },
+      { label: "Self-hosted with real GitHub/CI providers", value: "server" },
+    ],
+  }) as SetupMode;
   const markdownExport = flags.markdownExport ?? await prompt.confirm({
     message: "Enable Markdown/Obsidian export?",
     defaultValue: false,
@@ -126,11 +126,8 @@ export async function runSetupWizard({
     defaultBranch,
     markdownExport,
   });
-  const summaryLines = buildDetectedSummary(config, detectedRepo);
   const planLines = buildSetupPlan(config);
 
-  summaryLines.forEach((line) => writeLine(line));
-  writeLine("");
   writeLine("Review setup plan:");
   planLines.forEach((line) => writeLine(`- ${line}`));
   writeLine("");
