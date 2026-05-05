@@ -52,15 +52,15 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
 
   assert.equal(exitCode, 0);
   assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "confirm", "confirm"]);
-  assert.equal(prompt.notes[0]?.title, "What these settings do");
-  assert.match(prompt.notes[0]?.body ?? "", /Target GitHub repo/);
-  assert.match(prompt.notes[0]?.body ?? "", /GitHub remote/);
-  assert.match(prompt.notes[0]?.body ?? "", /GitHub and CircleCI tokens/);
+  assert.equal(prompt.notes[0]?.title, "Before you confirm");
+  assert.match(prompt.notes[0]?.body ?? "", /What setup wizard will do:/);
+  assert.match(prompt.notes[0]?.body ?? "", /Write \.agentrail\/config\.json/);
+  assert.match(prompt.notes[0]?.body ?? "", /Prepare local API config for http:\/\/127\.0\.0\.1:4100/);
   assert.equal(prompt.messages[0], "Local git repo detected: /tmp/agentrail");
-  assert.equal(prompt.notes[1]?.title, "Before you confirm");
-  assert.match(prompt.notes[1]?.body ?? "", /(Review setup plan:|Wait setup wizard will do:)/);
-  assert.match(prompt.notes[1]?.body ?? "", /Write \.agentrail\/config\.json/);
-  assert.match(prompt.notes[1]?.body ?? "", /Leave \.agentrail\/agent\.env for the later registration step only/);
+  assert.equal(prompt.notes[1]?.title, "Next steps");
+  assert.match(prompt.notes[1]?.body ?? "", /Add tokens to \.agentrail\/agent\.env file in this repository/);
+  assert.match(prompt.notes[1]?.body ?? "", /Template at \.agentrail\/agent\.env\.example/);
+  assert.match(prompt.notes[1]?.body ?? "", /Happy building!/);
   assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
   assert.equal(prompt.interactions[1]?.message, "GitHub remote repository:");
   assert.doesNotMatch(stdout.toString(), /AgentRail local setup/i);
@@ -68,11 +68,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.doesNotMatch(stdout.toString(), /Review setup plan/i);
   assert.doesNotMatch(stdout.toString(), /Detected:/);
   assert.doesNotMatch(stdout.toString(), /Wrote setup files:/);
-  assert.match(stdout.toString(), /Next steps:/);
-  assert.doesNotMatch(stdout.toString(), /intentionally not created during init/);
-  assert.match(stdout.toString(), /\/tmp\/custom-agentrail\/\.agentrail\/agent\.env/);
-  assert.match(stdout.toString(), /agent\.env\.example/);
-  assert.match(stdout.toString(), /Happy hacking!/);
+  assert.equal(stdout.toString(), "");
   assert.doesNotMatch(stdout.toString(), /Equivalent command:/);
   assert.equal(stderr.toString(), "");
   assert.equal(writes.length, 1);
