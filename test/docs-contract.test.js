@@ -29,10 +29,10 @@ test("integration guide labels current, demo, and planned behavior by capability
   for (const capability of requiredCapabilities) {
     const escaped = capability.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const row = new RegExp(
-      `\\|\\s*${escaped}\\s*\\|\\s*\\*\\*Current:\\*\\*[\\s\\S]*?\\|\\s*\\*\\*Demo:\\*\\*[\\s\\S]*?\\|\\s*\\*\\*Planned:\\*\\*`,
+      `\\|\\s*${escaped}\\s*\\|\\s*\\*\\*Current:\\*\\*[\\s\\S]*?\\|\\s*\\*\\*Legacy:\\*\\*[\\s\\S]*?\\|\\s*\\*\\*Planned:\\*\\*`,
     );
 
-    assert.match(guide, row, `${capability} should have Current, Demo, and Planned labels`);
+    assert.match(guide, row, `${capability} should have Current, Legacy, and Planned labels`);
   }
 });
 

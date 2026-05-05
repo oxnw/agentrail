@@ -478,7 +478,6 @@ events.
 - [Cloud boundary](./cloud.md)
 - [Local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md)
 - [OpenAPI contract](./api/task-lifecycle.openapi.yaml)
-- [End-to-end demo](./demo/agentrail-e2e-demo.md)
 - [Claude Code and Codex lifecycle example](../examples/issue-to-pr-lifecycle.md)
 - [Railway production runbook](./deployment/railway-production.md)
 - [Live sandbox validation gate](./deployment/live-sandbox-validation.md)
