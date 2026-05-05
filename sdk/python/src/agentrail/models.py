@@ -91,6 +91,17 @@ class CheckStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class TaskSubmitMode(str, Enum):
+    ADAPTER_MANAGED = "adapter_managed"
+    ARTIFACT = "artifact"
+
+
+class TaskSubmissionAction(str, Enum):
+    CREATED = "created"
+    EXISTING = "existing"
+    ACCEPTED = "accepted"
+
+
 class ShipMode(str, Enum):
     MERGE_ONLY = "merge_only"
     MERGE_AND_DEPLOY = "merge_and_deploy"
@@ -350,13 +361,26 @@ class SubmitCheck(BaseModel):
     model_config = {"by_alias": True}
 
 
+class PullRequestSubmitOptions(BaseModel):
+    title: str | None = None
+    body: str | None = None
+    head: str | None = None
+    base: str | None = None
+    draft: bool | None = None
+    reviewers: list[str] | None = None
+
+    model_config = {"populate_by_name": True, "by_alias": True}
+
+
 class TaskSubmitRequest(BaseModel):
     summary: str
-    artifacts: list[SubmitArtifact]
+    mode: TaskSubmitMode | None = None
+    pull_request: PullRequestSubmitOptions | None = Field(default=None, alias="pullRequest")
+    artifacts: list[SubmitArtifact] | None = None
     checks: list[SubmitCheck] | None = None
     notes: str | None = None
 
-    model_config = {"by_alias": True}
+    model_config = {"populate_by_name": True, "by_alias": True}
 
 
 class ReviewParticipant(BaseModel):
@@ -372,7 +396,11 @@ class TaskSubmissionData(BaseModel):
     submission_id: str = Field(alias="submissionId")
     task_id: str = Field(alias="taskId")
     status: Literal["in_review"]
-    review_route: ReviewRoute = Field(alias="reviewRoute")
+    review_route: ReviewRoute | None = Field(default=None, alias="reviewRoute")
+    pr_url: str | None = Field(default=None, alias="prUrl")
+    pr_number: int | None = Field(default=None, alias="prNumber")
+    action: TaskSubmissionAction | None = None
+    idempotency_key: str | None = Field(default=None, alias="idempotencyKey")
     accepted_at: datetime = Field(alias="acceptedAt")
     available_actions: list[str] = Field(alias="availableActions")
 

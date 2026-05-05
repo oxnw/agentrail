@@ -43,12 +43,17 @@ curl -s 'http://127.0.0.1:3000/tasks/mine?status=in_progress&limit=1'
 
 2. Submit the first PR attempt:
 
+The PR URL below is a deterministic demo placeholder. Real automation should
+prefer adapter-managed submit, where AgentRail creates or reuses the provider PR
+and returns the PR URL through lifecycle state.
+
 ```bash
 curl -s -X POST 'http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/submit' \
   -H 'content-type: application/json' \
   -H 'idempotency-key: submit-demo-1' \
   -d '{
     "summary": "Implemented the endpoint and opened a pull request.",
+    "mode": "artifact",
     "artifacts": [
       { "type": "pull_request", "url": "https://github.com/oxnw/agentrail/pull/42" }
     ],
@@ -77,6 +82,7 @@ curl -s -X POST 'http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/submit' \
   -H 'idempotency-key: submit-demo-2' \
   -d '{
     "summary": "Fixed idempotency handling and added regression coverage.",
+    "mode": "artifact",
     "artifacts": [
       { "type": "pull_request", "url": "https://github.com/oxnw/agentrail/pull/42" },
       { "type": "commit", "url": "https://github.com/oxnw/agentrail/commit/b5bc7f86" }

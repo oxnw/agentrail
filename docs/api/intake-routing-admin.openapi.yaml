@@ -1,0 +1,939 @@
+openapi: 3.1.0
+info:
+  title: AgentRail Intake Routing Admin API
+  version: 0.1.0
+  summary: Operator API for provider issue intake, routing decisions, assignment, and audit
+  contact:
+    name: AgentRail Engineering
+  license:
+    name: Apache 2.0
+    identifier: Apache-2.0
+  description: |
+    Separate operator/admin contract for AgentRail intake routing.
+    This API is intentionally not part of the normal agent task lifecycle SDK.
+    Worker agents consume assigned tasks through `task-lifecycle.openapi.yaml`.
+servers:
+  - url: http://127.0.0.1:3000
+    description: Local OSS demo server
+  - url: https://api.agentrail.app/v1
+    description: Future AgentRail Cloud API
+security:
+  - bearerAuth: []
+tags:
+  - name: Intake
+    description: Provider issue ingestion surfaces used by adapters and sync jobs.
+  - name: Routing
+    description: Rule set management and route evaluation for operators.
+  - name: Routing Audit
+    description: Read-only route decision history and explanations.
+paths:
+  /operator/intake/provider-issues:
+    post:
+      tags: [Intake]
+      operationId: ingestProviderIssue
+      summary: Ingest one provider issue snapshot and route it
+      description: |
+        Receives a normalized provider issue snapshot from an adapter or sync job.
+        Safe to retry with the same `Idempotency-Key` and identical request body.
+        The control plane evaluates routing, stores the decision, applies the
+        assignment or triage outcome, and emits the relevant task event.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderIssueSnapshot'
+            examples:
+              github_issue:
+                value:
+                  provider: github
+                  providerIssueId: github:oxnw/agentrail:issues/95
+                  sourceVersion: '2026-05-05T12:00:00Z:delivery-01'
+                  repository:
+                    provider: github
+                    owner: oxnw
+                    name: agentrail
+                    defaultBranch: main
+                  title: Define AgentRail intake routing engine and assignment model
+                  bodyDigest: sha256:43c3f4e7b09f4f5f3d1e2a0e7d0a2c66
+                  labels: [architecture, api, high-priority]
+                  providerAssignees: [cto-github-login]
+                  project: Documentation
+                  issueType: architecture
+                  priority: high
+                  ownershipTags: [control-plane, docs]
+                  capabilityTags: [api-design, architecture]
+                  links:
+                    providerIssue: https://github.com/oxnw/agentrail/issues/95
+      responses:
+        '202':
+          description: Snapshot accepted and routing decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingDecisionResponse'
+              examples:
+                assigned:
+                  value:
+                    data:
+                      id: rdec_01JZROUTE0000000000000001
+                      taskId: tsk_01JZROUTE0000000000000001
+                      taskIdentifier: AGEA-95
+                      outcome: assigned
+                      target:
+                        type: agent
+                        id: agt_cto
+                      assignment:
+                        assigneeAgentId: agt_cto
+                        triageQueueId: null
+                        assignmentSource: deterministic_rule
+                        routingDecisionId: rdec_01JZROUTE0000000000000001
+                        assignedAt: '2026-05-05T12:01:03Z'
+                      confidence: 0.99
+                      routingReason:
+                        summary: Repo agentrail plus labels architecture/api matched CTO ownership rule.
+                        matchedRules:
+                          - id: rule_architecture_to_cto
+                            name: Architecture and API ownership
+                            confidence: 0.99
+                        classifier: null
+                        conflictReasons: []
+                      availableActions: [view_task, view_audit]
+                    availableActions: [view_task, view_audit]
+                    meta:
+                      requestId: req_01JZROUTE0000000000000002
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /operator/routing/rule-sets/current:
+    get:
+      tags: [Routing]
+      operationId: getCurrentRoutingRuleSet
+      summary: Get the active routing rule set
+      description: Returns the active immutable rule set revision.
+      responses:
+        '200':
+          description: Active rule set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingRuleSetResponse'
+              examples:
+                current:
+                  value:
+                    data:
+                      id: rset_01JZROUTE0000000000000100
+                      version: 7
+                      status: active
+                      source: admin_api
+                      sourceRef: AGEA-95
+                      createdBy: agt_cto
+                      createdAt: '2026-05-05T12:10:00Z'
+                      rules:
+                        - id: rule_architecture_to_cto
+                          name: Architecture and API ownership
+                          enabled: true
+                          priority: 10
+                          conditions:
+                            repositories: [oxnw/agentrail]
+                            labelsAny: [architecture, api]
+                            issueTypes: [architecture, design]
+                            ownershipTagsAny: [control-plane]
+                            capabilityTagsAll: [api-design]
+                          target:
+                            type: agent
+                            id: agt_cto
+                          confidence: 0.99
+                          explanation: Repo and architecture/API labels map to CTO ownership.
+                      classifier:
+                        enabled: true
+                        provider: internal-router
+                        confidenceThreshold: 0.82
+                        maxCandidates: 3
+                        fallbackTriageQueueId: triage_engineering
+                      audit:
+                        supersedesRuleSetId: rset_01JZROUTE0000000000000099
+                        changeReason: Add explicit CTO ownership for API architecture tasks.
+                    availableActions: [update, evaluate]
+                    meta:
+                      requestId: req_01JZROUTE0000000000000101
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+    put:
+      tags: [Routing]
+      operationId: replaceCurrentRoutingRuleSet
+      summary: Create and activate a new routing rule set revision
+      description: |
+        Replaces the active rule set by creating an immutable new revision.
+        Historical rule set revisions remain queryable through audit records.
+        Safe to retry with the same `Idempotency-Key` and identical request body.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutingRuleSetReplaceRequest'
+            examples:
+              replace:
+                value:
+                  sourceRef: AGEA-95
+                  changeReason: Add ownership and classifier fallback for intake routing.
+                  rules:
+                    - id: rule_architecture_to_cto
+                      name: Architecture and API ownership
+                      enabled: true
+                      priority: 10
+                      conditions:
+                        repositories: [oxnw/agentrail]
+                        labelsAny: [architecture, api]
+                        issueTypes: [architecture, design]
+                        ownershipTagsAny: [control-plane]
+                        capabilityTagsAll: [api-design]
+                      target:
+                        type: agent
+                        id: agt_cto
+                      confidence: 0.99
+                      explanation: Repo and architecture/API labels map to CTO ownership.
+                  classifier:
+                    enabled: true
+                    provider: internal-router
+                    confidenceThreshold: 0.82
+                    maxCandidates: 3
+                    fallbackTriageQueueId: triage_engineering
+      responses:
+        '201':
+          description: New active rule set revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingRuleSetResponse'
+              examples:
+                created:
+                  value:
+                    data:
+                      id: rset_01JZROUTE0000000000000102
+                      version: 8
+                      status: active
+                      source: admin_api
+                      sourceRef: AGEA-95
+                      createdBy: agt_cto
+                      createdAt: '2026-05-05T12:14:00Z'
+                      rules:
+                        - id: rule_architecture_to_cto
+                          name: Architecture and API ownership
+                          enabled: true
+                          priority: 10
+                          conditions:
+                            repositories: [oxnw/agentrail]
+                            labelsAny: [architecture, api]
+                            issueTypes: [architecture, design]
+                            ownershipTagsAny: [control-plane]
+                            capabilityTagsAll: [api-design]
+                          target:
+                            type: agent
+                            id: agt_cto
+                          confidence: 0.99
+                          explanation: Repo and architecture/API labels map to CTO ownership.
+                      classifier:
+                        enabled: true
+                        provider: internal-router
+                        confidenceThreshold: 0.82
+                        maxCandidates: 3
+                        fallbackTriageQueueId: triage_engineering
+                      audit:
+                        supersedesRuleSetId: rset_01JZROUTE0000000000000100
+                        changeReason: Add ownership and classifier fallback for intake routing.
+                    availableActions: [evaluate]
+                    meta:
+                      requestId: req_01JZROUTE0000000000000103
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /operator/routing/evaluations:
+    post:
+      tags: [Routing]
+      operationId: evaluateRouting
+      summary: Dry-run routing without assigning a task
+      description: |
+        Evaluates the active or specified rule set against a provider issue
+        snapshot. This endpoint records an audit event but does not create,
+        update, or wake a task.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutingEvaluationRequest'
+            examples:
+              dry_run:
+                value:
+                  ruleSetVersion: 8
+                  snapshot:
+                    provider: github
+                    providerIssueId: github:oxnw/agentrail:issues/96
+                    sourceVersion: '2026-05-05T12:20:00Z:dry-run'
+                    repository:
+                      provider: github
+                      owner: oxnw
+                      name: agentrail
+                      defaultBranch: main
+                    title: Build hosted waitlist dashboard
+                    bodyDigest: sha256:80edb73a5fcf4d71d01fb66b4ec64d98
+                    labels: [frontend, dashboard]
+                    providerAssignees: []
+                    project: Dashboard
+                    issueType: feature
+                    priority: medium
+                    ownershipTags: [dashboard]
+                    capabilityTags: [frontend]
+                    links:
+                      providerIssue: https://github.com/oxnw/agentrail/issues/96
+      responses:
+        '200':
+          description: Dry-run routing decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingDecisionResponse'
+              examples:
+                triage_low_confidence:
+                  value:
+                    data:
+                      id: rdec_01JZROUTE0000000000000200
+                      taskId: null
+                      taskIdentifier: null
+                      outcome: triage
+                      target:
+                        type: triage_queue
+                        id: triage_engineering
+                      assignment:
+                        assigneeAgentId: null
+                        triageQueueId: triage_engineering
+                        assignmentSource: classifier
+                        routingDecisionId: rdec_01JZROUTE0000000000000200
+                        assignedAt: null
+                      confidence: 0.61
+                      routingReason:
+                        summary: Deterministic rules did not cover dashboard/frontend ownership; classifier confidence 0.61 is below threshold 0.82.
+                        matchedRules: []
+                        classifier:
+                          provider: internal-router
+                          confidence: 0.61
+                          suggestedTarget:
+                            type: agent
+                            id: agt_frontend
+                        conflictReasons: [classifier_confidence_below_threshold]
+                      availableActions: [send_to_triage, edit_rules]
+                    availableActions: [send_to_triage, edit_rules]
+                    meta:
+                      requestId: req_01JZROUTE0000000000000201
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /operator/routing/audit/{decisionId}:
+    get:
+      tags: [Routing Audit]
+      operationId: getRoutingDecisionAudit
+      summary: Get one routing decision audit record
+      description: Returns the persisted route decision, explanation, and rule version.
+      parameters:
+        - $ref: '#/components/parameters/RoutingDecisionIdPath'
+      responses:
+        '200':
+          description: Routing audit record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingAuditResponse'
+              examples:
+                audit:
+                  value:
+                    data:
+                      decision:
+                        id: rdec_01JZROUTE0000000000000001
+                        taskId: tsk_01JZROUTE0000000000000001
+                        taskIdentifier: AGEA-95
+                        outcome: assigned
+                        target:
+                          type: agent
+                          id: agt_cto
+                        assignment:
+                          assigneeAgentId: agt_cto
+                          triageQueueId: null
+                          assignmentSource: deterministic_rule
+                          routingDecisionId: rdec_01JZROUTE0000000000000001
+                          assignedAt: '2026-05-05T12:01:03Z'
+                        confidence: 0.99
+                        routingReason:
+                          summary: Repo agentrail plus labels architecture/api matched CTO ownership rule.
+                          matchedRules:
+                            - id: rule_architecture_to_cto
+                              name: Architecture and API ownership
+                              confidence: 0.99
+                          classifier: null
+                          conflictReasons: []
+                        availableActions: [view_task, view_rule_set]
+                      inputDigest: sha256:43c3f4e7b09f4f5f3d1e2a0e7d0a2c66
+                      ruleSet:
+                        id: rset_01JZROUTE0000000000000102
+                        version: 8
+                      createdAt: '2026-05-05T12:01:03Z'
+                    availableActions: [view_task, view_rule_set]
+                    meta:
+                      requestId: req_01JZROUTE0000000000000301
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: AgentRail API key
+  parameters:
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: Stable key for retry-safe mutation or evaluation requests.
+    RoutingDecisionIdPath:
+      name: decisionId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Stable routing decision identifier.
+  responses:
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            invalid:
+              value:
+                error:
+                  code: validation_error
+                  message: Request body did not match the routing contract.
+                  details:
+                    field: rules.0.target.id
+                    availableActions: [fix_request]
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing:
+              value:
+                error:
+                  code: unauthorized
+                  message: Missing or invalid bearer token.
+                  details:
+                    availableActions: [authenticate]
+    InsufficientScope:
+      description: API key lacks the required routing scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing_scope:
+              value:
+                error:
+                  code: insufficient_scope
+                  message: API key does not include routing:admin.
+                  details:
+                    requiredScope: routing:admin
+                    availableActions: [request_scope]
+    Conflict:
+      description: Idempotency conflict or stale routing revision
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            conflict:
+              value:
+                error:
+                  code: conflict
+                  message: Idempotency-Key has already been used with a different request payload.
+                  details:
+                    idempotencyKey: routing-AGEA-95-v1
+                    availableActions: [retry_with_new_key, inspect_existing]
+    NotFound:
+      description: Routing decision was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            not_found:
+              value:
+                error:
+                  code: not_found
+                  message: Routing decision was not found.
+                  details:
+                    availableActions: [check_id]
+  schemas:
+    AvailableActions:
+      type: array
+      maxItems: 20
+      items:
+        type: string
+    ResponseMeta:
+      type: object
+      additionalProperties: false
+      required: [requestId]
+      properties:
+        requestId:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+    ProviderIssueSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - provider
+        - providerIssueId
+        - sourceVersion
+        - repository
+        - title
+        - bodyDigest
+        - labels
+        - providerAssignees
+        - issueType
+        - priority
+        - ownershipTags
+        - capabilityTags
+        - links
+      properties:
+        provider:
+          type: string
+          enum: [github, linear, jira, gitlab]
+        providerIssueId:
+          type: string
+        sourceVersion:
+          type: string
+        repository:
+          $ref: '#/components/schemas/ProviderRepository'
+        title:
+          type: string
+          maxLength: 240
+        bodyDigest:
+          type: string
+          description: Digest of the provider body or normalized summary, not the full body.
+        labels:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        providerAssignees:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        project:
+          type: [string, 'null']
+        issueType:
+          type: string
+          enum: [bug, feature, architecture, design, documentation, maintenance, unknown]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        ownershipTags:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        capabilityTags:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        links:
+          type: object
+          additionalProperties: false
+          required: [providerIssue]
+          properties:
+            providerIssue:
+              type: string
+              format: uri
+    ProviderRepository:
+      type: object
+      additionalProperties: false
+      required: [provider, owner, name, defaultBranch]
+      properties:
+        provider:
+          type: string
+          enum: [github, gitlab]
+        owner:
+          type: string
+        name:
+          type: string
+        defaultBranch:
+          type: string
+    RoutingRuleSetReplaceRequest:
+      type: object
+      additionalProperties: false
+      required: [sourceRef, changeReason, rules, classifier]
+      properties:
+        sourceRef:
+          type: string
+        changeReason:
+          type: string
+          maxLength: 500
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/RoutingRule'
+        classifier:
+          $ref: '#/components/schemas/ClassifierConfig'
+    RoutingRuleSet:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - version
+        - status
+        - source
+        - sourceRef
+        - createdBy
+        - createdAt
+        - rules
+        - classifier
+        - audit
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [active, superseded]
+        source:
+          type: string
+          enum: [admin_api, config_file_import, database_seed]
+        sourceRef:
+          type: string
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/RoutingRule'
+        classifier:
+          $ref: '#/components/schemas/ClassifierConfig'
+        audit:
+          type: object
+          additionalProperties: false
+          required: [supersedesRuleSetId, changeReason]
+          properties:
+            supersedesRuleSetId:
+              type: [string, 'null']
+            changeReason:
+              type: string
+    RoutingRuleSetResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/RoutingRuleSet'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RoutingRule:
+      type: object
+      additionalProperties: false
+      required: [id, name, enabled, priority, conditions, target, confidence, explanation]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+        conditions:
+          $ref: '#/components/schemas/RoutingConditions'
+        target:
+          $ref: '#/components/schemas/RoutingTarget'
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        explanation:
+          type: string
+          maxLength: 300
+    RoutingConditions:
+      type: object
+      additionalProperties: false
+      properties:
+        repositories:
+          type: array
+          items:
+            type: string
+        labelsAny:
+          type: array
+          items:
+            type: string
+        providerAssigneesAny:
+          type: array
+          items:
+            type: string
+        projects:
+          type: array
+          items:
+            type: string
+        issueTypes:
+          type: array
+          items:
+            type: string
+        priorities:
+          type: array
+          items:
+            type: string
+        ownershipTagsAny:
+          type: array
+          items:
+            type: string
+        capabilityTagsAll:
+          type: array
+          items:
+            type: string
+    RoutingTarget:
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [agent, triage_queue]
+        id:
+          type: string
+    ClassifierConfig:
+      type: object
+      additionalProperties: false
+      required: [enabled, provider, confidenceThreshold, maxCandidates, fallbackTriageQueueId]
+      properties:
+        enabled:
+          type: boolean
+        provider:
+          type: string
+        confidenceThreshold:
+          type: number
+          minimum: 0
+          maximum: 1
+        maxCandidates:
+          type: integer
+          minimum: 1
+          maximum: 10
+        fallbackTriageQueueId:
+          type: string
+    RoutingEvaluationRequest:
+      type: object
+      additionalProperties: false
+      required: [snapshot]
+      properties:
+        ruleSetVersion:
+          type: [integer, 'null']
+          minimum: 1
+        snapshot:
+          $ref: '#/components/schemas/ProviderIssueSnapshot'
+    RoutingDecision:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - taskId
+        - taskIdentifier
+        - outcome
+        - target
+        - assignment
+        - confidence
+        - routingReason
+        - availableActions
+      properties:
+        id:
+          type: string
+        taskId:
+          type: [string, 'null']
+        taskIdentifier:
+          type: [string, 'null']
+        outcome:
+          type: string
+          enum: [assigned, triage, conflict, no_route]
+        target:
+          $ref: '#/components/schemas/RoutingTarget'
+        assignment:
+          $ref: '#/components/schemas/TaskAssignment'
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        routingReason:
+          $ref: '#/components/schemas/RoutingReason'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    TaskAssignment:
+      type: object
+      additionalProperties: false
+      required: [assigneeAgentId, triageQueueId, assignmentSource, routingDecisionId, assignedAt]
+      properties:
+        assigneeAgentId:
+          type: [string, 'null']
+        triageQueueId:
+          type: [string, 'null']
+        assignmentSource:
+          type: string
+          enum: [deterministic_rule, classifier, manual_triage, provider_assignee_mapping]
+        routingDecisionId:
+          type: string
+        assignedAt:
+          type: [string, 'null']
+          format: date-time
+    RoutingReason:
+      type: object
+      additionalProperties: false
+      required: [summary, matchedRules, classifier, conflictReasons]
+      properties:
+        summary:
+          type: string
+          maxLength: 500
+        matchedRules:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name, confidence]
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              confidence:
+                type: number
+                minimum: 0
+                maximum: 1
+        classifier:
+          anyOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/ClassifierResult'
+        conflictReasons:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+    ClassifierResult:
+      type: object
+      additionalProperties: false
+      required: [provider, confidence, suggestedTarget]
+      properties:
+        provider:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        suggestedTarget:
+          $ref: '#/components/schemas/RoutingTarget'
+    RoutingDecisionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/RoutingDecision'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RoutingAuditResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [decision, inputDigest, ruleSet, createdAt]
+          properties:
+            decision:
+              $ref: '#/components/schemas/RoutingDecision'
+            inputDigest:
+              type: string
+            ruleSet:
+              type: object
+              additionalProperties: false
+              required: [id, version]
+              properties:
+                id:
+                  type: string
+                version:
+                  type: integer
+            createdAt:
+              type: string
+              format: date-time
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'

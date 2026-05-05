@@ -420,6 +420,10 @@ paths:
       operationId: submitTaskWork
       summary: Submit work for review
       description: |
+        By default, AgentRail asks the configured provider adapter to create or
+        reuse the pull request for this task. Deterministic local demos can use
+        `mode: artifact` with caller-supplied artifacts.
+
         Safe to retry with the same `Idempotency-Key` and identical request body.
         Reusing the key with a different payload returns `409 conflict`.
       parameters:
@@ -432,9 +436,23 @@ paths:
             schema:
               $ref: '#/components/schemas/TaskSubmitRequest'
             examples:
-              default:
+              adapter_managed:
+                summary: Adapter-managed PR creation
                 value:
-                  summary: Added OpenAPI schema with full examples and validation notes.
+                  summary: Implemented the assigned task and pushed commits to the task branch.
+                  mode: adapter_managed
+                  pullRequest:
+                    title: Fix adapter-managed submit contract
+                    draft: false
+                  checks:
+                    - name: sdk-contract
+                      status: passed
+                  notes: AgentRail should create or reuse the provider PR for this task.
+              artifact_demo:
+                summary: Deterministic local demo artifact
+                value:
+                  summary: Submitted deterministic local demo artifact.
+                  mode: artifact
                   artifacts:
                     - type: pull_request
                       url: https://github.com/oxnw/agentrail/pull/42
@@ -443,7 +461,7 @@ paths:
                   checks:
                     - name: spec-lint
                       status: passed
-                  notes: 'Known limitation: pagination cursor is opaque and not stable across data mutations.'
+                  notes: Use only for local demos without provider credentials.
       responses:
         '202':
           description: Submission accepted and routed to review
@@ -458,6 +476,10 @@ paths:
                       submissionId: sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2
                       taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
                       status: in_review
+                      prUrl: https://github.com/oxnw/agentrail/pull/42
+                      prNumber: 42
+                      action: created
+                      idempotencyKey: submit-AGEA-2-v1
                       reviewRoute:
                         participants:
                           - id: agt_ceo
@@ -1870,15 +1892,50 @@ components:
     TaskSubmitRequest:
       type: object
       additionalProperties: false
-      required: [summary, artifacts]
+      required: [summary]
       properties:
         summary:
           type: string
           maxLength: 2000
+        mode:
+          type: string
+          enum: [adapter_managed, artifact]
+          default: adapter_managed
+          description: |
+            `adapter_managed` lets AgentRail's configured provider adapter create
+            or reuse the pull request. `artifact` preserves deterministic local
+            demos where the caller supplies the resulting artifact URL.
+        pullRequest:
+          type: object
+          additionalProperties: false
+          description: Optional provider PR hints for adapter-managed submit.
+          properties:
+            title:
+              type: string
+              maxLength: 300
+            body:
+              type: string
+              maxLength: 10000
+            head:
+              type: string
+              maxLength: 255
+              description: Override the configured task source branch when needed.
+            base:
+              type: string
+              maxLength: 255
+              description: Override the configured target branch when needed.
+            draft:
+              type: boolean
+            reviewers:
+              type: array
+              maxItems: 20
+              items:
+                type: string
         artifacts:
           type: array
           minItems: 1
           maxItems: 20
+          description: Optional for adapter-managed submit; required only for artifact demo mode.
           items:
             type: object
             additionalProperties: false
@@ -1914,7 +1971,7 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [submissionId, taskId, status, reviewRoute, acceptedAt, availableActions]
+          required: [submissionId, taskId, status, acceptedAt, availableActions]
           properties:
             submissionId:
               type: string
@@ -1923,6 +1980,19 @@ components:
             status:
               type: string
               enum: [in_review]
+            prUrl:
+              type: string
+              format: uri
+              description: Provider PR URL when the submit adapter created or reused a PR.
+            prNumber:
+              type: integer
+              description: Provider PR number when available.
+            action:
+              type: string
+              enum: [created, existing, accepted]
+              description: Whether AgentRail created a PR, reused one, or accepted an artifact-only submission.
+            idempotencyKey:
+              type: string
             reviewRoute:
               type: object
               additionalProperties: false

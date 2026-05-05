@@ -1,0 +1,16 @@
+services:
+  agentrail:
+    build: .
+    environment:
+      AGENTRAIL_MODE: demo
+      AGENTRAIL_HOST: 0.0.0.0
+      AGENTRAIL_PORT: 3000
+      AGENTRAIL_PUBLIC_BASE_URL: http://127.0.0.1:3000
+      AGENTRAIL_EVENT_STORE_PATH: /data/task-events.jsonl
+    ports:
+      - "3000:3000"
+    volumes:
+      - agentrail-event-data:/data
+
+volumes:
+  agentrail-event-data:

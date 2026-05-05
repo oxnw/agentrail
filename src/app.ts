@@ -17,6 +17,7 @@ import {
 } from "./task-webhook-store.js";
 import { WaitlistStore, WaitlistValidationError } from "./waitlist-store.js";
 import { createOperationTimer } from "./structured-logger.js";
+import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,6 +36,7 @@ export interface CreateServerOptions {
   waitlistStore?: WaitlistStore | null;
   publicBaseUrl?: string | null;
   fallbackMode?: boolean;
+  demoAssetsEnabled?: boolean;
   emailWebhookUrl?: string | null;
   emailWebhookToken?: string | null;
   resendApiKey?: string | null;
@@ -57,6 +59,7 @@ export function createServer({
   waitlistStore = null,
   publicBaseUrl = process.env.AGENTRAIL_PUBLIC_BASE_URL || null,
   fallbackMode = false,
+  demoAssetsEnabled = false,
   emailWebhookUrl = process.env.WAITLIST_EMAIL_WEBHOOK_URL || null,
   emailWebhookToken = process.env.WAITLIST_EMAIL_WEBHOOK_TOKEN || null,
   resendApiKey = process.env.RESEND_API_KEY || null,
@@ -85,6 +88,7 @@ export function createServer({
       waitlistStore: resolvedWaitlistStore,
       publicBaseUrl,
       fallbackMode,
+      demoAssetsEnabled,
       emailWebhookUrl,
       emailWebhookToken,
       resendApiKey,
@@ -132,6 +136,7 @@ async function routeRequest({
   waitlistStore,
   publicBaseUrl = null,
   fallbackMode = false,
+  demoAssetsEnabled = false,
   emailWebhookUrl = null,
   emailWebhookToken = null,
   resendApiKey = null,
@@ -206,7 +211,7 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "GET" && pathname === "/demo.mp4") {
+  if (demoAssetsEnabled && request.method === "GET" && pathname === "/demo.mp4") {
     serveStaticFile(response, path.join(__dirname, "..", "docs", "demo", "agentrail-e2e-demo.mp4"), "video/mp4");
     return;
   }
@@ -319,7 +324,7 @@ async function routeRequest({
     }
     obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
 
-    handleListMyTasks({ response, url, taskLifecycleStore });
+    handleListMyTasks({ response, url, taskLifecycleStore, principal });
     return;
   }
 
@@ -343,7 +348,8 @@ async function routeRequest({
     handleGetTask({
       response,
       taskLifecycleStore,
-      taskId: taskDetailMatch[1]
+      taskId: taskDetailMatch[1],
+      principal
     });
     return;
   }
@@ -586,13 +592,19 @@ async function routeRequest({
   response.end(JSON.stringify({ error: { code: "not_found", message: "Not found", details: {} } }));
 }
 
+interface AgentPrincipalLike {
+  agent?: { id?: string };
+  keyId?: string;
+}
+
 interface ListMyTasksOptions {
   response: http.ServerResponse;
   url: URL;
   taskLifecycleStore: unknown;
+  principal: ReturnType<AgentAuthStore["authenticate"]> | null;
 }
 
-function handleListMyTasks({ response, url, taskLifecycleStore }: ListMyTasksOptions) {
+function handleListMyTasks({ response, url, taskLifecycleStore, principal }: ListMyTasksOptions) {
   if (!taskLifecycleStore || typeof (taskLifecycleStore as { listMyTasks?: unknown }).listMyTasks !== "function") {
     writeError(response, 404, "not_found", "Task source not found.", {
       availableActions: []
@@ -604,7 +616,8 @@ function handleListMyTasks({ response, url, taskLifecycleStore }: ListMyTasksOpt
     const body = (taskLifecycleStore as { listMyTasks: (opts: Record<string, unknown>) => unknown }).listMyTasks({
       status: url.searchParams.get("status") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
-      cursor: url.searchParams.get("cursor") ?? undefined
+      cursor: url.searchParams.get("cursor") ?? undefined,
+      assigneeAgentId: principal?.agent?.id ?? undefined
     });
     writeJson(response, 200, body);
   } catch (error) {
@@ -621,9 +634,10 @@ interface GetTaskOptions {
   response: http.ServerResponse;
   taskLifecycleStore: unknown;
   taskId: string;
+  principal: ReturnType<AgentAuthStore["authenticate"]> | null;
 }
 
-function handleGetTask({ response, taskLifecycleStore, taskId }: GetTaskOptions) {
+function handleGetTask({ response, taskLifecycleStore, taskId, principal }: GetTaskOptions) {
   if (!taskLifecycleStore || typeof (taskLifecycleStore as { getTask?: unknown }).getTask !== "function") {
     writeError(response, 404, "not_found", "Task source not found.", {
       availableActions: ["list_my_tasks"]
@@ -633,6 +647,12 @@ function handleGetTask({ response, taskLifecycleStore, taskId }: GetTaskOptions)
 
   try {
     const body = (taskLifecycleStore as { getTask: (id: string) => unknown }).getTask(taskId);
+    if (principal && !isTaskVisibleToPrincipal(body, principal)) {
+      writeError(response, 403, "forbidden", "Task is not visible to you.", {
+        availableActions: ["list_my_tasks"]
+      });
+      return;
+    }
     writeJson(response, 200, body);
   } catch (error) {
     if (error instanceof TaskLifecycleError) {
@@ -642,6 +662,14 @@ function handleGetTask({ response, taskLifecycleStore, taskId }: GetTaskOptions)
 
     throw error;
   }
+}
+
+function isTaskVisibleToPrincipal(body: unknown, principal: ReturnType<AgentAuthStore["authenticate"]> | null): boolean {
+  if (!principal) return true;
+  const taskBody = body as { data?: { assignee?: { id?: string } } } | null;
+  const assigneeId = taskBody?.data?.assignee?.id;
+  if (!assigneeId) return true;
+  return assigneeId === principal.agent.id;
 }
 
 interface CreateKeyOptions {

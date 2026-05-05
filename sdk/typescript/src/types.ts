@@ -54,6 +54,10 @@ export type ArtifactType =
 
 export type CheckStatus = "passed" | "failed" | "running" | "skipped";
 
+export type TaskSubmitMode = "adapter_managed" | "artifact";
+
+export type TaskSubmissionAction = "created" | "existing" | "accepted";
+
 export type ShipMode = "merge_only" | "merge_and_deploy";
 
 export type ShipEnvironment = "staging" | "production";
@@ -243,9 +247,20 @@ export interface SubmitCheck {
   status: CheckStatus;
 }
 
+export interface PullRequestSubmitOptions {
+  title?: string;
+  body?: string;
+  head?: string;
+  base?: string;
+  draft?: boolean;
+  reviewers?: string[];
+}
+
 export interface TaskSubmitRequest {
   summary: string;
-  artifacts: SubmitArtifact[];
+  mode?: TaskSubmitMode;
+  pullRequest?: PullRequestSubmitOptions;
+  artifacts?: SubmitArtifact[];
   checks?: SubmitCheck[];
   notes?: string | null;
 }
@@ -259,7 +274,11 @@ export interface TaskSubmissionData {
   submissionId: string;
   taskId: string;
   status: "in_review";
-  reviewRoute: { participants: ReviewParticipant[] };
+  reviewRoute?: { participants: ReviewParticipant[] };
+  prUrl?: string;
+  prNumber?: number;
+  action?: TaskSubmissionAction;
+  idempotencyKey?: string;
   acceptedAt: string;
   availableActions: string[];
 }

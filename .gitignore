@@ -21,6 +21,7 @@ __pycache__/
 .ruff_cache/
 
 docs/demo/*.tmp
+docs/deployment
 
 # Internal Paperclip scripts
 scripts/ls_agents.py

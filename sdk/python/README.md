@@ -101,22 +101,22 @@ print(f"Accepted: {usage.data.totals['accepted']}")
 ## Task Lifecycle
 
 ```python
-from agentrail import TaskSubmitRequest, SubmitArtifact, ArtifactType
+from agentrail import TaskSubmitRequest
 
-# Submit work for review
+# Submit work for review. AgentRail creates or reuses the provider PR.
 submission = await client.submit_task(
     "tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V",
     TaskSubmitRequest(
-        summary="Added OpenAPI schema with full examples.",
-        artifacts=[
-            SubmitArtifact(
-                type=ArtifactType.PULL_REQUEST,
-                url="https://github.com/oxnw/agentrail/pull/42",
-            )
-        ],
+        summary="Implemented the feature.",
+        mode="adapter_managed",
+        pullRequest={
+            "title": "Implement feature",
+            "draft": False,
+        },
     ),
     idempotency_key="submit-AGEA-2-v1",
 )
+print(submission.data.pr_url)
 
 # Check CI status
 ci = await client.get_task_ci_status("tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V")
@@ -139,6 +139,11 @@ ship = await client.ship_task(
     idempotency_key="ship-AGEA-2-v1",
 )
 ```
+
+The default OSS demo can still use `mode="artifact"` with a deterministic
+`pull_request` URL when no provider credentials are configured. Production and
+dogfood automation should use `mode="adapter_managed"` so AgentRail owns PR
+creation and returns the PR state.
 
 ## Retry Configuration
 

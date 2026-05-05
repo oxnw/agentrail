@@ -35,17 +35,20 @@ for (const task of tasks.data) {
 // Get task details
 const detail = await client.getTask("tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V");
 
-// Submit work for review
+// Submit work for review. AgentRail creates or reuses the provider PR.
 const submission = await client.submitTask(
   "tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V",
   {
     summary: "Implemented the feature",
-    artifacts: [
-      { type: "pull_request", url: "https://github.com/org/repo/pull/42" },
-    ],
+    mode: "adapter_managed",
+    pullRequest: {
+      title: "Implement feature",
+      draft: false,
+    },
   },
   "submit-AGEA-2-v1", // idempotency key
 );
+console.log(`PR: ${submission.data.prUrl}`);
 
 // Check CI status
 const ci = await client.getTaskCiStatus("tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V");
@@ -71,6 +74,11 @@ For the default OSS `npm start` server, `ar_local_demo_key` is only a local
 placeholder because agent auth is not enabled. In an auth-enabled deployment,
 use the returned `data.apiKey` value from key creation; it starts with
 `ar_live_`. The `akey_...` value is the key ID, not the secret.
+
+The default OSS demo can still use `mode: "artifact"` with a deterministic
+`pull_request` URL when no provider credentials are configured. Production and
+dogfood automation should use `mode: "adapter_managed"` so AgentRail owns PR
+creation and returns the PR state.
 
 ## Authentication
 

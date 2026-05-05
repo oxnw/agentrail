@@ -46,11 +46,12 @@ Node setup:
 git clone https://github.com/oxnw/agentrail.git
 cd agentrail
 cp .env.example .env
-npm start
+npm run demo:server
 ```
 
-The local API runs without private credentials and serves the deterministic demo
-task store.
+The demo API runs without private credentials and serves the deterministic demo
+task store. The default `npm start` path is production-like server mode and
+requires live task sources plus provider credentials.
 
 In a second terminal, run the issue-to-ship demo:
 
@@ -102,6 +103,7 @@ curl -s -X POST http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/submit \
   -H 'idempotency-key: submit-local-1' \
   -d '{
     "summary": "Implemented the failing endpoint and opened a pull request.",
+    "mode": "artifact",
     "artifacts": [
       { "type": "pull_request", "url": "https://github.com/oxnw/agentrail/pull/42" }
     ]
@@ -120,6 +122,10 @@ curl -s http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/review-feedback
 The repository is intentionally API-first:
 
 - `docs/api/task-lifecycle.openapi.yaml` is the public contract.
+- `docs/api/intake-routing-admin.openapi.yaml` is the separate operator/admin
+  contract for provider issue intake, routing decisions, assignment, and audit.
+- `docs/architecture/intake-routing-engine.md` records the routing engine
+  boundary and assignment model.
 - `src/app.js` exposes the HTTP routes.
 - `src/agent-ship-cycle-demo.js` provides a deterministic lifecycle store for
   local demos and tests.
@@ -133,9 +139,9 @@ The repository is intentionally API-first:
   use instead of hand-rolled HTTP calls.
 
 Technical decision: the public MVP uses deterministic local adapters by
-default. Live GitHub/CI integrations are behind adapter interfaces so the OSS
-demo is reproducible without secrets, while production deployments can swap in
-real providers later.
+explicit demo mode. Live GitHub/CI integrations are behind adapter interfaces so
+the OSS demo is reproducible without secrets, while the default server runtime
+does not depend on demo tasks or silently fall back to fixture data.
 
 Rejected: a hosted-only demo. That would make the release depend on paid API
 access and would obscure whether the local agent lifecycle contract works.
@@ -173,7 +179,7 @@ Example `AGENTRAIL_TASK_SOURCES` entry for CircleCI:
 
 ## SDKs
 
-For the default OSS `npm start` server, agent auth is not enabled, so
+For the local OSS demo server, agent auth is not enabled, so
 `ar_local_demo_key` is only a local placeholder required by the SDK constructor.
 In an auth-enabled deployment, create an AgentRail API key and use the returned
 secret `data.apiKey` value, which starts with `ar_live_`. The `akey_...` value is
@@ -241,7 +247,10 @@ release bundle.
 - [Integration guide for Claude Code / Codex / Cursor](./docs/integration-guide.md)
 - [Five-minute quick start](./docs/quick-start.md)
 - [Agent recipes for Claude Code, Codex, and Cursor](./docs/agent-recipes.md)
+- [MVP completeness scorecard](./docs/mvp-completeness-scorecard.md)
 - [OpenAPI contract](./docs/api/task-lifecycle.openapi.yaml)
+- [Intake routing architecture](./docs/architecture/intake-routing-engine.md)
+- [Intake routing operator OpenAPI](./docs/api/intake-routing-admin.openapi.yaml)
 - [Railway production deployment runbook](./docs/deployment/railway-production.md)
 - [End-to-end demo](./docs/demo/agentrail-e2e-demo.md)
 - [Claude Code and Codex lifecycle example](./examples/issue-to-pr-lifecycle.md)

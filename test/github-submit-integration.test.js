@@ -77,8 +77,12 @@ test("POST /tasks/{id}/submit creates a real PR end-to-end", async () => {
         "idempotency-key": "integration-test-001",
       },
       body: JSON.stringify({
-        title: "Integration Test PR",
-        body: "Testing the full submit flow",
+        summary: "Testing the full submit flow",
+        mode: "adapter_managed",
+        pullRequest: {
+          title: "Integration Test PR",
+          body: "Testing the full submit flow",
+        },
       }),
     });
 

@@ -1,184 +1,247 @@
-# AgentRail Integration Guide for Coding Agents
+# AgentRail Integration Guide
 
-This guide explains how a coding agent such as **Claude Code**, **Codex**, or **Cursor** should use AgentRail to manage the full issue-to-ship lifecycle.
+AgentRail is a lifecycle API that sits beside a coding agent. It does not
+replace Claude Code, Codex, Cursor, git, GitHub, or CI. It gives the agent one
+compact source of truth for assigned work, submission state, CI status, review
+feedback, events, and ship requests.
 
-> **Scope:** This guide covers the open-source release candidate (local server). The upcoming hosted product adds managed persistence, team dashboards, and SLA-backed delivery without changing the API contract.
+Use this guide when you are integrating AgentRail into a real agent workflow.
+If you only want to run the demo once, start with the
+[five-minute quick start](./quick-start.md). If you want copy-paste agent
+instructions for Claude Code, Codex, or Cursor, use
+[agent recipes](./agent-recipes.md).
 
----
+## What Runs Where
 
-## Table of Contents
+Keep these processes separate:
 
-1. [What AgentRail Does for You](#what-agentrail-does-for-you)
-2. [Operator Setup Model](#operator-setup-model)
-3. [Runtime Interaction Model](#runtime-interaction-model)
-4. [End-to-End Workflow](#end-to-end-workflow)
-5. [SDK Quickstart (TypeScript)](#sdk-quickstart-typescript)
-6. [SDK Quickstart (Python)](#sdk-quickstart-python)
-7. [Push vs. Pull: Events and Webhooks](#push-vs-pull-events-and-webhooks)
-8. [OSS Limitations vs. Hosted Product](#oss-limitations-vs-hosted-product)
-9. [Troubleshooting](#troubleshooting)
+| Process | Where it runs | What it does |
+| --- | --- | --- |
+| AgentRail API server | This repository | Serves `/tasks`, `/ci-status`, `/review-feedback`, events, webhooks, and ship operations. |
+| AgentRail intake router | AgentRail control plane | Normalizes provider issues, evaluates routing rules, assigns AgentRail tasks, records routing explanations, and wakes the assigned agent. |
+| Coding agent CLI | The target code repository | Edits files, runs tests, commits, pushes, and opens PRs. |
+| Agent integration code | Your agent harness or target repo | Calls AgentRail through the TypeScript SDK, Python SDK, or HTTP. |
+| GitHub / CI providers | External services | Own source control, pull requests, checks, and reviews. |
 
----
+For local evaluation, the AgentRail server and the target repo may be the same
+checkout. In production, they are usually separate: AgentRail runs as shared
+infrastructure, while agents work inside individual project repositories.
 
-## What AgentRail Does for You
+## Current / Demo / Planned Capability Labels
 
-Raw developer tools are built for humans. They expose broad resources, verbose logs, ambiguous next steps, and state changes that agents must discover by polling.
+This repository mixes working OSS runtime paths with operator contracts for the
+planned control plane. Use these labels when deciding what an integration can
+rely on today:
 
-AgentRail collapses the issue-to-ship lifecycle into a single compact API:
+| Capability | Current live adapter support | Current demo support | Planned MVP control-plane behavior |
+| --- | --- | --- | --- |
+| Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the OSS server does not yet run a live provider intake worker. | **Demo:** The demo starts from a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
+| Routing | **Current:** Routing rules, dry-run evaluation, assignment, and audit are specified as operator/admin contracts. | **Demo:** The demo task is already assigned, so no routing decision is executed at runtime. | **Planned:** The control plane evaluates deterministic rules, stores `routingReason`, wakes the selected agent, and exposes audit history. |
+| Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented when the server is wired with `AgentAuthStore`. | **Demo:** `AGENTRAIL_MODE=demo` leaves protected routes open and uses `ar_local_demo_key` only as an SDK placeholder. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
+| Live task store | **Current:** Default server mode requires configured task sources and provider credentials, and it returns `404` instead of falling back to demo data. | **Demo:** Demo mode uses a deterministic in-memory task lifecycle store with optional local event replay persistence. | **Planned:** The control plane persists assigned tasks, routing decisions, lifecycle state, and event cursors in managed storage. |
+| Submit | **Current:** `mode: "adapter_managed"` lets the GitHub submit adapter create or reuse provider PRs from configured task sources. | **Demo:** `mode: "artifact"` accepts a placeholder pull request artifact so the local issue-to-ship loop runs without provider credentials. | **Planned:** Submit is always mediated by provider adapters, with idempotent create-or-reuse behavior and compact response state. |
+| CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries for configured task sources. | **Demo:** Deterministic CI and review transitions prove the agent loop without live checks or reviewers. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
+| Ship | **Current:** Ship and rollback routes are implemented behind adapter interfaces with idempotency keys and common state/error handling. | **Demo:** The local demo queues a deterministic ship result after CI passes and review approves. | **Planned:** Hosted deployments coordinate merge, deploy, rollback, and audit with least-privilege provider permissions. |
 
-- **Task as source of truth** — one response tells you what to do next.
-- **Retry-safe mutations** — idempotency keys make `submit` and `ship` safe to retry.
-- **CI and review summaries shaped for action** — not full log replay.
-- **Push-first events** — SSE and webhooks so you do not poll blindly.
-- **Least-privilege API keys** — scoped to `tasks:read`, `ci:read`, `reviews:read`, etc.
+## Intended End-to-End Flow
 
----
+The intended production flow is AgentRail-owned:
 
-## Operator Setup Model
+1. AgentRail pulls or receives provider issue data from providers such as GitHub.
+2. The AgentRail intake router evaluates deterministic assignment rules and,
+   when enabled, a bounded classifier fallback.
+3. AgentRail records the assignment and `routingReason`, then wakes the
+   assigned agent.
+4. The coding agent asks AgentRail for its next task.
+5. The agent edits files, runs tests, and commits locally.
+6. The agent submits back to AgentRail.
+7. AgentRail's adapter creates or reuses the provider PR, tracks CI and review,
+   and returns compact lifecycle state to the agent.
+8. The agent follows `availableActions` until the task is fixed, approved, and
+   shippable.
 
-Before any agent can use AgentRail, an operator (human or infra-as-code) deploys the server and configures credentials.
+In that flow, the agent should not manually pass a PR URL as the primary
+automation contract. The PR URL is provider state that AgentRail should create,
+discover, and return through the task lifecycle response.
 
-### Step 1 — Deploy the local server
+Routing is not a worker-agent responsibility. Operators manage routing through
+the separate [intake routing architecture](./architecture/intake-routing-engine.md)
+and [operator routing OpenAPI](./api/intake-routing-admin.openapi.yaml)
+contracts. Those endpoints require routing scopes and should not be generated
+into the normal lifecycle SDK used by coding agents.
+
+The OSS repository now exposes this as the primary submit contract:
+`mode: "adapter_managed"` lets `GitHubSubmitAdapter` create or reuse PRs from
+configured task sources, and the response can include `prUrl`, `prNumber`, and
+whether the PR was created or reused.
+
+Local deterministic examples may still show placeholder PR artifacts so the
+demo can run without provider credentials. Do not model production automation
+on a human pasting a PR URL into AgentRail.
+
+## Choose an Integration Track
+
+### Track A: Local OSS Demo
+
+Use this when you want to see the deterministic issue -> PR -> CI -> review ->
+ship loop without tokens or private services.
 
 ```bash
 git clone https://github.com/oxnw/agentrail.git
 cd agentrail
+npm install
 cp .env.example .env
-npm start
+npm run demo:server
 ```
 
-The API starts on `http://127.0.0.1:3000` by default. It runs without private credentials and serves the deterministic demo task store.
-
-### Step 2 — Create an AgentRail API key
-
-The first bootstrap request is unauthenticated when it creates an `auth:admin` key:
+In a second terminal:
 
 ```bash
-curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
+npm run demo
+```
+
+The demo server listens on `http://127.0.0.1:3000` by default. The local demo
+uses an in-memory task store with task `tsk_DEMOISSUETOSHIP01`.
+
+Authentication note: `AGENTRAIL_MODE=demo` does not configure the agent auth
+store. Protected routes are open in this local demo mode, and SDK examples use
+`ar_local_demo_key` only as a constructor placeholder.
+
+### Track B: Claude Code / Codex / Cursor Uses AgentRail
+
+Use this when a coding agent should work through AgentRail instead of manually
+polling GitHub, CI, and review APIs.
+
+1. Start AgentRail with Track A or point to a hosted AgentRail base URL.
+2. Open the target repository where the agent should edit code.
+3. Export the AgentRail connection settings in the agent's shell.
+4. Start the coding agent with the AgentRail operating instructions.
+
+Example:
+
+```bash
+cd /path/to/target-repo
+export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
+export AGENTRAIL_API_KEY=ar_local_demo_key
+```
+
+Claude Code interactive launch:
+
+```bash
+claude --append-system-prompt-file /path/to/agentrail/docs/agent-recipes.md
+```
+
+Codex or Cursor:
+
+- Add the relevant recipe from [agent recipes](./agent-recipes.md) to the
+  agent's project instructions.
+- Start the agent in the target repository.
+- Ask it to begin with `GET /tasks/mine?status=in_progress&limit=1`.
+
+The agent still edits files in the target repository. AgentRail only answers:
+
+- what task is assigned,
+- what actions are currently allowed,
+- whether CI passed,
+- what review feedback blocks shipping,
+- when it is safe to submit or ship.
+
+### Track C: Application or Harness Uses the SDK
+
+Use this when you are writing an agent harness, MCP server, workflow runner, or
+internal service that calls AgentRail directly.
+
+Install the TypeScript SDK in that application:
+
+```bash
+npm install @agentrail-core/sdk
+```
+
+For local development against this repository before publication, build and
+install from the local SDK directory:
+
+```bash
+cd /path/to/agentrail/sdk/typescript
+npm install
+npm run build
+cd /path/to/your-agent-harness
+npm install /path/to/agentrail/sdk/typescript
+```
+
+Install the Python SDK in a Python harness:
+
+```bash
+pip install agentrail
+```
+
+For local development against this repository:
+
+```bash
+pip install -e /path/to/agentrail/sdk/python
+```
+
+## Core Runtime Loop
+
+Agents should follow the API's `availableActions` field instead of guessing the
+next step.
+
+1. List assigned work.
+2. Read the selected task.
+3. Edit and test locally.
+4. Submit an attempt with an idempotency key.
+5. Wait for task events, or read CI and review summaries.
+6. Resubmit if CI or review requires changes.
+7. Ship only when CI is green and review is approved.
+
+## Submit Model
+
+There are two submit modes in the current repo:
+
+| Mode | Intended use | PR URL handling |
+| --- | --- | --- |
+| Adapter-managed submit | Production and serious dogfooding | AgentRail creates or reuses the PR through its provider adapter and returns the PR URL. |
+| Artifact demo submit | Deterministic local demo with no provider credentials | The request includes a placeholder `pull_request` artifact so CI/review/ship examples can run locally. |
+
+Prefer adapter-managed submit for real automation. The artifact demo mode is a
+local scaffold, not the product architecture.
+
+HTTP shape:
+
+```bash
+curl -s "$AGENTRAIL_BASE_URL/tasks/mine?status=in_progress&limit=1" \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY"
+```
+
+```bash
+curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/submit" \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY" \
   -H "content-type: application/json" \
+  -H "idempotency-key: submit-adapter-1" \
   -d '{
-    "name": "my-agent-admin",
-    "scopes": ["auth:admin"]
+    "summary": "Implemented the failing endpoint and pushed commits to the task branch.",
+    "mode": "adapter_managed",
+    "pullRequest": {
+      "title": "Implement failing endpoint",
+      "draft": false
+    }
   }'
 ```
 
-Store the returned `rawKey` in your agent's environment:
+```bash
+curl -s "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/ci-status" \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY"
+```
 
 ```bash
-export AGENTRAIL_API_KEY="ar_live_..."
+curl -s "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/review-feedback" \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY"
 ```
-
-### Step 3 — Configure task sources (live GitHub / CircleCI)
-
-By default the local server uses deterministic demo tasks. To connect to real GitHub issues and CI, set the adapter tokens:
-
-| Env var | Purpose |
-|---------|---------|
-| `GITHUB_TOKEN` | Enables GitHub Actions CI adapter for task sources with `ciProvider: "github_actions"` or none set. |
-| `CIRCLECI_TOKEN` | Enables CircleCI CI adapter for task sources with `ciProvider: "circleci"`. |
-| `CIRCLECI_WEBHOOK_SECRET` | HMAC verification for `POST /providers/circleci/webhooks`. |
-
-Example `AGENTRAIL_TASK_SOURCES` for CircleCI:
-
-```json
-{
-  "tsk_circleci_demo": {
-    "ciProvider": "circleci",
-    "owner": "oxnw",
-    "repo": "agentrail",
-    "projectSlug": "gh/oxnw/agentrail",
-    "branch": "feature/circleci-status",
-    "headSha": "abc123",
-    "submissionId": "sub_circleci_01"
-  }
-}
-```
-
-> **Security:** Never commit tokens, API keys, or task source secrets to the repo. Pass them via environment variables or a secrets manager.
-
----
-
-## Runtime Interaction Model
-
-The coding agent operates in its normal environment (local filesystem, IDE, terminal). AgentRail acts as the lifecycle orchestrator:
-
-| Layer | Responsibility | Example |
-|-------|----------------|---------|
-| **Agent** | Code editing, tests, commits, PRs | Claude Code edits `src/app.js` |
-| **AgentRail** | Task state, CI status, review feedback, ship queue | `GET /tasks/mine`, `POST /tasks/{id}/submit` |
-| **GitHub / CI** | Actual git, CI runs, PR reviews | GitHub Actions, CircleCI, or local adapters |
-
-The agent should treat AgentRail as the **source of truth for what to do next**, not as a replacement for `git` or the IDE.
-
----
-
-## End-to-End Workflow
-
-Here is the full loop from listing an assigned task to shipping approved work.
-
-### 1. List assigned tasks
 
 ```bash
-curl -s 'http://127.0.0.1:3000/tasks/mine?status=in_progress&limit=1'
-```
-
-Response includes `availableActions` — the agent should read these instead of guessing the next step:
-
-```json
-{
-  "data": {
-    "id": "tsk_DEMOISSUETOSHIP01",
-    "status": "in_progress",
-    "availableActions": ["submit", "cancel"]
-  }
-}
-```
-
-### 2. Do the work locally
-
-Use your normal workflow: read files, edit code, run tests, commit, push, open a PR.
-
-### 3. Submit the first attempt
-
-```bash
-curl -s -X POST 'http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/submit' \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: submit-v1-2026-05-04' \
-  -d '{
-    "summary": "Implemented the endpoint and opened a pull request.",
-    "artifacts": [
-      { "type": "pull_request", "url": "https://github.com/oxnw/agentrail/pull/42" }
-    ]
-  }'
-```
-
-> **Idempotency rule:** Use a fresh key for every distinct attempt. Reusing the same key with the same payload is safe; reusing it with different payload returns `409 conflict`.
-
-### 4. Check CI status
-
-```bash
-curl -s 'http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/ci-status'
-```
-
-### 5. Read review feedback
-
-```bash
-curl -s 'http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/review-feedback'
-```
-
-### 6. Iterate or ship
-
-If CI failed or review requested changes:
-
-- Fix locally, commit, push.
-- Resubmit with a new idempotency key (`submit-v2-...`).
-
-If CI passed and review approved:
-
-```bash
-curl -s -X POST 'http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/ship' \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: ship-v1-2026-05-04' \
+curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/ship" \
+  -H "authorization: Bearer $AGENTRAIL_API_KEY" \
+  -H "content-type: application/json" \
+  -H "idempotency-key: ship-demo-1" \
   -d '{
     "mode": "merge_and_deploy",
     "targetEnvironment": "production",
@@ -186,19 +249,11 @@ curl -s -X POST 'http://127.0.0.1:3000/tasks/tsk_DEMOISSUETOSHIP01/ship' \
   }'
 ```
 
----
+## SDK Examples
 
-## SDK Quickstart (TypeScript)
+### TypeScript
 
-Install the SDK:
-
-```bash
-npm install @agentrail-core/sdk
-```
-
-Complete lifecycle:
-
-```typescript
+```ts
 import { AgentRailClient } from "@agentrail-core/sdk";
 
 const client = new AgentRailClient({
@@ -206,28 +261,35 @@ const client = new AgentRailClient({
   apiKey: process.env.AGENTRAIL_API_KEY ?? "ar_local_demo_key",
 });
 
-// 1. List assigned tasks
-const tasks = await client.listMyTasks({ status: "in_progress" });
+const tasks = await client.listMyTasks({ status: "in_progress", limit: 1 });
 const task = tasks.data[0];
 
-// 2. Submit work
-await client.submitTask(
-  task.id,
-  {
-    summary: "Implemented the feature",
-    artifacts: [
-      { type: "pull_request", url: "https://github.com/org/repo/pull/42" },
-    ],
-  },
-  "submit-v1-2026-05-04",
-);
+if (!task) {
+  process.exit(0);
+}
 
-// 3. Poll CI and review (or use events/webhooks)
+if (task.availableActions.includes("submit")) {
+  await client.submitTask(
+    task.id,
+    {
+      summary: "Implemented the task and pushed commits to the task branch.",
+      mode: "adapter_managed",
+      pullRequest: {
+        title: `Submit ${task.identifier}`,
+        draft: false,
+      },
+    },
+    `submit-${task.id}-v1`,
+  );
+}
+
 const ci = await client.getTaskCiStatus(task.id);
 const review = await client.getTaskReviewFeedback(task.id);
 
-// 4. Ship if green
-if (ci.data.overallStatus === "passed" && review.data.latestDecision?.outcome === "approved") {
+if (
+  ci.data.overallStatus === "passed" &&
+  review.data.latestDecision?.outcome === "approved"
+) {
   await client.shipTask(
     task.id,
     {
@@ -235,171 +297,146 @@ if (ci.data.overallStatus === "passed" && review.data.latestDecision?.outcome ==
       targetEnvironment: "production",
       expectedHeadSha: "b5bc7f86b9ad94f4f18f83d28bdf3e27a31e53a0",
     },
-    "ship-v1-2026-05-04",
+    `ship-${task.id}-v1`,
   );
 }
 ```
 
-Error handling:
+### Python
 
-```typescript
-import { ConflictError, NotFoundError, RateLimitError } from "@agentrail-core/sdk";
-
-try {
-  await client.shipTask(taskId, request, idempotencyKey);
-} catch (err) {
-  if (err instanceof ConflictError) {
-    console.log("Task not shippable:", err.details);
-  } else if (err instanceof NotFoundError) {
-    console.log("Task not found");
-  } else if (err instanceof RateLimitError) {
-    console.log(`Retry after ${err.retryAfterSeconds}s`);
-  }
-}
-```
-
----
-
-## SDK Quickstart (Python)
-
-Install the SDK:
-
-```bash
-pip install agentrail
-```
-
-Complete lifecycle:
-
-```python
+```py
 import asyncio
 import os
-from agentrail import AgentRailClient, TaskStatus, TaskSubmitRequest, SubmitArtifact, ArtifactType
-from agentrail import TaskShipRequest, ShipMode, ShipEnvironment
+
+from agentrail import AgentRailClient, TaskStatus
+
 
 async def main():
     async with AgentRailClient(
         base_url=os.getenv("AGENTRAIL_BASE_URL", "http://127.0.0.1:3000"),
         api_key=os.getenv("AGENTRAIL_API_KEY", "ar_local_demo_key"),
     ) as client:
-        # 1. List assigned tasks
-        tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS)
+        tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS, limit=1)
+        if not tasks.data:
+            return
+
         task = tasks.data[0]
-
-        # 2. Submit work
-        await client.submit_task(
-            task.id,
-            TaskSubmitRequest(
-                summary="Implemented the feature",
-                artifacts=[SubmitArtifact(type=ArtifactType.PULL_REQUEST, url="https://github.com/org/repo/pull/42")],
-            ),
-            idempotency_key="submit-v1-2026-05-04",
-        )
-
-        # 3. Poll CI and review
         ci = await client.get_task_ci_status(task.id)
         review = await client.get_task_review_feedback(task.id)
 
-        # 4. Ship if green
-        if ci.data.overall_status == "passed" and review.data.latest_decision.outcome == "approved":
-            await client.ship_task(
-                task.id,
-                TaskShipRequest(
-                    mode=ShipMode.MERGE_AND_DEPLOY,
-                    targetEnvironment=ShipEnvironment.PRODUCTION,
-                    expected_head_sha="b5bc7f86b9ad94f4f18f83d28bdf3e27a31e53a0",
-                ),
-                idempotency_key="ship-v1-2026-05-04",
-            )
+        print(task.identifier, ci.data.overall_status, review.data.latest_decision.outcome)
+
 
 asyncio.run(main())
 ```
 
----
+## Auth-Enabled Operation
 
-## Push vs. Pull: Events and Webhooks
+Agent auth is supported by the API and tests, but `AGENTRAIL_MODE=demo`
+intentionally runs the OSS demo without an auth store. In an auth-enabled
+deployment, the server must be created with `AgentAuthStore`; then the first
+bootstrap request can create an `auth:admin` key.
 
-Agents should prefer push delivery over blind polling.
+Create the first admin key:
 
-### SSE Event Stream
-
-```typescript
-const controller = new AbortController();
-for await (const event of client.streamEvents({
-  eventTypes: ["task.updated", "task.reviewed"],
-  signal: controller.signal,
-})) {
-  console.log(event.type, event.data);
-}
+```bash
+curl -s -X POST "$AGENTRAIL_BASE_URL/agent-api-keys" \
+  -H "content-type: application/json" \
+  -H "idempotency-key: bootstrap-admin-v1" \
+  -d '{
+    "agent": {
+      "id": "agt_cto",
+      "displayName": "CTO",
+      "role": "cto"
+    },
+    "scopes": ["auth:admin"],
+    "rateLimit": {
+      "windowSeconds": 60,
+      "maxRequests": 600
+    }
+  }'
 ```
 
-Resume from the last event ID after disconnect:
+The response returns `data.apiKey` once. Store that secret in the agent runtime
+or secret manager. The `data.id` value starts with `akey_` and is only the key
+identifier.
 
-```typescript
-for await (const event of client.streamEvents({
-  eventTypes: ["task.updated"],
-  cursor: "evt_01JY50DG4S5SJC48W0MVV8R3H2",
-})) {
-  // ...
-}
+Recommended scopes:
+
+| Agent responsibility | Minimum scopes |
+| --- | --- |
+| Read assigned tasks | `tasks:read` |
+| Submit completed work | `tasks:read`, `tasks:write` |
+| Inspect CI | `ci:read` |
+| Inspect review feedback | `reviews:read` |
+| Ship or roll back | `ship:write` |
+| Stream task events | `events:read` |
+| Manage webhooks | `webhooks:read`, `webhooks:write` |
+| Manage API keys | `auth:admin`, `usage:read` |
+
+## Live GitHub and CI Adapters
+
+The local demo is deterministic only in explicit demo mode. To connect task
+lifecycle calls to live providers, configure task sources and provider tokens
+before starting the default server.
+
+```bash
+export GITHUB_TOKEN=ghp_...
+export CIRCLECI_TOKEN=...
+export CIRCLECI_WEBHOOK_SECRET=...
+export AGENTRAIL_TASK_SOURCES='{
+  "tsk_live_example": {
+    "ciProvider": "circleci",
+    "owner": "oxnw",
+    "repo": "agentrail",
+    "projectSlug": "gh/oxnw/agentrail",
+    "branch": "main",
+    "headSha": "abc123",
+    "submissionId": "sub_live_001"
+  }
+}'
+npm start
 ```
 
-### Webhooks
+Provider behavior:
 
-Register a subscription:
+- `GITHUB_TOKEN` enables GitHub PR submission and GitHub Actions CI status.
+- `CIRCLECI_TOKEN` enables CircleCI status for task sources with
+  `ciProvider: "circleci"`.
+- `CIRCLECI_WEBHOOK_SECRET` verifies inbound CircleCI webhook requests at
+  `POST /providers/circleci/webhooks`.
+- If no live adapter matches a task, the route returns `404`; server mode never
+  falls back to the deterministic demo task store.
 
-```typescript
-const sub = await client.createWebhookSubscription(
-  {
-    url: "https://my-agent.example.com/webhooks/tasks",
-    eventTypes: ["task.updated", "task.reviewed", "task.shipped"],
-    secret: "whsec_my_secret_at_least_16",
-  },
-  "webhook-sub-v1",
-);
-```
+Do not commit provider tokens or generated AgentRail API keys.
 
-Verify incoming events:
+## Push Instead of Polling
 
-```typescript
-import { parseWebhookEvent } from "@agentrail-core/sdk";
+Agents should avoid blind status polling. Prefer one of these:
 
-const event = parseWebhookEvent(rawBody, secret, headers);
-// event.type is one of "task.updated", "task.reviewed", "task.shipped"
-```
+- `GET /task-events/stream` for server-sent events with cursor replay.
+- `/task-webhook-subscriptions` for signed outbound webhook delivery.
 
----
-
-## OSS Limitations vs. Hosted Product
-
-| Capability | OSS (this repo) | Hosted (future) |
-|------------|----------------|-----------------|
-| API server | Local `npm start` | Managed, auto-scaled |
-| Persistence | In-memory or local file | Managed database with backups |
-| GitHub / CI adapters | Operator-configured tokens | Managed integrations, OAuth flow |
-| API key rotation | Manual curl / SDK call | Automatic rotation, audit logs |
-| Webhook delivery | Local retry logic | SLA-backed with delivery history |
-| Team dashboards | None | Task lifecycle, token savings, agent activity |
-| Observability | JSON logs to stdout / file | Structured logging, alerting, tracing |
-
-The OSS release proves the contract and lets you evaluate the developer workflow without paid API access. The hosted product will add operational convenience, scale, and team controls.
-
----
+Use polling only as a fallback when the agent runtime cannot receive push
+events.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
-|---------|-------------|-----|
-| `401 Unauthorized` | Wrong or missing `AGENTRAIL_API_KEY` | Check the key created in Step 2. |
-| `409 Conflict` on submit/ship | Reused idempotency key with different payload | Use a fresh key for every new attempt. |
-| `503 Service Unavailable` with `x-agentrail-fallback: true` | Fallback mode is enabled | Set `AGENTRAIL_FALLBACK_MODE=false` and restart. |
-| Empty task list | No tasks assigned to this agent identity | Check the agent `id` used when creating the API key matches the task assignee. |
-| CI status always "pending" | No live CI adapter configured | Set `GITHUB_TOKEN` or `CIRCLECI_TOKEN` and restart. |
+| --- | --- | --- |
+| `auth_store_unavailable` from `/agent-api-keys` | You are using `AGENTRAIL_MODE=demo` or another server without an auth store | Use `ar_local_demo_key` for the local demo, or run an auth-enabled server that wires `AgentAuthStore`. |
+| `401 Unauthorized` | Auth-enabled server received a missing or wrong bearer key | Use the one-time `data.apiKey` secret, not the `akey_...` id. |
+| `403 insufficient_scope` | The key lacks the route's required scope | Create or rotate a key with the minimum required scope. |
+| `409 conflict` on submit or ship | The idempotency key was reused with a different body, or the task is not in a valid state | Use a new key for a new attempt, or follow `availableActions`. |
+| `503` with `x-agentrail-fallback: true` | Fallback mode is enabled | Set `AGENTRAIL_FALLBACK_MODE=false` and restart. |
+| Empty `tasks.data` | No task matches the status filter | Try `status=todo`, remove the filter, or check the task assignment source. |
+| CI stays pending | No live CI adapter is configured for the task | Set `GITHUB_TOKEN` or `CIRCLECI_TOKEN` and verify `AGENTRAIL_TASK_SOURCES`. |
 
----
+## Related Documentation
 
-## Next Steps
-
-- Read the [OpenAPI contract](./api/task-lifecycle.openapi.yaml) for complete endpoint schemas.
-- Run the [end-to-end demo](./demo/agentrail-e2e-demo.md) to see the lifecycle in action.
-- See [Claude Code and Codex lifecycle example](../../examples/issue-to-pr-lifecycle.md) for raw curl equivalents.
-- Use the auth and observability guidance above when wiring least-privilege tokens and JSON log collection.
+- [Five-minute quick start](./quick-start.md)
+- [Agent recipes](./agent-recipes.md)
+- [OpenAPI contract](./api/task-lifecycle.openapi.yaml)
+- [End-to-end demo](./demo/agentrail-e2e-demo.md)
+- [Claude Code and Codex lifecycle example](../examples/issue-to-pr-lifecycle.md)
+- [Railway production runbook](./deployment/railway-production.md)

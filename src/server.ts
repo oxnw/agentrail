@@ -2,11 +2,15 @@ import fs from "node:fs";
 
 import { createAgentShipCycleDemoStore } from "./agent-ship-cycle-demo.js";
 import { createServer } from "./app.js";
+import { AgentAuthStore } from "./agent-auth-store.js";
 import { CircleCiStatusAdapter } from "./circleci-status-adapter.js";
 import { GitHubActionsCiAdapter } from "./github-actions-ci-adapter.js";
+import { GitHubReviewFeedbackAdapter } from "./github-review-feedback-adapter.js";
+import { GitHubRollbackAdapter } from "./github-rollback-adapter.js";
 import { GitHubSubmitAdapter } from "./github-submit-adapter.js";
 import { MultiCiStatusAdapter } from "./multi-ci-status-adapter.js";
 import { TaskEventStore } from "./task-event-store.js";
+import { AgentTaskQueue } from "./agent-task-queue.js";
 
 loadDotEnv();
 
@@ -17,71 +21,57 @@ const publicBaseUrl =
 const storagePath = process.env.AGENTRAIL_EVENT_STORE_PATH || undefined;
 
 const fallbackMode = (process.env.AGENTRAIL_FALLBACK_MODE ?? "false").toLowerCase() === "true";
+const runtimeMode = resolveRuntimeMode(process.env.AGENTRAIL_MODE);
 
 const now = () => new Date();
 const eventStore = new TaskEventStore({ now, storagePath });
-const demoStore = createAgentShipCycleDemoStore({
-  now,
-  eventStore,
-  apiBaseUrl: publicBaseUrl,
-});
 
 const githubToken = process.env.GITHUB_TOKEN || null;
 const circleciToken = process.env.CIRCLECI_TOKEN || null;
 const taskSourcesJson = process.env.AGENTRAIL_TASK_SOURCES || null;
-let taskSources: Map<string, unknown> | null = null;
 
-let taskLifecycleStore: GitHubSubmitAdapter | ReturnType<typeof createAgentShipCycleDemoStore> = demoStore;
-if (taskSourcesJson) {
-  try {
-    const parsed = JSON.parse(taskSourcesJson);
-    taskSources = new Map(Object.entries(parsed));
-    if (githubToken) {
-      taskLifecycleStore = new GitHubSubmitAdapter({
-        taskSources,
-        githubToken,
-        delegate: demoStore,
-      });
-      // Delegate non-submit methods back to demo store
-      const storeWithFallback = taskLifecycleStore as unknown as ReturnType<typeof createAgentShipCycleDemoStore>;
-      storeWithFallback.listMyTasks = demoStore.listMyTasks.bind(demoStore);
-      storeWithFallback.getTask = demoStore.getTask.bind(demoStore);
-      storeWithFallback.getTaskCiStatus = demoStore.getTaskCiStatus.bind(demoStore);
-      storeWithFallback.getTaskReviewFeedback = demoStore.getTaskReviewFeedback.bind(demoStore);
-      storeWithFallback.shipTask = demoStore.shipTask.bind(demoStore);
-      storeWithFallback.rollbackTask = demoStore.rollbackTask.bind(demoStore);
-    }
-  } catch {
-    process.stderr.write("Warning: AGENTRAIL_TASK_SOURCES is not valid JSON; using demo store.\n");
-  }
+let server: ReturnType<typeof createServer> | null = null;
+
+try {
+  const runtime = buildRuntime({
+    mode: runtimeMode,
+    taskSourcesJson,
+    githubToken,
+    circleciToken,
+    now,
+    eventStore,
+    publicBaseUrl
+  });
+
+  const authStore = runtimeMode === "server" ? new AgentAuthStore({ now }) : null;
+
+  server = createServer({
+    store: eventStore,
+    taskLifecycleStore: runtime.taskLifecycleStore,
+    ciStatusAdapter: runtime.ciStatusAdapter,
+    reviewFeedbackAdapter: runtime.reviewFeedbackAdapter,
+    rollbackAdapter: runtime.rollbackAdapter,
+    authStore,
+    now,
+    publicBaseUrl,
+    fallbackMode,
+    demoAssetsEnabled: runtime.mode === "demo",
+  });
+
+  server.listen(port, host, () => {
+    process.stdout.write(`AgentRail ${runtime.mode} API listening on ${publicBaseUrl}\n`);
+  });
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`AgentRail startup failed: ${message}\n`);
+  process.exit(1);
 }
 
-const ciStatusAdapter = buildCiStatusAdapter({
-  taskSources,
-  githubToken,
-  circleciToken,
-  demoStore
-});
-
-const server = createServer({
-  store: eventStore,
-  taskLifecycleStore,
-  ciStatusAdapter,
-  reviewFeedbackAdapter: demoStore,
-  now,
-  publicBaseUrl,
-  fallbackMode,
-});
-
-server.listen(port, host, () => {
-  process.stdout.write(`AgentRail local API listening on ${publicBaseUrl}\n`);
-});
-
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
-
 function shutdown() {
-  server.close(() => {
+  server?.close(() => {
     process.exit(0);
   });
 }
@@ -123,11 +113,119 @@ function stripQuotes(value: string): string {
   return value;
 }
 
-function buildCiStatusAdapter({ taskSources, githubToken, circleciToken, demoStore }: {
+type RuntimeMode = "server" | "demo";
+type DemoStore = ReturnType<typeof createAgentShipCycleDemoStore>;
+
+function resolveRuntimeMode(value: string | undefined): RuntimeMode {
+  const normalized = (value || "server").toLowerCase();
+  if (normalized === "server" || normalized === "demo") {
+    return normalized;
+  }
+
+  throw new Error(`AGENTRAIL_MODE must be "server" or "demo"; received "${value}".`);
+}
+
+function buildRuntime({
+  mode,
+  taskSourcesJson,
+  githubToken,
+  circleciToken,
+  now,
+  eventStore,
+  publicBaseUrl
+}: {
+  mode: RuntimeMode;
+  taskSourcesJson: string | null;
+  githubToken: string | null;
+  circleciToken: string | null;
+  now: () => Date;
+  eventStore: TaskEventStore;
+  publicBaseUrl: string;
+}) {
+  if (mode === "demo") {
+    const demoStore = createAgentShipCycleDemoStore({
+      now,
+      eventStore,
+      apiBaseUrl: publicBaseUrl,
+    });
+
+    return {
+      mode,
+      taskLifecycleStore: demoStore,
+      ciStatusAdapter: demoStore,
+      reviewFeedbackAdapter: demoStore,
+      rollbackAdapter: null
+    };
+  }
+
+  const taskSources = parseTaskSources(taskSourcesJson);
+  if (!githubToken) {
+    throw new Error(
+      "AGENTRAIL_MODE=server requires GITHUB_TOKEN for live task lifecycle adapters. Use AGENTRAIL_MODE=demo for the deterministic local demo."
+    );
+  }
+
+  const taskStorePath = process.env.AGENTRAIL_TASK_STORE_PATH || undefined;
+  const submitAdapter = new GitHubSubmitAdapter({
+    taskSources,
+    githubToken,
+    apiBaseUrl: publicBaseUrl,
+  });
+
+  const agentQueue = new AgentTaskQueue({
+    now,
+    storagePath: taskStorePath,
+    eventStore,
+    apiBaseUrl: publicBaseUrl,
+    delegate: {
+      submitTask: (taskId, payload, idempotencyKey) =>
+        submitAdapter.submitTask(taskId, payload, idempotencyKey),
+    },
+  });
+
+  return {
+    mode,
+    taskLifecycleStore: agentQueue,
+    ciStatusAdapter: buildCiStatusAdapter({
+      taskSources,
+      githubToken,
+      circleciToken
+    }),
+    reviewFeedbackAdapter: new GitHubReviewFeedbackAdapter({
+      taskSources,
+      githubToken
+    }),
+    rollbackAdapter: new GitHubRollbackAdapter({
+      taskSources,
+      githubToken
+    })
+  };
+}
+
+function parseTaskSources(taskSourcesJson: string | null): Map<string, unknown> {
+  if (!taskSourcesJson) {
+    throw new Error(
+      "AGENTRAIL_MODE=server requires AGENTRAIL_TASK_SOURCES. Use AGENTRAIL_MODE=demo for the deterministic local demo."
+    );
+  }
+
+  try {
+    const parsed = JSON.parse(taskSourcesJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("not an object");
+    }
+
+    return new Map(Object.entries(parsed));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`AGENTRAIL_TASK_SOURCES must be a JSON object keyed by task id: ${message}`);
+  }
+}
+
+function buildCiStatusAdapter({ taskSources, githubToken, circleciToken }: {
   taskSources: Map<string, unknown> | null;
   githubToken: string | null;
   circleciToken: string | null;
-  demoStore: ReturnType<typeof createAgentShipCycleDemoStore>;
 }) {
   const adapters = [];
 
@@ -150,10 +248,10 @@ function buildCiStatusAdapter({ taskSources, githubToken, circleciToken, demoSto
   }
 
   if (adapters.length === 0) {
-    return demoStore;
+    return null;
   }
 
   return new MultiCiStatusAdapter({
-    adapters: [...adapters, demoStore]
+    adapters
   });
 }
