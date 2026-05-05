@@ -48,7 +48,15 @@ export class PromptCancelledError extends Error {
   }
 }
 
-const AGENTRAIL_INTRO = "\u001b[32mAgentRail\u001b[0m";
+const AGENTRAIL_INTRO = [
+  "\u001b[1;32m    ___   _____________  ____________  ___    ______\u001b[0m",
+  "\u001b[1;32m   /   | / ____/ ____/ |/ /_  __/ __ \\/   |  /  _/ /\u001b[0m",
+  "\u001b[1;32m  / /| |/ / __/ __/  |   / / / / /_/ / /| |  / // / \u001b[0m",
+  "\u001b[1;32m / ___ / /_/ / /___ /   | / / / _, _/ ___ |_/ // /___\u001b[0m",
+  "\u001b[1;32m/_/  |_\\____/_____//_/|_|/_/ /_/ |_/_/  |_/___/_____/\u001b[0m",
+  "\u001b[1;32mAGENTRAIL\u001b[0m",
+  "\u001b[32mLocal setup wizard\u001b[0m",
+].join("\n");
 
 export interface PromptSession {
   select(options: {
@@ -56,6 +64,10 @@ export interface PromptSession {
     choices: PromptChoice[];
     defaultValue?: string;
   }): Promise<string>;
+  note(options: {
+    title?: string;
+    body: string;
+  }): Promise<void>;
   confirm(options?: {
     message?: string;
     defaultValue?: boolean;
@@ -106,6 +118,16 @@ export function createPromptSession({
         input,
         output,
       }));
+    },
+
+    async note({ title, body }) {
+      ensureIntro();
+      if (typeof clackPrompts.note === "function") {
+        clackPrompts.note(body, title, { input, output });
+        return;
+      }
+
+      output.write(`${title ? `${title}\n` : ""}${body}\n`);
     },
 
     async confirm({ message = "Continue?", defaultValue = true } = {}) {

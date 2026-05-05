@@ -53,6 +53,9 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
 
   assert.equal(exitCode, 0);
   assert.deepEqual(prompt.calls, ["select", "input", "input", "input", "input", "confirm", "confirm"]);
+  assert.equal(prompt.notes[0]?.title, "What these settings do");
+  assert.match(prompt.notes[0]?.body ?? "", /Target GitHub repo checkout path/);
+  assert.match(prompt.notes[0]?.body ?? "", /GitHub repo allowlist/);
   assert.equal(prompt.interactions[1]?.message, "Target GitHub repo checkout path");
   assert.equal(prompt.interactions[2]?.message, "GitHub repo allowlist (owner/repo)");
   assert.match(stdout.toString(), /AgentRail local setup/i);
@@ -176,8 +179,36 @@ test("createPromptSession wraps Clack with AgentRail branding", async () => {
   assert.equal(value, "demo");
   assert.equal(calls[0][0], "intro");
   assert.match(String(calls[0][1]), /AgentRail/i);
+  assert.match(String(calls[0][1]), /\n/);
   assert.equal(calls[1][0], "select");
   assert.equal((calls[1][1] as { message: string }).message, "Setup mode");
+});
+
+test("createPromptSession forwards explanatory notes to Clack", async () => {
+  const calls: Array<[string, unknown, unknown]> = [];
+  const session = createPromptSession({
+    output: createMemoryWriter() as never,
+    clack: {
+      intro() {},
+      select: async () => "demo",
+      confirm: async () => true,
+      text: async () => "",
+      note(message, title) {
+        calls.push(["note", title, message]);
+      },
+      cancel() {},
+      isCancel() {
+        return false;
+      },
+    } satisfies ClackPromptsLike,
+  });
+
+  await session.note({
+    title: "What this setting does",
+    body: "AgentRail writes .agentrail/ here.",
+  });
+
+  assert.deepEqual(calls[0], ["note", "What this setting does", "AgentRail writes .agentrail/ here."]);
 });
 
 test("createPromptSession passes detected defaults through the Clack text placeholder path", async () => {
@@ -260,6 +291,7 @@ function createMemoryWriter() {
 class ScriptedPromptSession implements PromptSession {
   readonly calls: string[] = [];
   readonly interactions: Array<{ kind: "select" | "confirm" | "input"; message?: string; defaultValue?: string | boolean }> = [];
+  readonly notes: Array<{ title?: string; body: string }> = [];
   readonly #steps: Array<{ kind: "select" | "confirm" | "input"; value: string | boolean }>;
 
   constructor(steps: Array<{ kind: "select" | "confirm" | "input"; value: string | boolean }>) {
@@ -303,6 +335,10 @@ class ScriptedPromptSession implements PromptSession {
     });
     const step = this.#next("input");
     return String(step.value);
+  }
+
+  async note(options: { title?: string; body: string }): Promise<void> {
+    this.notes.push(options);
   }
 
   async close(): Promise<void> {

@@ -56,6 +56,17 @@ export async function runSetupWizard({
 
   const detectedAllowlist = detectedRepo.remoteSlug ?? detectedRepo.repoPath;
   const detectedBaseUrl = flags.baseUrl ?? "http://127.0.0.1:3000";
+  await prompt.note({
+    title: "What these settings do",
+    body: [
+      "- Setup mode: demo stays local and token-free; server prepares real GitHub and CircleCI providers.",
+      "- Target GitHub repo checkout path: local repository where AgentRail writes `.agentrail/` and reads repo context.",
+      "- GitHub repo allowlist: which `owner/repo` slugs the agent is allowed to operate on.",
+      "- Default branch: branch AgentRail assumes for new work and pull requests.",
+      "- Local API base URL: where local agents call the AgentRail API server.",
+      "- Markdown/Obsidian export: optional read-only notes written under `.agentrail/notes`.",
+    ].join("\n"),
+  });
   const mode = flags.mode ?? await prompt.select({
     message: "Setup mode",
     defaultValue: "demo",
@@ -123,6 +134,10 @@ export async function runSetupWizard({
   writeLine("Review setup plan:");
   planLines.forEach((line) => writeLine(`- ${line}`));
   writeLine("");
+  await prompt.note({
+    title: "Before you confirm",
+    body: "Nothing is written until you answer yes. Setup will create `.agentrail/config.json`, `.agentrail/agent.env.example`, and `.agentrail/README.md`.",
+  });
 
   const action = flags.printOnly
     ? "print_only"
