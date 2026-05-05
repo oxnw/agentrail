@@ -1,5 +1,9 @@
 # AgentRail
 
+[![CI](https://github.com/oxnw/agentrail/actions/workflows/ci.yml/badge.svg)](https://github.com/oxnw/agentrail/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A522.6-brightgreen)](https://nodejs.org/)
+
 AgentRail is an agent-native developer operations API for the full project
 lifecycle: issue -> PR -> CI -> review -> ship.
 
@@ -211,6 +215,27 @@ local API server, SDKs, demo flow, and operator-facing integration docs.
 Internal planning and architecture decision records are kept outside the public
 release bundle.
 
+## Roadmap
+
+| Status | Feature | Description |
+|--------|---------|-------------|
+| :white_check_mark: | Task lifecycle API | Issue → PR → CI → review → ship through one typed API |
+| :white_check_mark: | GitHub Actions adapter | CI status, PR submission, review feedback, merge & ship |
+| :white_check_mark: | CircleCI adapter | Multi-CI support via pluggable adapter pattern |
+| :white_check_mark: | TypeScript & Python SDKs | Typed clients with retry logic, SSE streaming, structured errors |
+| :white_check_mark: | Agent auth & scoped keys | Per-agent API keys with fine-grained scopes and audit |
+| :white_check_mark: | SSE event streams | Real-time task events with cursor replay and filtering |
+| :white_check_mark: | Webhook subscriptions | HMAC-signed delivery with retry and backoff |
+| :white_check_mark: | Rollback support | Safely revert shipped PRs when needed |
+| :construction: | Hosted deployment | One-click deploy to Railway or your own infra |
+| :construction: | Dashboard UI | Real-time view of agent activity and task state |
+| :dart: | Linear integration | Sync tasks from Linear projects |
+| :dart: | Jira integration | Sync tasks from Jira boards |
+| :dart: | GitLab adapter | CI pipelines, merge requests, and shipping via GitLab |
+| :dart: | Multi-agent coordination | Task claiming, handoff, and conflict resolution across agents |
+| :dart: | Usage analytics | Token savings tracking and agent performance metrics |
+| :dart: | Cloud offering | Managed AgentRail with team workspaces and hosted connectors |
+
 ## Repository Docs
 
 - [Integration guide for Claude Code / Codex / Cursor](./docs/integration-guide.md)
@@ -219,7 +244,6 @@ release bundle.
 - [OpenAPI contract](./docs/api/task-lifecycle.openapi.yaml)
 - [Railway production deployment runbook](./docs/deployment/railway-production.md)
 - [End-to-end demo](./docs/demo/agentrail-e2e-demo.md)
-- [Release hygiene checklist](./docs/security/release-hygiene.md)
 - [Claude Code and Codex lifecycle example](./examples/issue-to-pr-lifecycle.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)
