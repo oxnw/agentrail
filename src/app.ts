@@ -31,6 +31,7 @@ export interface CreateServerOptions {
   ciStatusAdapter?: { getTaskCiStatus?(taskId: string): Promise<unknown> | unknown; receiveWebhook?(payload: { headers: Record<string, string | string[]>; rawBody: string }): Promise<unknown> } | null;
   reviewFeedbackAdapter?: { getTaskReviewFeedback?(taskId: string): Promise<unknown> | unknown } | null;
   rollbackAdapter?: { rollbackTask?(taskId: string, payload: unknown, idempotencyKey: string): Promise<unknown> } | null;
+  intakeAdapter?: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
   authStore?: AgentAuthStore | null;
   taskLifecycleStore?: unknown;
   waitlistStore?: WaitlistStore | null;
@@ -54,6 +55,7 @@ export function createServer({
   ciStatusAdapter = null,
   reviewFeedbackAdapter = null,
   rollbackAdapter = null,
+  intakeAdapter = null,
   authStore = null,
   taskLifecycleStore = null,
   waitlistStore = null,
@@ -83,6 +85,7 @@ export function createServer({
       ciStatusAdapter,
       reviewFeedbackAdapter,
       rollbackAdapter,
+      intakeAdapter,
       authStore,
       taskLifecycleStore,
       waitlistStore: resolvedWaitlistStore,

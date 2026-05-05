@@ -35,7 +35,7 @@ test("bootstrap creates admin key without authentication", async (t) => {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Idempotency-Key": "bootstrap-test-1"
+      "Idempotency-Key": "bootstrap-test-v1"
     },
     body: JSON.stringify({
       agent: { id: "agt_admin", displayName: "Admin", role: "admin" },
@@ -53,7 +53,7 @@ test("bootstrap creates admin key without authentication", async (t) => {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Idempotency-Key": "bootstrap-test-2"
+      "Idempotency-Key": "bootstrap-test-v2"
     },
     body: JSON.stringify({
       agent: { id: "agt_admin2", displayName: "Admin 2", role: "admin" },
@@ -131,9 +131,6 @@ test("cross-agent task isolation enforces visibility rules", async (t) => {
       scopes: ["tasks:read"]
     })
   });
-  if (aliceKeyResponse.status !== 201) {
-    console.error("Alice key creation failed:", aliceKeyResponse.status, await aliceKeyResponse.json());
-  }
   assert.equal(aliceKeyResponse.status, 201);
   const aliceApiKey = (await aliceKeyResponse.json()).data.apiKey;
 
@@ -150,9 +147,6 @@ test("cross-agent task isolation enforces visibility rules", async (t) => {
       scopes: ["tasks:read"]
     })
   });
-  if (bobKeyResponse.status !== 201) {
-    console.error("Bob key creation failed:", bobKeyResponse.status, await bobKeyResponse.json());
-  }
   assert.equal(bobKeyResponse.status, 201);
   const bobApiKey = (await bobKeyResponse.json()).data.apiKey;
 
@@ -319,7 +313,7 @@ test("scoped write access controls task submission", async (t) => {
     headers: {
       authorization: `Bearer ${readerKey}`,
       "content-type": "application/json",
-      "Idempotency-Key": "reader-submit"
+      "Idempotency-Key": "reader-submit-v1"
     },
     body: JSON.stringify({ summary: "test submission" })
   });
@@ -349,7 +343,7 @@ test("scoped write access controls task submission", async (t) => {
     headers: {
       authorization: `Bearer ${writerKey}`,
       "content-type": "application/json",
-      "Idempotency-Key": "writer-submit"
+      "Idempotency-Key": "writer-submit-v1"
     },
     body: JSON.stringify({ summary: "test submission" })
   });

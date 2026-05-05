@@ -35,7 +35,7 @@ export class GitHubIssueIntakeAdapter {
     this.now = now;
   }
 
-  async ingest(payload: GitHubIssueIntakePayload, idempotencyKey: string | undefined): Promise<GitHubIssueIntakeResult> {
+  async ingest(payload: GitHubIssueIntakePayload, idempotencyKey?: string): Promise<GitHubIssueIntakeResult> {
     if (!payload.issueNumber || typeof payload.issueNumber !== "number") {
       throw new TaskLifecycleError(400, "validation_error", "`issueNumber` is required and must be a number.", {
         availableActions: ["retry"],

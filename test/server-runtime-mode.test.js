@@ -57,12 +57,20 @@ test("default non-demo server mode does not expose deterministic demo task", asy
     },
     body: JSON.stringify({
       agent: { id: "agt_test_runtime", displayName: "Runtime Test", role: "test" },
-      scopes: ["tasks:read"],
+      scopes: ["auth:admin", "tasks:read"],
     }),
   });
-  assert.ok(bootstrapRes.status === 201 || bootstrapRes.status === 200, `Bootstrap failed: ${await bootstrapRes.text()}`);
-  const bootstrapBody = await bootstrapRes.json();
+  const bootstrapText = await bootstrapRes.text();
+  assert.equal(bootstrapRes.status, 201, `Bootstrap failed: ${bootstrapText}`);
+  const bootstrapBody = JSON.parse(bootstrapText);
   const apiKey = bootstrapBody.data.apiKey;
+
+  const mineRes = await fetch(`http://127.0.0.1:${port}/tasks/mine`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  const mineBody = await mineRes.json();
+  assert.equal(mineRes.status, 200);
+  assert.equal(mineBody.data.length, 0, "server mode should not expose demo tasks in per-agent queue");
 
   const response = await fetch(`http://127.0.0.1:${port}/tasks/${DEMO_TASK_ID}`, {
     headers: { authorization: `Bearer ${apiKey}` },
