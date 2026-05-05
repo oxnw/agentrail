@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
-import { TaskStore } from "../src/task-store.ts";
+import { TaskStore, type TaskRecord } from "../src/task-store.ts";
 
 const FIXTURE_NOW = new Date("2026-05-01T03:25:15Z");
 const now = () => FIXTURE_NOW;
@@ -25,6 +25,40 @@ function makeTask(partial: Partial<Parameters<TaskStore["createTask"]>[0]> & { i
   };
 }
 
+function makePersistedTask(
+  partial: Partial<TaskRecord> & { id: string; identifier: string; title: string }
+): TaskRecord {
+  const task: TaskRecord = {
+    id: partial.id,
+    identifier: partial.identifier,
+    title: partial.title,
+    description: partial.description ?? "test",
+    status: partial.status ?? "in_progress",
+    priority: partial.priority ?? "medium",
+    assignee: partial.assignee ?? { id: "agt_test", name: "Test Agent" },
+    acceptanceCriteria: partial.acceptanceCriteria ?? [],
+    links: partial.links ?? { issue: "https://example.com/issue/1" },
+    context: partial.context ?? { project: null, goal: "test" },
+    updatedAt: partial.updatedAt ?? FIXTURE_NOW.toISOString(),
+    availableActions: partial.availableActions ?? ["submit"],
+    submissions: partial.submissions ?? [],
+    latestSubmissionId: partial.latestSubmissionId ?? null,
+    ciStatus: partial.ciStatus ?? null,
+    reviewOutcome: partial.reviewOutcome ?? null,
+    shipOperation: partial.shipOperation ?? null,
+    rollbackOperation: partial.rollbackOperation ?? null,
+    dueAt: partial.dueAt ?? null,
+    createdAt: partial.createdAt ?? FIXTURE_NOW.toISOString(),
+    version: partial.version ?? 1,
+  };
+
+  if (partial.source !== undefined) {
+    task.source = partial.source;
+  }
+
+  return task;
+}
+
 test("TaskStore persists and resumes tasks across instances", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-taskstore-"));
   const storagePath = path.join(tempDir, "tasks.ndjson");
@@ -42,6 +76,69 @@ test("TaskStore persists and resumes tasks across instances", async () => {
   assert.equal(resumed?.status, "in_progress");
 
   await rm(tempDir, { recursive: true, force: true });
+});
+
+test("TaskStore migrates legacy single-record JSONL files and rewrites them in state-object format", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-taskstore-"));
+  const storagePath = path.join(tempDir, "tasks.ndjson");
+  const legacyTask = makePersistedTask({
+    id: "tsk_legacy_single",
+    identifier: "AGEA-97",
+    title: "Legacy single-record task",
+  });
+
+  try {
+    await writeFile(storagePath, JSON.stringify(legacyTask) + "\n", "utf8");
+
+    const store = new TaskStore({ now, storagePath });
+    const restored = store.getTask(legacyTask.id);
+    assert.deepEqual(restored, legacyTask);
+
+    store.persist();
+    const rewritten = JSON.parse(await readFile(storagePath, "utf8"));
+    assert.deepEqual(rewritten, {
+      tasks: [legacyTask],
+      idempotencyEntries: [],
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("TaskStore migrates legacy multi-record JSONL files and preserves all tasks on rewrite", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-taskstore-"));
+  const storagePath = path.join(tempDir, "tasks.ndjson");
+  const legacyTasks = [
+    makePersistedTask({
+      id: "tsk_legacy_multi_1",
+      identifier: "AGEA-98",
+      title: "Legacy multi-record task one",
+    }),
+    makePersistedTask({
+      id: "tsk_legacy_multi_2",
+      identifier: "AGEA-99",
+      title: "Legacy multi-record task two",
+      updatedAt: "2026-05-01T03:25:16.000Z",
+      createdAt: "2026-05-01T03:25:16.000Z",
+    }),
+  ];
+
+  try {
+    await writeFile(storagePath, legacyTasks.map((task) => JSON.stringify(task)).join("\n") + "\n", "utf8");
+
+    const store = new TaskStore({ now, storagePath });
+    assert.deepEqual(store.getTask(legacyTasks[0].id), legacyTasks[0]);
+    assert.deepEqual(store.getTask(legacyTasks[1].id), legacyTasks[1]);
+
+    store.persist();
+    const rewritten = JSON.parse(await readFile(storagePath, "utf8"));
+    assert.deepEqual(rewritten, {
+      tasks: legacyTasks,
+      idempotencyEntries: [],
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("TaskStore supports per-agent filtering", async () => {
