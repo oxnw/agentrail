@@ -94,7 +94,10 @@ test("runtime scripts execute TypeScript entrypoints directly", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 
   assert.equal(packageJson.scripts.start, "node src/server.ts");
-  assert.equal(packageJson.scripts["demo:server"], "AGENTRAIL_MODE=demo node src/server.ts");
+  assert.equal(
+    packageJson.scripts["smoke:sandbox:live"],
+    "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-sandbox-smoke.mjs --mode live",
+  );
   assert.match(packageJson.scripts["test:service"], /test\/\*\.test\.ts/);
   assert.doesNotMatch(JSON.stringify(packageJson.scripts), /src\/[^"]+\.js/);
 
