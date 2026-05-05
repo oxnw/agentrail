@@ -95,6 +95,9 @@ export interface TaskSubmission {
   submittedAt: string;
   prUrl?: string | null;
   prNumber?: number | null;
+  branch?: string | null;
+  baseBranch?: string | null;
+  headSha?: string | null;
 }
 
 export interface ShipOperation {

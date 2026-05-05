@@ -62,5 +62,17 @@ export function resolveTaskSource(
     source.prUrl = latestSubmission.prUrl;
   }
 
+  if (source.branch == null && latestSubmission?.branch) {
+    source.branch = latestSubmission.branch;
+  }
+
+  if (source.baseBranch == null && latestSubmission?.baseBranch) {
+    source.baseBranch = latestSubmission.baseBranch;
+  }
+
+  if (source.headSha == null && latestSubmission?.headSha) {
+    source.headSha = latestSubmission.headSha;
+  }
+
   return source;
 }

@@ -32,7 +32,8 @@ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/agentrail-py-sdk-XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 "$PYTHON_BIN" -m venv "$WORKDIR/.venv"
-"$WORKDIR/.venv/bin/pip" install --quiet "$PACKAGE_PATH"
+PIP_DISABLE_PIP_VERSION_CHECK="${PIP_DISABLE_PIP_VERSION_CHECK:-1}" \
+  "$WORKDIR/.venv/bin/pip" install --quiet "$PACKAGE_PATH"
 
 "$WORKDIR/.venv/bin/python" - <<'PY'
 import asyncio
@@ -41,7 +42,7 @@ from agentrail import AgentRailClient, DEFAULT_BASE_URL
 
 
 async def main() -> None:
-    client = AgentRailClient(api_key="smoke-test-key")
+    client = AgentRailClient(base_url=DEFAULT_BASE_URL, api_key="smoke-test-key")
     if DEFAULT_BASE_URL != "http://127.0.0.1:3000":
         raise RuntimeError("Default base URL mismatch")
     await client.close()

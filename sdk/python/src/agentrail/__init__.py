@@ -1,6 +1,6 @@
 """AgentRail Python SDK — agent-first task lifecycle API client."""
 
-from .client import AgentRailClient, RetryOptions, StreamOptions
+from .client import DEFAULT_BASE_URL, AgentRailClient, RetryOptions, StreamOptions
 from .errors import (
     AgentRailError,
     ConflictError,
@@ -93,6 +93,7 @@ from .webhooks import parse_webhook_event, verify_webhook_signature
 
 __all__ = [
     "AgentRailClient",
+    "DEFAULT_BASE_URL",
     "RetryOptions",
     "StreamOptions",
     "AgentRailError",

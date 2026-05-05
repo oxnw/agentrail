@@ -5,6 +5,12 @@ replace Claude Code, Codex, Cursor, git, GitHub, or CI. It gives the agent one
 compact source of truth for assigned work, submission state, CI status, review
 feedback, events, and ship requests.
 
+This repository is the local and self-managed OSS surface. It should be useful
+without a hosted account. The planned AgentRail Cloud surface is the managed
+team/fleet operations layer: connector operations, durable shared run history
+and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards, support,
+compliance, and hosted reliability. See [Cloud boundary](./cloud.md).
+
 Use this guide when you are integrating AgentRail into a real agent workflow.
 If you only want to run the demo once, start with the
 [five-minute quick start](./quick-start.md). If you want copy-paste agent
@@ -26,6 +32,9 @@ Keep these processes separate:
 For local evaluation, the AgentRail server and the target repo may be the same
 checkout. In production, they are usually separate: AgentRail runs as shared
 infrastructure, while agents work inside individual project repositories.
+Self-managed OSS can run that shared infrastructure for a small deployment, but
+it is not the same promise as AgentRail Cloud operating the team control plane
+with managed connectors, access control, audit, support, and reliability.
 
 ## Current / Demo / Planned Capability Labels
 
@@ -38,10 +47,11 @@ rely on today:
 | Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the OSS server does not yet run a live provider intake worker. | **Demo:** The demo starts from a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
 | Routing | **Current:** Routing rules, dry-run evaluation, assignment, and audit are specified as operator/admin contracts. | **Demo:** The demo task is already assigned, so no routing decision is executed at runtime. | **Planned:** The control plane evaluates deterministic rules, stores `routingReason`, wakes the selected agent, and exposes audit history. |
 | Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented when the server is wired with `AgentAuthStore`. | **Demo:** `AGENTRAIL_MODE=demo` leaves protected routes open and uses `ar_local_demo_key` only as an SDK placeholder. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
+| Local/self-hosted setup | **Current:** Setup is manual: copy `.env.example`, start the demo or server process, export `AGENTRAIL_BASE_URL`, and use the documented auth bootstrap path for auth-enabled runs. No `agentrail` setup CLI is implemented yet. | **Demo:** `npm run demo:server` serves the deterministic task store, and `ar_local_demo_key` is only a local SDK placeholder. | **Planned:** The setup CLI follows `agentrail init` -> `agentrail server start` -> `agentrail agent create/connect`, writes local `.agentrail` config/env output, creates the agent identity/profile/key/routing state, and verifies `/tasks/mine`. |
 | Live task store | **Current:** Default server mode requires configured task sources and provider credentials, and it returns `404` instead of falling back to demo data. | **Demo:** Demo mode uses a deterministic in-memory task lifecycle store with optional local event replay persistence. | **Planned:** The control plane persists assigned tasks, routing decisions, lifecycle state, and event cursors in managed storage. |
 | Submit | **Current:** `mode: "adapter_managed"` lets the GitHub submit adapter create or reuse provider PRs from configured task sources. | **Demo:** `mode: "artifact"` accepts a placeholder pull request artifact so the local issue-to-ship loop runs without provider credentials. | **Planned:** Submit is always mediated by provider adapters, with idempotent create-or-reuse behavior and compact response state. |
 | CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries for configured task sources. | **Demo:** Deterministic CI and review transitions prove the agent loop without live checks or reviewers. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
-| Ship | **Current:** Ship and rollback routes are implemented behind adapter interfaces with idempotency keys and common state/error handling. | **Demo:** The local demo queues a deterministic ship result after CI passes and review approves. | **Planned:** Hosted deployments coordinate merge, deploy, rollback, and audit with least-privilege provider permissions. |
+| Ship | **Current:** Ship and rollback routes are implemented behind adapter interfaces with idempotency keys and common state/error handling. | **Demo:** The local demo queues a deterministic ship result after CI passes and review approves. | **Planned:** Managed control-plane deployments coordinate merge, deploy, rollback, and audit with least-privilege provider permissions. |
 
 ## Intended End-to-End Flow
 
@@ -107,12 +117,23 @@ Authentication note: `AGENTRAIL_MODE=demo` does not configure the agent auth
 store. Protected routes are open in this local demo mode, and SDK examples use
 `ar_local_demo_key` only as a constructor placeholder.
 
+Cloud boundary note: Track A proves the local lifecycle contract. It does not
+include managed provider connectors, team access control, audited fleet routing,
+dashboards, support, compliance, backups, or hosted reliability.
+
+Planned setup note: the future local/self-hosted setup CLI contract is
+documented in
+[local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md).
+Until that CLI exists, use the manual commands in this guide.
+
 ### Track B: Claude Code / Codex / Cursor Uses AgentRail
 
 Use this when a coding agent should work through AgentRail instead of manually
 polling GitHub, CI, and review APIs.
 
-1. Start AgentRail with Track A or point to a hosted AgentRail base URL.
+1. Start AgentRail with Track A, your own auth-enabled deployment, or an
+   explicitly provisioned hosted API base URL. Public AgentRail Cloud is not
+   generally available yet.
 2. Open the target repository where the agent should edit code.
 3. Export the AgentRail connection settings in the agent's shell.
 4. Start the coding agent with the AgentRail operating instructions.
@@ -337,6 +358,11 @@ intentionally runs the OSS demo without an auth store. In an auth-enabled
 deployment, the server must be created with `AgentAuthStore`; then the first
 bootstrap request can create an `auth:admin` key.
 
+Current behavior: auth-enabled setup is an operator/server wiring path, not a
+one-command local CLI. Planned behavior: `agentrail agent create/connect` wraps
+the API key and profile calls described below, writes `.agentrail/agent.env`,
+and verifies that the generated key can call `/tasks/mine`.
+
 Create the first admin key:
 
 ```bash
@@ -436,7 +462,10 @@ events.
 
 - [Five-minute quick start](./quick-start.md)
 - [Agent recipes](./agent-recipes.md)
+- [Cloud boundary](./cloud.md)
+- [Local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md)
 - [OpenAPI contract](./api/task-lifecycle.openapi.yaml)
 - [End-to-end demo](./demo/agentrail-e2e-demo.md)
 - [Claude Code and Codex lifecycle example](../examples/issue-to-pr-lifecycle.md)
 - [Railway production runbook](./deployment/railway-production.md)
+- [Live sandbox validation gate](./deployment/live-sandbox-validation.md)

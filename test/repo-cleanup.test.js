@@ -24,7 +24,6 @@ const removedInternalArtifacts = [
   "index-light.html",
   "original-index-light.html",
   "docs/dogfood-setup.md",
-  "docs/cloud.md",
   "ROADMAP.md",
   "docs/adr/0001-task-lifecycle-api.md",
   "docs/adr/0002-sdk-generation-and-contract-gates.md",
@@ -41,6 +40,7 @@ const removedInternalArtifacts = [
 const keptPublicArtifacts = [
   "landing/index-light.html",
   "scripts/agentrail-e2e-demo.mjs",
+  "docs/cloud.md",
   "docs/demo/agentrail-e2e-demo.md",
   "docs/api/task-lifecycle.openapi.yaml"
 ];

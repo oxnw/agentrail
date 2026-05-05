@@ -64,3 +64,5 @@ Future sandbox validation should consume AgentRail through documented runtime/pa
 - Service startup: `npm start` or `npm run demo:server`, both backed by `src/server.ts`.
 - SDK consumers: generated package output from `sdk/typescript/dist`, not SDK source shims.
 - Live provider fixtures: sandbox repository data and GitHub API state, not checked-in AgentRail implementation files.
+
+The runnable release gate is documented in [Live Sandbox Validation Gate](../deployment/live-sandbox-validation.md).

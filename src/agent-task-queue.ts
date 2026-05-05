@@ -152,6 +152,7 @@ export class AgentTaskQueue {
       const pullRequest = asObject(payloadObject.pullRequest) ?? {};
       const branch = firstString(pullRequest.head, payloadObject.head, responseData.head, task.source?.branch);
       const baseBranch = firstString(pullRequest.base, payloadObject.base, responseData.base, task.source?.baseBranch);
+      const headSha = firstString(pullRequest.headSha, payloadObject.headSha, responseData.headSha, task.source?.headSha);
       const newSubmission = {
         id: responseData.submissionId,
         summary: typeof payloadObject.summary === "string" ? payloadObject.summary : "",
@@ -161,6 +162,9 @@ export class AgentTaskQueue {
         submittedAt: this.now().toISOString(),
         prUrl: responseData.prUrl ?? null,
         prNumber: responseData.prNumber ?? null,
+        branch: branch ?? null,
+        baseBranch: baseBranch ?? null,
+        headSha: headSha ?? null,
       };
       const submissions = [...task.submissions, newSubmission];
       const latestSubmissionId = responseData.submissionId;
@@ -174,6 +178,7 @@ export class AgentTaskQueue {
             prUrl: responseData.prUrl ?? task.source.prUrl,
             branch: branch ?? task.source.branch,
             baseBranch: baseBranch ?? task.source.baseBranch,
+            headSha: headSha ?? task.source.headSha,
           }
         : undefined;
 

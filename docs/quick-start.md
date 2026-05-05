@@ -3,6 +3,16 @@
 This path proves the local AgentRail lifecycle contract without GitHub tokens,
 CI tokens, or a hosted account.
 
+It is a local/self-managed OSS path, not the planned AgentRail Cloud team
+control plane. Cloud differentiation lives in managed connectors, durable shared
+run history and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards,
+support, compliance, and hosted reliability.
+
+Current setup is manual: start the demo server, export the local base URL, and
+use `ar_local_demo_key` as a placeholder. The planned `agentrail init` and
+`agentrail agent create/connect` flow is specified in the
+[local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md).
+
 ## Prerequisites
 
 - Node.js 22.6 or newer.

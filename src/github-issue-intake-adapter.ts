@@ -42,8 +42,63 @@ export class GitHubIssueIntakeAdapter {
       });
     }
 
+    const identifier = this.buildIdentifier(payload);
+
+    if (idempotencyKey) {
+      const cached = this.taskQueue.getIdempotencyEntry(idempotencyKey);
+      if (cached) {
+        return cached.response as GitHubIssueIntakeResult;
+      }
+    }
+
+    const existing = this.taskQueue.findTaskByIdentifier(identifier);
+
+    if (existing) {
+      const updated = this.taskQueue.updateTask(existing.id, {
+        title: payload.issueTitle ?? existing.title,
+        description: payload.body ?? existing.description,
+        status: this.mapStatus(payload.state),
+        priority: this.mapPriority(payload.labels ?? []),
+        assignee: this.mapAssignee(payload.assignees ?? []),
+        acceptanceCriteria: this.extractAcceptanceCriteria(payload.body ?? ""),
+        links: { issue: payload.issueUrl },
+        context: {
+          project: payload.repository ? `${payload.repository.owner}/${payload.repository.repo}` : existing.context.project,
+          goal: `GitHub issue intake: #${payload.issueNumber}`,
+        },
+        source: {
+          provider: "github",
+          owner: payload.repository?.owner,
+          repo: payload.repository?.repo,
+          issueNumber: payload.issueNumber,
+          labels: payload.labels ?? [],
+          assignees: (payload.assignees ?? []).map(a => a.login),
+          deliveryId: idempotencyKey ?? undefined,
+          receivedAt: this.now().toISOString(),
+        },
+      });
+
+      if (!updated) {
+        throw new TaskLifecycleError(500, "internal_error", "Failed to update existing task.", { availableActions: ["retry"] });
+      }
+
+      const result: GitHubIssueIntakeResult = {
+        taskId: updated.id,
+        identifier: updated.identifier,
+        status: updated.status,
+        availableActions: updated.availableActions,
+        createdAt: updated.createdAt,
+      };
+
+      if (idempotencyKey) {
+        this.taskQueue.setIdempotencyEntry(idempotencyKey, { fingerprint: identifier, response: result });
+      }
+
+      return result;
+    }
+
     const taskRecord = this.taskQueue.createTask({
-      identifier: this.buildIdentifier(payload),
+      identifier,
       title: payload.issueTitle ?? `Issue #${payload.issueNumber}`,
       description: payload.body ?? "",
       status: this.mapStatus(payload.state),
@@ -67,15 +122,31 @@ export class GitHubIssueIntakeAdapter {
       rollbackOperation: null,
       dueAt: null,
       version: 1,
+      source: {
+        provider: "github",
+        owner: payload.repository?.owner,
+        repo: payload.repository?.repo,
+        issueNumber: payload.issueNumber,
+        labels: payload.labels ?? [],
+        assignees: (payload.assignees ?? []).map(a => a.login),
+        deliveryId: idempotencyKey ?? undefined,
+        receivedAt: this.now().toISOString(),
+      },
     });
 
-    return {
+    const result: GitHubIssueIntakeResult = {
       taskId: taskRecord.id,
       identifier: taskRecord.identifier,
       status: taskRecord.status,
       availableActions: taskRecord.availableActions,
       createdAt: taskRecord.createdAt,
     };
+
+    if (idempotencyKey) {
+      this.taskQueue.setIdempotencyEntry(idempotencyKey, { fingerprint: identifier, response: result });
+    }
+
+    return result;
   }
 
   /** Build a deterministic identifier from the issue URL, e.g. "github:oxnw/agentrail:issues/10". */

@@ -39,7 +39,7 @@ try {
     [
       'import { AgentRailClient, DEFAULT_BASE_URL } from "@agentrail-core/sdk";',
       "",
-      'const client = new AgentRailClient({ apiKey: "smoke-test-key" });',
+      'const client = new AgentRailClient({ baseUrl: DEFAULT_BASE_URL, apiKey: "smoke-test-key" });',
       'if (!(client instanceof AgentRailClient)) throw new Error("Client export missing");',
       'if (DEFAULT_BASE_URL !== "http://127.0.0.1:3000") throw new Error("Default base URL mismatch");',
       'console.log("TypeScript SDK smoke test passed.");',

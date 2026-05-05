@@ -1,7 +1,9 @@
 # Railway Production Deployment
 
-This runbook covers the production API deployment for AgentRail on Railway and
-the DNS and monitoring steps needed to publish `https://api.agentrail.app/v1`.
+This runbook covers the production API service deployment for AgentRail on
+Railway and the DNS and monitoring steps needed to publish
+`https://api.agentrail.app/v1`. It is not a launch note for generally available
+AgentRail Cloud; Cloud's managed team/fleet layer remains separately scoped.
 
 ## Technical Decision
 

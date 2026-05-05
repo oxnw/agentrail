@@ -12,6 +12,12 @@ lets coding agents such as Claude Code, Codex, Cursor, and Devin complete a
 task through one compact API instead of stitching together raw GitHub, Linear,
 CI, review, and deployment calls.
 
+AgentRail OSS is intentionally runnable as a local or self-managed
+single-instance product. The planned AgentRail Cloud product is the managed
+team and fleet operations layer: hosted connector operations, durable shared run
+history and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards,
+support, compliance, and hosted reliability.
+
 ## Why Agents Need It
 
 Raw developer tools are built for humans. They expose broad resources, verbose
@@ -39,6 +45,7 @@ git clone https://github.com/oxnw/agentrail.git && cd agentrail && docker compos
 
 The local API starts on `http://127.0.0.1:3000` by default. Docker Compose
 persists task event stream replay data in the `agentrail-event-data` volume.
+This is self-managed OSS, not a Cloud-equivalent managed team control plane.
 
 Node setup:
 
@@ -52,6 +59,14 @@ npm run demo:server
 The demo API runs without private credentials and serves the deterministic demo
 task store. The default `npm start` path is production-like server mode and
 requires live task sources plus provider credentials.
+
+Current local setup is manual. The planned self-hosted setup CLI contract is
+documented in
+[docs/architecture/local-self-hosted-setup-cli-contract.md](docs/architecture/local-self-hosted-setup-cli-contract.md):
+`agentrail init` writes local config, `agentrail server start` starts the
+configured server, and `agentrail agent create/connect` creates the
+AgentIdentity, scoped key, AgentProfile, and starter routing/demo state needed
+for an LLM agent to call `/tasks/mine`.
 
 In a second terminal, run the issue-to-ship demo:
 
@@ -210,9 +225,10 @@ async with AgentRailClient(
     tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS)
 ```
 
-Hosted base URLs are still supported by passing a non-local `baseUrl`
-explicitly. Local URLs remain the default developer path for this OSS release
-candidate.
+Non-local base URLs are supported for self-managed or explicitly provisioned
+hosted API deployments by passing a `baseUrl` explicitly. That does not mean
+AgentRail Cloud is generally available. Local URLs remain the default developer
+path for this OSS release candidate.
 
 ## Release Scope
 
@@ -221,37 +237,54 @@ local API server, SDKs, demo flow, and operator-facing integration docs.
 Internal planning and architecture decision records are kept outside the public
 release bundle.
 
+## OSS vs Cloud Boundary
+
+The OSS product should stay fully runnable for local evaluation and
+self-managed use. It includes the lifecycle API, SDKs, deterministic demo,
+single-instance server path, event/webhook primitives, and adapter interfaces.
+
+AgentRail Cloud is planned as the managed team/fleet layer, not merely a hosted
+copy of this Node process. Cloud should own managed provider connectors,
+governed shared run history and memory, routing and wakes, SSO/RBAC/SCIM,
+audit, dashboards, support, compliance, backups, and hosted reliability.
+
+Cloud is not generally available yet. Do not treat hosted URLs, one-click
+deploys, or self-hosting instructions as a promise of managed Cloud operations.
+See [Cloud boundary](./docs/cloud.md).
+
 ## Roadmap
 
 | Status | Feature | Description |
 |--------|---------|-------------|
 | :white_check_mark: | Task lifecycle API | Issue → PR → CI → review → ship through one typed API |
-| :white_check_mark: | GitHub Actions adapter | CI status, PR submission, review feedback, merge & ship |
+| :white_check_mark: | GitHub provider adapters | PR submit/reuse, CI status, and review feedback for configured task sources; live merge/ship remains gated by sandbox validation |
 | :white_check_mark: | CircleCI adapter | Multi-CI support via pluggable adapter pattern |
 | :white_check_mark: | TypeScript & Python SDKs | Typed clients with retry logic, SSE streaming, structured errors |
-| :white_check_mark: | Agent auth & scoped keys | Per-agent API keys with fine-grained scopes and audit |
+| :white_check_mark: | Agent auth primitives | Per-agent API key creation, scopes, rate limits, and audit primitives; live runtime wiring remains part of the control-plane work |
 | :white_check_mark: | SSE event streams | Real-time task events with cursor replay and filtering |
 | :white_check_mark: | Webhook subscriptions | HMAC-signed delivery with retry and backoff |
-| :white_check_mark: | Rollback support | Safely revert shipped PRs when needed |
-| :construction: | Hosted deployment | One-click deploy to Railway or your own infra |
-| :construction: | Dashboard UI | Real-time view of agent activity and task state |
+| :construction: | Ship and rollback primitives | Routes and adapter interfaces with idempotency; live GitHub ship and SDK rollback remain follow-up validation work |
+| :construction: | Self-managed deployment | One-click single-instance deploy to Railway or your own infra |
+| :construction: | Local dashboard UI | Single-instance view of local agent activity and task state |
 | :dart: | Linear integration | Sync tasks from Linear projects |
 | :dart: | Jira integration | Sync tasks from Jira boards |
 | :dart: | GitLab adapter | CI pipelines, merge requests, and shipping via GitLab |
 | :dart: | Multi-agent coordination | Task claiming, handoff, and conflict resolution across agents |
-| :dart: | Usage analytics | Token savings tracking and agent performance metrics |
-| :dart: | Cloud offering | Managed AgentRail with team workspaces and hosted connectors |
+| :dart: | Token metrics primitives | Local token-savings measurement; Cloud owns team dashboards and per-agent attribution |
+| :dart: | AgentRail Cloud | Planned managed team/fleet operations layer: connectors, shared run history/memory, routing/wakes, SSO/RBAC/SCIM, audit, dashboards, support, compliance, and hosted reliability |
 
 ## Repository Docs
 
 - [Integration guide for Claude Code / Codex / Cursor](./docs/integration-guide.md)
 - [Five-minute quick start](./docs/quick-start.md)
 - [Agent recipes for Claude Code, Codex, and Cursor](./docs/agent-recipes.md)
+- [Cloud boundary](./docs/cloud.md)
 - [MVP completeness scorecard](./docs/mvp-completeness-scorecard.md)
 - [OpenAPI contract](./docs/api/task-lifecycle.openapi.yaml)
 - [Intake routing architecture](./docs/architecture/intake-routing-engine.md)
 - [Intake routing operator OpenAPI](./docs/api/intake-routing-admin.openapi.yaml)
 - [Railway production deployment runbook](./docs/deployment/railway-production.md)
+- [Live sandbox validation gate](./docs/deployment/live-sandbox-validation.md)
 - [End-to-end demo](./docs/demo/agentrail-e2e-demo.md)
 - [Claude Code and Codex lifecycle example](./examples/issue-to-pr-lifecycle.md)
 - [Contributing](./CONTRIBUTING.md)
