@@ -125,12 +125,14 @@ export async function runSetupWizard({
   });
   const planLines = buildSetupPlan(config);
 
-  writeLine("Review setup plan:");
-  planLines.forEach((line) => writeLine(`- ${line}`));
-  writeLine("");
   await prompt.note({
     title: "Before you confirm",
-    body: "Nothing is written until you answer yes. Setup will create `.agentrail/config.json`, `.agentrail/agent.env.example`, and `.agentrail/README.md`.",
+    body: [
+      "Review setup plan:",
+      ...planLines.map((line) => `- ${line}`),
+      "",
+      "Nothing is written until you answer yes.",
+    ].join("\n"),
   });
 
   const action = flags.printOnly

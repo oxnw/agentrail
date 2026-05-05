@@ -58,11 +58,14 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.match(prompt.notes[0]?.body ?? "", /GitHub remote/);
   assert.equal(prompt.messages[0], "Local git repo detected: /tmp/agentrail");
   assert.equal(prompt.notes[1]?.title, "Before you confirm");
+  assert.match(prompt.notes[1]?.body ?? "", /Review setup plan:/);
+  assert.match(prompt.notes[1]?.body ?? "", /Write \.agentrail\/config\.json/);
+  assert.match(prompt.notes[1]?.body ?? "", /Leave \.agentrail\/agent\.env for the later registration step only/);
   assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
   assert.equal(prompt.interactions[1]?.message, "GitHub remote (owner/repo)");
   assert.doesNotMatch(stdout.toString(), /AgentRail local setup/i);
   assert.doesNotMatch(stdout.toString(), /Local git repo detected:/);
-  assert.match(stdout.toString(), /Review setup plan/i);
+  assert.doesNotMatch(stdout.toString(), /Review setup plan/i);
   assert.doesNotMatch(stdout.toString(), /Detected:/);
   assert.match(stdout.toString(), /Wrote setup files:/);
   assert.doesNotMatch(stdout.toString(), /Equivalent command:/);
