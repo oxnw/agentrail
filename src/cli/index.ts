@@ -168,10 +168,13 @@ async function finalizeInit({
   const envExamplePath = path.join(config.targetRepo.path, ".agentrail", "agent.env.example");
 
   stdout.write(`Wrote setup files:\n${result.writtenPaths.map((filePath) => `- ${filePath}`).join("\n")}\n`);
-  stdout.write("`.agentrail/agent.env` is intentionally not created during init; it stays the later mode-0600 boundary for agent and provider secrets.\n");
-  stdout.write(`Next step: add your provider tokens to ${envPath} when you wire live providers.\n`);
-  stdout.write(`Use ${envExamplePath} as the template.\n`);
-  stdout.write("Happy hacking!\n");
+  stdout.write([
+    "Next steps:",
+    `- Add your provider tokens to ${envPath} when you wire live providers.`,
+    `- Use ${envExamplePath} as the template.`,
+    "- Happy hacking!",
+    "",
+  ].join("\n"));
   return 0;
 }
 

@@ -69,7 +69,8 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.doesNotMatch(stdout.toString(), /Review setup plan/i);
   assert.doesNotMatch(stdout.toString(), /Detected:/);
   assert.match(stdout.toString(), /Wrote setup files:/);
-  assert.match(stdout.toString(), /Next step: add your provider tokens to/);
+  assert.match(stdout.toString(), /Next steps:/);
+  assert.doesNotMatch(stdout.toString(), /intentionally not created during init/);
   assert.match(stdout.toString(), /\/tmp\/custom-agentrail\/\.agentrail\/agent\.env/);
   assert.match(stdout.toString(), /agent\.env\.example/);
   assert.match(stdout.toString(), /Happy hacking!/);
