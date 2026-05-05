@@ -1,0 +1,10 @@
+{
+  "tsk_SELFHOSTED000000000001": {
+    "provider": "github",
+    "owner": "OWNER",
+    "repo": "REPO",
+    "issueNumber": 123,
+    "branch": "feature/agentrail-quickstart",
+    "baseBranch": "main"
+  }
+}

@@ -164,6 +164,8 @@ async function finalizeInit({
     repoRoot: config.targetRepo.path,
     config,
   });
+  const envPath = path.join(config.targetRepo.path, ".agentrail", "agent.env");
+  const envExamplePath = path.join(config.targetRepo.path, ".agentrail", "agent.env.example");
   return 0;
 }
 

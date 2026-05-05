@@ -301,7 +301,7 @@ test("shipTask returns 403 when user has insufficient permission", async () => {
   );
 });
 
-test("shipTask delegates to demo store when no task source exists", async () => {
+test("shipTask delegates to the fallback lifecycle store when no task source exists", async () => {
   let delegateCalled = false;
   const delegate = {
     shipTask: async () => {
@@ -318,7 +318,7 @@ test("shipTask delegates to demo store when no task source exists", async () => 
   });
 
   await adapter.shipTask("tsk_other", { mode: "merge" }, "key1");
-  assert.ok(delegateCalled, "should delegate to demo store");
+  assert.ok(delegateCalled, "should delegate to the fallback lifecycle store");
 });
 
 test("shipTask requires Idempotency-Key header", async () => {

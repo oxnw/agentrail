@@ -11,9 +11,8 @@ Use AgentRail for task lifecycle state.
 Environment:
 
 - `AGENTRAIL_BASE_URL` defaults to `http://127.0.0.1:3000`.
-- `AGENTRAIL_API_KEY` is `ar_local_demo_key` for the local OSS demo.
-- On auth-enabled deployments, `AGENTRAIL_API_KEY` must be the secret
-  `data.apiKey` value returned by AgentRail, not the `akey_...` id.
+- `AGENTRAIL_API_KEY` must be the secret `data.apiKey` value returned by
+  AgentRail, not the `akey_...` id.
 
 Operating rules:
 
@@ -30,9 +29,7 @@ Operating rules:
 - Keep AgentRail submission summaries compact and action-oriented.
 - Include PR and commit URLs in `artifacts` when available.
 - In production automation, prefer AgentRail adapter-managed submit: AgentRail
-  should create or reuse the provider PR and return the PR URL. Local demo
-  artifact URLs are scaffolding for credential-free examples, not the product
-  architecture.
+  should create or reuse the provider PR and return the PR URL.
 - If `x-agentrail-fallback: true` is returned, switch to direct provider APIs
   for the current task and report that fallback mode was used.
 
@@ -53,7 +50,7 @@ it in the target repository.
 npm install -g @anthropic-ai/claude-code
 cd /path/to/target-repo
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=ar_local_demo_key
+export AGENTRAIL_API_KEY=ar_live_replace_with_real_key
 claude --append-system-prompt-file /path/to/agentrail/docs/agent-recipes.md
 ```
 
@@ -82,7 +79,7 @@ Start Codex in the target repository with the same environment:
 ```bash
 cd /path/to/target-repo
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=ar_local_demo_key
+export AGENTRAIL_API_KEY=ar_live_replace_with_real_key
 codex
 ```
 
@@ -133,7 +130,7 @@ import { AgentRailClient } from "@agentrail-core/sdk";
 
 const client = new AgentRailClient({
   baseUrl: process.env.AGENTRAIL_BASE_URL ?? "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY ?? "ar_local_demo_key",
+  apiKey: process.env.AGENTRAIL_API_KEY!,
 });
 
 const tasks = await client.listMyTasks({ status: "in_progress", limit: 1 });
@@ -172,7 +169,7 @@ from agentrail import TaskSubmitRequest
 async def main():
     async with AgentRailClient(
         base_url=os.getenv("AGENTRAIL_BASE_URL", "http://127.0.0.1:3000"),
-        api_key=os.getenv("AGENTRAIL_API_KEY", "ar_local_demo_key"),
+        api_key=os.environ["AGENTRAIL_API_KEY"],
     ) as client:
         tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS, limit=1)
         if not tasks.data:

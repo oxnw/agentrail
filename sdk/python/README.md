@@ -14,7 +14,8 @@ pip install agentrail
 
 ## Quickstart
 
-Start the local OSS demo API from the repository root:
+Start the local AgentRail API from the repository root after configuring
+`GITHUB_TOKEN`, `AGENTRAIL_TASK_STORE_PATH`, and `AGENTRAIL_TASK_SOURCES`:
 
 ```bash
 npm start
@@ -22,12 +23,13 @@ npm start
 
 ```python
 import asyncio
+import os
 from agentrail import AgentRailClient, TaskStatus
 
 async def main():
     async with AgentRailClient(
         base_url="http://127.0.0.1:3000",
-        api_key="ar_local_demo_key",
+        api_key=os.environ["AGENTRAIL_API_KEY"],
     ) as client:
         # List assigned tasks
         tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS)
@@ -41,9 +43,7 @@ async def main():
 asyncio.run(main())
 ```
 
-For the default OSS `npm start` server, `ar_local_demo_key` is only a local
-placeholder because agent auth is not enabled. In an auth-enabled deployment,
-use the returned `data.apiKey` value from key creation; it starts with
+Use the returned `data.apiKey` value from key creation; it starts with
 `ar_live_`. The `akey_...` value is the key ID, not the secret.
 
 ## Authentication
@@ -51,6 +51,7 @@ use the returned `data.apiKey` value from key creation; it starts with
 ### Bootstrap an agent API key
 
 ```python
+import os
 from agentrail import (
     AgentRailClient,
     AgentApiKeyCreateRequest,
@@ -62,7 +63,7 @@ from agentrail import (
 
 async with AgentRailClient(
     base_url="http://127.0.0.1:3000",
-    api_key="ar_local_demo_key",
+    api_key=os.environ["AGENTRAIL_API_KEY"],
 ) as client:
     resp = await client.create_api_key(
         AgentApiKeyCreateRequest(
@@ -140,9 +141,7 @@ ship = await client.ship_task(
 )
 ```
 
-The default OSS demo can still use `mode="artifact"` with a deterministic
-`pull_request` URL when no provider credentials are configured. Production and
-dogfood automation should use `mode="adapter_managed"` so AgentRail owns PR
+For provider automation, prefer `mode="adapter_managed"` so AgentRail owns PR
 creation and returns the PR state.
 
 ## Retry Configuration
@@ -152,7 +151,7 @@ from agentrail import AgentRailClient, RetryOptions
 
 client = AgentRailClient(
     base_url="http://127.0.0.1:3000",
-    api_key="ar_local_demo_key",
+    api_key=os.environ["AGENTRAIL_API_KEY"],
     retry=RetryOptions(
         max_attempts=5,
         initial_delay_s=2.0,

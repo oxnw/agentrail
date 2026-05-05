@@ -14,7 +14,7 @@ info:
     SDKs can consume one discriminated union regardless of transport.
 servers:
   - url: http://127.0.0.1:3000
-    description: Local OSS demo server
+    description: Local OSS self-hosted server
   - url: https://api.agentrail.app/v1
     description: Future AgentRail Cloud API
 security:
@@ -449,9 +449,9 @@ paths:
                       status: passed
                   notes: AgentRail should create or reuse the provider PR for this task.
               artifact_demo:
-                summary: Deterministic local demo artifact
+                summary: Placeholder local artifact
                 value:
-                  summary: Submitted deterministic local demo artifact.
+                  summary: Submitted a placeholder local artifact.
                   mode: artifact
                   artifacts:
                     - type: pull_request
@@ -1935,7 +1935,7 @@ components:
           type: array
           minItems: 1
           maxItems: 20
-          description: Optional for adapter-managed submit; required only for artifact demo mode.
+          description: Optional for adapter-managed submit; required only when you provide artifact-only submit metadata yourself.
           items:
             type: object
             additionalProperties: false

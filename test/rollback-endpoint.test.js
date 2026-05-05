@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 
 import { createServer } from "../src/app.ts";
-import { createAgentShipCycleDemoStore, DEMO_HEAD_SHA } from "../src/agent-ship-cycle-demo.ts";
+import { createAgentShipCycleDemoStore, DEMO_HEAD_SHA } from "./helpers/deterministic-lifecycle-store.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
 async function listen(server) {

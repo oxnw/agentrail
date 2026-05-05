@@ -1,12 +1,24 @@
 # AgentRail Five-Minute Quick Start
 
-This path proves the local AgentRail lifecycle contract without GitHub tokens,
-CI tokens, or a hosted account.
+This path proves the local AgentRail lifecycle contract with the core
+self-hosted server path instead of the removed demo runtime.
+
+It is a local/self-managed OSS path, not the planned AgentRail Cloud team
+control plane. Cloud differentiation lives in managed connectors, durable shared
+run history and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards,
+support, compliance, and hosted reliability.
+
+Current setup is manual: copy the example task-store and task-source files,
+export the local base URL, and bootstrap a real AgentRail API key. The planned
+`agentrail init` and `agentrail agent create/connect` flow is specified in the
+[local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md).
 
 ## Prerequisites
 
 - Node.js 22.6 or newer.
 - A terminal with `git`, `npm`, and `curl`.
+- A GitHub token that can read and open pull requests in the repository you use
+  for the sample task source.
 
 ## 1. Start the Local API
 
@@ -15,13 +27,24 @@ git clone https://github.com/oxnw/agentrail.git
 cd agentrail
 npm install
 cp .env.example .env
-npm run demo:server
+cp examples/self-hosted-task-store.json .agentrail.tasks.json
+cp examples/self-hosted-task-sources.json .agentrail.task-sources.json
+```
+
+Edit both copied files so the owner, repo, issue number, working branch, and
+assignee match your environment. Then start the server:
+
+```bash
+export GITHUB_TOKEN=ghp_your_token
+export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
+export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
+npm start
 ```
 
 Expected output:
 
 ```text
-AgentRail demo API listening on http://127.0.0.1:3000
+AgentRail API listening on http://127.0.0.1:3000
 ```
 
 Leave this terminal running.
@@ -47,34 +70,37 @@ Expected shape:
 
 The response also includes time and uptime fields.
 
-## 3. Run the Lifecycle Demo
+## 3. Bootstrap an API Key
 
 ```bash
-npm run demo
+curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
+  -H "content-type: application/json" \
+  -H "idempotency-key: bootstrap-local-admin" \
+  -d '{
+    "agent": {
+      "id": "agt_local_agent",
+      "displayName": "Local Agent",
+      "role": "developer"
+    },
+    "scopes": [
+      "auth:admin",
+      "tasks:read",
+      "tasks:write",
+      "ci:read",
+      "reviews:read",
+      "ship:write"
+    ]
+  }'
 ```
 
-The demo uses task `tsk_DEMOISSUETOSHIP01` and walks through:
-
-- list assigned task,
-- submit first attempt,
-- receive failed CI and requested changes,
-- submit corrected attempt,
-- read green CI and approved review,
-- queue ship,
-- report estimated token savings.
-
-For machine-readable output:
-
-```bash
-npm run demo:json
-```
-
-## 4. Make the Same Calls by Hand
+Save the returned `data.apiKey` value in your shell:
 
 ```bash
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=ar_local_demo_key
+export AGENTRAIL_API_KEY=ar_live_replace_with_bootstrap_secret
 ```
+
+## 4. Make the Same Calls by Hand
 
 List assigned work:
 
@@ -83,65 +109,45 @@ curl -s "$AGENTRAIL_BASE_URL/tasks/mine?status=in_progress&limit=1" \
   -H "authorization: Bearer $AGENTRAIL_API_KEY"
 ```
 
-Submit an attempt:
-
-The pull request URL below is a deterministic demo placeholder. Real
-automation should prefer adapter-managed submit, where AgentRail creates or
-reuses the provider PR and returns the PR URL through lifecycle state.
+Submit an attempt. AgentRail creates or reuses the GitHub pull request from the
+configured task source.
 
 ```bash
-curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/submit" \
+curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_SELFHOSTED000000000001/submit" \
   -H "authorization: Bearer $AGENTRAIL_API_KEY" \
   -H "content-type: application/json" \
   -H "idempotency-key: submit-quick-start-1" \
   -d '{
     "summary": "Implemented the endpoint and opened a pull request.",
-    "mode": "artifact",
-    "artifacts": [
-      { "type": "pull_request", "url": "https://github.com/oxnw/agentrail/pull/42" }
-    ]
+    "mode": "adapter_managed",
+    "pullRequest": {
+      "title": "Validate the self-hosted AgentRail loop",
+      "draft": false
+    }
   }'
 ```
 
 Read CI and review:
 
 ```bash
-curl -s "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/ci-status" \
+curl -s "$AGENTRAIL_BASE_URL/tasks/tsk_SELFHOSTED000000000001/ci-status" \
   -H "authorization: Bearer $AGENTRAIL_API_KEY"
 
-curl -s "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/review-feedback" \
+curl -s "$AGENTRAIL_BASE_URL/tasks/tsk_SELFHOSTED000000000001/review-feedback" \
   -H "authorization: Bearer $AGENTRAIL_API_KEY"
-```
-
-Submit the corrected attempt:
-
-```bash
-curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/submit" \
-  -H "authorization: Bearer $AGENTRAIL_API_KEY" \
-  -H "content-type: application/json" \
-  -H "idempotency-key: submit-quick-start-2" \
-  -d '{
-    "summary": "Fixed idempotency handling and added regression coverage.",
-    "mode": "artifact",
-    "artifacts": [
-      { "type": "pull_request", "url": "https://github.com/oxnw/agentrail/pull/42" },
-      { "type": "commit", "url": "https://github.com/oxnw/agentrail/commit/b5bc7f86" }
-    ],
-    "checks": [{ "name": "unit-tests", "status": "passed" }]
-  }'
 ```
 
 Ship after CI and review are green:
 
 ```bash
-curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_DEMOISSUETOSHIP01/ship" \
+curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_SELFHOSTED000000000001/ship" \
   -H "authorization: Bearer $AGENTRAIL_API_KEY" \
   -H "content-type: application/json" \
   -H "idempotency-key: ship-quick-start-1" \
   -d '{
     "mode": "merge_and_deploy",
     "targetEnvironment": "production",
-    "expectedHeadSha": "b5bc7f86b9ad94f4f18f83d28bdf3e27a31e53a0"
+    "expectedHeadSha": "replace-with-the-current-task-head-sha"
   }'
 ```
 
@@ -153,7 +159,7 @@ the AgentRail environment variables and the operating recipe:
 ```bash
 cd /path/to/target-repo
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=ar_local_demo_key
+export AGENTRAIL_API_KEY=ar_live_replace_with_bootstrap_secret
 ```
 
 Claude Code:
@@ -168,9 +174,8 @@ Other agents:
 - Tell the agent to start with
   `GET /tasks/mine?status=in_progress&limit=1`.
 
-## Local Auth Note
+## Auth Note
 
-Do not create an API key for the quick-start demo server. `AGENTRAIL_MODE=demo`
-does not wire the auth store, so `ar_local_demo_key` is only a local SDK
-placeholder. API key creation is for auth-enabled deployments; see
-[integration guide](./integration-guide.md#auth-enabled-operation).
+The default server now wires agent auth. Use a real `data.apiKey` secret from
+`POST /agent-api-keys`; placeholder demo keys are no longer valid on the core
+runtime path.

@@ -4,7 +4,7 @@ import { once } from "node:events";
 import type http from "node:http";
 
 import { createServer } from "../src/app.ts";
-import { createAgentShipCycleDemoStore, DEMO_TASK_ID } from "../src/agent-ship-cycle-demo.ts";
+import { createAgentShipCycleDemoStore, DEMO_TASK_ID } from "./helpers/deterministic-lifecycle-store.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
 async function listen(server: http.Server): Promise<string> {
