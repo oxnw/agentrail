@@ -94,7 +94,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
 
     if (!flags.yes && !hasExplicitNonInteractiveFlags(flags)) {
       const suggestions = [
-        `--mode ${flags.mode ?? "demo"}`,
+        `--mode ${flags.mode ?? "server"}`,
         `--repo ${repo.repoPath}`,
       ];
 
@@ -165,7 +165,7 @@ async function finalizeInit({
   });
 
   stdout.write(`Wrote setup files:\n${result.writtenPaths.map((filePath) => `- ${filePath}`).join("\n")}\n`);
-  stdout.write("`.agentrail/agent.env` is intentionally not created until registration.\n");
+  stdout.write("`.agentrail/agent.env` is intentionally not created during init; it stays the later mode-0600 boundary for agent and provider secrets.\n");
   return 0;
 }
 
@@ -203,7 +203,7 @@ function parseInitArgs(argv: string[]): InitFlags {
         flags.markdownExport = false;
         break;
       case "--mode":
-        flags.mode = readEnum(nextValue(argv, ++index, arg), ["demo", "server"], arg);
+        flags.mode = readEnum(nextValue(argv, ++index, arg), ["server"], arg);
         break;
       case "--host":
         flags.host = nextValue(argv, ++index, arg);
@@ -221,7 +221,7 @@ function parseInitArgs(argv: string[]): InitFlags {
         flags.persistence = readEnum(nextValue(argv, ++index, arg), ["file", "memory"], arg);
         break;
       case "--provider-mode":
-        flags.providerMode = readEnum(nextValue(argv, ++index, arg), ["demo", "real", "disabled"], arg);
+        flags.providerMode = readEnum(nextValue(argv, ++index, arg), ["real", "disabled"], arg);
         break;
       case "--repo":
         flags.repo = nextValue(argv, ++index, arg);
@@ -265,7 +265,7 @@ function writeUsage(output: Writer) {
     "  agentrail init [flags]",
     "",
     "Flags:",
-    "  --mode demo|server",
+    "  --mode server",
     "  --repo <path>",
     "  --print-only",
     "  --yes",

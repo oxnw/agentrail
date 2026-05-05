@@ -56,10 +56,10 @@ export async function runSetupWizard({
     title: "What these settings do",
     body: [
       "- Target GitHub repo: local repository where AgentRail writes `.agentrail/` and reads repo context.",
-      "- GitHub remote (owner/repo): remote slug AgentRail stores as the initial allowed GitHub repository.",
+      "- GitHub remote repository: will be stored as the initial allowed GitHub repository.",
       "- Default branch: branch AgentRail assumes for new work and pull requests.",
       "- Local API base URL: where local agents call the AgentRail API server.",
-      "- Setup mode: demo stays local and token-free; server prepares real GitHub and CircleCI providers.",
+      "- Provider mode: disabled writes a server-only config until you wire live providers; real enables GitHub and CircleCI placeholders now, but tokens still stay blank during init so secrets do not get echoed back into the terminal or committed beside repo-scoped setup files.",
       "- Markdown/Obsidian export: optional read-only notes written under `.agentrail/notes`.",
     ].join("\n"),
   });
@@ -74,7 +74,7 @@ export async function runSetupWizard({
   const repoAllowlist = flags.repoAllowlist ?? [
     resolvePromptValue(
       await prompt.input({
-        message: "GitHub remote (owner/repo)",
+        message: "GitHub remote repository:",
         defaultValue: detectedAllowlist,
       }),
       detectedAllowlist,
@@ -94,14 +94,14 @@ export async function runSetupWizard({
     }),
     detectedBaseUrl,
   );
-  const mode = flags.mode ?? await prompt.select({
-    message: "Setup mode",
-    defaultValue: "demo",
+  const providerMode = flags.providerMode ?? await prompt.select({
+    message: "Provider mode",
+    defaultValue: "disabled",
     choices: [
-      { label: "Demo, no provider tokens", value: "demo" },
-      { label: "Self-hosted with real GitHub/CI providers", value: "server" },
+      { label: "Disabled until configured", value: "disabled" },
+      { label: "Real GitHub and CircleCI", value: "real" },
     ],
-  }) as SetupMode;
+  }) as ProviderMode;
   const markdownExport = flags.markdownExport ?? await prompt.confirm({
     message: "Enable Markdown/Obsidian export?",
     defaultValue: false,
@@ -112,12 +112,12 @@ export async function runSetupWizard({
     detectedRepo,
     interactionMode: "interactive",
     acceptedDefaults: acceptedDefaultsFromFlags(flags),
-    mode,
+    mode: "server",
     host: flags.host,
     port: flags.port,
     baseUrl,
     persistence: flags.persistence,
-    providerMode: flags.providerMode,
+    providerMode,
     repoPath,
     repoAllowlist,
     defaultBranch,
