@@ -133,11 +133,79 @@ interface PersistedState {
   idempotencyEntries?: Array<[string, IdempotencyEntry]>;
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isPersistedState(value: unknown): value is PersistedState {
+  return isObject(value) && Array.isArray(value.tasks);
+}
+
+function isLegacyTaskRecord(value: unknown): value is TaskRecord {
+  if (!isObject(value)) return false;
+  if (typeof value.id !== "string" || typeof value.identifier !== "string" || typeof value.title !== "string") return false;
+  if (typeof value.status !== "string" || typeof value.priority !== "string") return false;
+  if (typeof value.updatedAt !== "string" || typeof value.createdAt !== "string" || typeof value.version !== "number") return false;
+  if (!Array.isArray(value.availableActions) || !Array.isArray(value.acceptanceCriteria) || !Array.isArray(value.submissions)) return false;
+  if (!isObject(value.assignee) || typeof value.assignee.id !== "string" || typeof value.assignee.name !== "string") return false;
+  if (!isObject(value.links) || typeof value.links.issue !== "string") return false;
+  if (!isObject(value.context) || typeof value.context.goal !== "string") return false;
+  return true;
+}
+
+function loadLegacyJsonlState(content: string): PersistedState | null {
+  const tasks: TaskRecord[] = [];
+
+  for (const line of content.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    let parsedLine: unknown;
+    try {
+      parsedLine = JSON.parse(trimmed) as unknown;
+    } catch {
+      return null;
+    }
+
+    if (!isLegacyTaskRecord(parsedLine)) {
+      return null;
+    }
+
+    tasks.push(parsedLine);
+  }
+
+  return tasks.length > 0 ? { tasks, idempotencyEntries: [] } : null;
+}
+
 function loadState(storagePath: string | undefined): PersistedState {
   if (!storagePath || !existsSync(storagePath)) return {};
   const content = readFileSync(storagePath, "utf8");
   if (!content.trim()) return {};
-  return JSON.parse(content) as PersistedState;
+
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (isPersistedState(parsed)) {
+      return parsed;
+    }
+    if (isLegacyTaskRecord(parsed)) {
+      return {
+        tasks: [parsed],
+        idempotencyEntries: [],
+      };
+    }
+    throw new Error(`Unsupported TaskStore state format in ${storagePath}`);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+
+    const legacyState = loadLegacyJsonlState(content);
+    if (legacyState) {
+      return legacyState;
+    }
+
+    throw error;
+  }
 }
 
 function loadTasks(state: PersistedState): Map<string, TaskRecord> {
