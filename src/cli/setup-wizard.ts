@@ -59,7 +59,7 @@ export async function runSetupWizard({
       "- GitHub remote repository: will be stored as the initial allowed GitHub repository.",
       "- Default branch: branch AgentRail assumes for new work and pull requests.",
       "- Local API base URL: where local agents call the AgentRail API server.",
-      "- Provider mode: disabled writes a server-only config until you wire live providers; real enables GitHub and CircleCI placeholders now, but tokens still stay blank during init so secrets do not get echoed back into the terminal or committed beside repo-scoped setup files.",
+      "- GitHub and CircleCI tokens: init writes placeholders now, but live secrets still stay blank during setup so they do not get echoed back into the terminal or committed beside repo-scoped setup files.",
       "- Markdown/Obsidian export: optional read-only notes written under `.agentrail/notes`.",
     ].join("\n"),
   });
@@ -94,14 +94,7 @@ export async function runSetupWizard({
     }),
     detectedBaseUrl,
   );
-  const providerMode = flags.providerMode ?? await prompt.select({
-    message: "Provider mode",
-    defaultValue: "disabled",
-    choices: [
-      { label: "Disabled until configured", value: "disabled" },
-      { label: "Real GitHub and CircleCI", value: "real" },
-    ],
-  }) as ProviderMode;
+  const providerMode = flags.providerMode ?? "real";
   const markdownExport = flags.markdownExport ?? await prompt.confirm({
     message: "Enable Markdown/Obsidian export?",
     defaultValue: false,
@@ -128,7 +121,7 @@ export async function runSetupWizard({
   await prompt.note({
     title: "Before you confirm",
     body: [
-      "Review setup plan:",
+      "Wait setup wizard will do:",
       ...planLines.map((line) => `- ${line}`),
       "",
       "Nothing is written until you answer yes.",

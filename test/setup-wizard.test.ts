@@ -26,7 +26,6 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
     { kind: "input", value: "custom/agentrail" },
     { kind: "input", value: "develop" },
     { kind: "input", value: "http://127.0.0.1:4100" },
-    { kind: "select", value: "disabled" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
   ]);
@@ -52,14 +51,14 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   });
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "select", "confirm", "confirm"]);
+  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "confirm", "confirm"]);
   assert.equal(prompt.notes[0]?.title, "What these settings do");
   assert.match(prompt.notes[0]?.body ?? "", /Target GitHub repo/);
   assert.match(prompt.notes[0]?.body ?? "", /GitHub remote/);
-  assert.match(prompt.notes[0]?.body ?? "", /Provider mode/);
+  assert.match(prompt.notes[0]?.body ?? "", /GitHub and CircleCI tokens/);
   assert.equal(prompt.messages[0], "Local git repo detected: /tmp/agentrail");
   assert.equal(prompt.notes[1]?.title, "Before you confirm");
-  assert.match(prompt.notes[1]?.body ?? "", /Review setup plan:/);
+  assert.match(prompt.notes[1]?.body ?? "", /(Review setup plan:|Wait setup wizard will do:)/);
   assert.match(prompt.notes[1]?.body ?? "", /Write \.agentrail\/config\.json/);
   assert.match(prompt.notes[1]?.body ?? "", /Leave \.agentrail\/agent\.env for the later registration step only/);
   assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
@@ -81,6 +80,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.deepEqual(writes[0]?.config.targetRepo.allowlist, ["custom/agentrail"]);
   assert.equal(writes[0]?.config.targetRepo.defaultBranch, "develop");
   assert.equal(writes[0]?.config.server.baseUrl, "http://127.0.0.1:4100");
+  assert.equal(writes[0]?.config.providers.github.mode, "real");
 });
 
 test("runCli lets the user cancel instead of writing files at the final confirmation step", async () => {
@@ -91,7 +91,6 @@ test("runCli lets the user cancel instead of writing files at the final confirma
     { kind: "input", value: detectedRepo.remoteSlug ?? detectedRepo.repoPath },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
-    { kind: "select", value: "disabled" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: false },
   ]);
@@ -168,7 +167,7 @@ test("createPromptSession wraps Clack with AgentRail branding", async () => {
       },
       select: async (options) => {
         calls.push(["select", options]);
-        return "disabled" as any;
+        return "real" as any;
       },
       confirm: async () => true,
       text: async () => "",
@@ -181,20 +180,19 @@ test("createPromptSession wraps Clack with AgentRail branding", async () => {
   });
 
   const value = await session.select({
-    message: "Provider mode",
-    defaultValue: "disabled",
+    message: "GitHub remote",
+    defaultValue: "real",
     choices: [
-      { value: "disabled", label: "Disabled until configured" },
       { value: "real", label: "Real GitHub and CircleCI" },
     ],
   });
 
-  assert.equal(value, "disabled");
+  assert.equal(value, "real");
   assert.equal(calls[0][0], "intro");
   assert.match(String(calls[0][1]), /Local setup wizard/i);
   assert.match(String(calls[0][1]), /\n/);
   assert.equal(calls[1][0], "select");
-  assert.equal((calls[1][1] as { message: string }).message, "Provider mode");
+  assert.equal((calls[1][1] as { message: string }).message, "GitHub remote");
 });
 
 test("createPromptSession forwards explanatory notes to Clack", async () => {
@@ -203,7 +201,7 @@ test("createPromptSession forwards explanatory notes to Clack", async () => {
     output: createMemoryWriter() as never,
     clack: {
       intro() {},
-      select: async () => "disabled" as any,
+      select: async () => "real" as any,
       confirm: async () => true,
       text: async () => "",
       note(message, title) {
@@ -230,7 +228,7 @@ test("createPromptSession forwards inline messages to Clack log.message", async 
     output: createMemoryWriter() as never,
     clack: {
       intro() {},
-      select: async () => "disabled" as any,
+      select: async () => "real" as any,
       confirm: async () => true,
       text: async () => "",
       note() {},
@@ -258,7 +256,7 @@ test("createPromptSession passes detected defaults through the Clack text placeh
     output: createMemoryWriter() as never,
     clack: {
       intro() {},
-      select: async () => "disabled" as any,
+      select: async () => "real" as any,
       confirm: async () => true,
       text: async (options) => {
         calls.push(["text", options]);
@@ -305,8 +303,8 @@ test("createPromptSession converts Clack cancellation into a typed error", async
 
   await assert.rejects(
     () => session.select({
-      message: "Provider mode",
-      choices: [{ value: "disabled", label: "Disabled" }],
+      message: "GitHub remote",
+      choices: [{ value: "real", label: "Real" }],
     }),
     PromptCancelledError,
   );

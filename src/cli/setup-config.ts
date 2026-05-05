@@ -1,7 +1,7 @@
 import path from "node:path";
 
-export type SetupMode = "demo" | "server";
-export type ProviderMode = "demo" | "real" | "disabled";
+export type SetupMode = "server";
+export type ProviderMode = "real" | "disabled";
 export type PersistenceKind = "file" | "memory";
 export type InteractionMode = "interactive" | "non_interactive" | "print_only";
 
@@ -89,7 +89,7 @@ export function createSetupConfig({
   detectedRepo,
   interactionMode,
   acceptedDefaults,
-  mode = "demo",
+  mode = "server",
   host,
   port,
   baseUrl,
@@ -106,7 +106,7 @@ export function createSetupConfig({
     port,
     baseUrl,
   });
-  const resolvedProviderMode = providerMode ?? (mode === "server" ? "real" : "demo");
+  const resolvedProviderMode = providerMode ?? "real";
   const allowlist = repoAllowlist?.length
     ? repoAllowlist
     : [detectedRepo.remoteSlug ?? repoRoot];
@@ -188,12 +188,15 @@ export function buildInitCommand(config: SetupConfig): string {
     `--mode ${config.mode}`,
     `--base-url ${config.server.baseUrl}`,
     `--port ${config.server.port}`,
-    `--provider-mode ${config.providers.github.mode}`,
     `--persistence ${config.persistence.kind}`,
     `--repo ${quoteShell(config.targetRepo.path, { force: true })}`,
     `--repo-allowlist ${config.targetRepo.allowlist.map(value => quoteShell(value)).join(",")}`,
     `--default-branch ${quoteShell(config.targetRepo.defaultBranch)}`,
   ];
+
+  if (config.providers.github.mode !== "real") {
+    parts.push(`--provider-mode ${config.providers.github.mode}`);
+  }
 
   if (config.exports.markdown.enabled) {
     parts.push("--markdown-export");

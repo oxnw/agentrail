@@ -64,7 +64,7 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.match(readme, /`GITHUB_TOKEN`/);
   assert.match(readme, /`CIRCLECI_TOKEN`/);
   assert.match(readme, /`CIRCLECI_WEBHOOK_SECRET`/);
-  assert.match(readme, /disabled provider mode keeps the generated config server-only/i);
+  assert.match(readme, /AgentRail expects `GITHUB_TOKEN`/i);
   assert.match(readme, /does not prompt for live provider tokens because init is designed to stay non-secret/i);
   assert.match(readme, /mode-0600 boundary for agent and provider credentials/i);
 });
