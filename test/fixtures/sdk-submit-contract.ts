@@ -1,4 +1,4 @@
-import type { TaskSubmitRequest } from "../../sdk/typescript/src/index.js";
+import type { TaskSubmitRequest } from "../../sdk/typescript/src/index.ts";
 
 const adapterManagedSubmit: TaskSubmitRequest = {
   summary: "Implemented the assigned task and pushed commits to the task branch.",

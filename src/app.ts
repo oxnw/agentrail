@@ -3,21 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { AgentAuthStore } from "./agent-auth-store.js";
-import { AgentAuthError } from "./agent-auth-store.js";
-import { CiStatusSourceError } from "./github-actions-ci-adapter.js";
-import { ReviewFeedbackSourceError } from "./github-review-feedback-adapter.js";
-import { RollbackSourceError } from "./github-rollback-adapter.js";
-import { TaskLifecycleError } from "./task-lifecycle-errors.js";
-import { CursorExpiredError, matchesFilters, TaskEventStore } from "./task-event-store.js";
+import type { AgentAuthStore } from "./agent-auth-store.ts";
+import { AgentAuthError } from "./agent-auth-store.ts";
+import { CiStatusSourceError } from "./github-actions-ci-adapter.ts";
+import { ReviewFeedbackSourceError } from "./github-review-feedback-adapter.ts";
+import { RollbackSourceError } from "./github-rollback-adapter.ts";
+import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
+import { CursorExpiredError, matchesFilters, TaskEventStore } from "./task-event-store.ts";
 import {
   ConflictError,
   TaskWebhookSubscriptionStore,
   ValidationError
-} from "./task-webhook-store.js";
-import { WaitlistStore, WaitlistValidationError } from "./waitlist-store.js";
-import { createOperationTimer } from "./structured-logger.js";
-import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.js";
+} from "./task-webhook-store.ts";
+import { WaitlistStore, WaitlistValidationError } from "./waitlist-store.ts";
+import { createOperationTimer } from "./structured-logger.ts";
+import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

@@ -1,11 +1,11 @@
 // @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "../src/app.js";
+import { createServer } from "../src/app.ts";
 import { createMockGitHubServer } from "./mock-github-server.js";
-import { TaskEventStore } from "../src/task-event-store.js";
-import { GitHubSubmitAdapter } from "../src/github-submit-adapter.js";
-import { createAgentShipCycleDemoStore } from "../src/agent-ship-cycle-demo.js";
+import { TaskEventStore } from "../src/task-event-store.ts";
+import { GitHubSubmitAdapter } from "../src/github-submit-adapter.ts";
+import { createAgentShipCycleDemoStore } from "../src/agent-ship-cycle-demo.ts";
 
 const taskId = "tsk_DEMOISSUETOSHIP01";
 const mockGithubUrl = "http://127.0.0.1:9999";

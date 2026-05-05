@@ -1,4 +1,4 @@
-export { AgentRailClient, DEFAULT_BASE_URL } from "./client.js";
+export { AgentRailClient, DEFAULT_BASE_URL } from "./client.ts";
 export {
   AgentRailError,
   ConflictError,
@@ -7,6 +7,6 @@ export {
   RateLimitError,
   UnauthorizedError,
   ValidationError,
-} from "./errors.js";
-export { parseWebhookEvent, verifyWebhookSignature } from "./webhooks.js";
-export type * from "./types.js";
+} from "./errors.ts";
+export { parseWebhookEvent, verifyWebhookSignature } from "./webhooks.ts";
+export type * from "./types.ts";

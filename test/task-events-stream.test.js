@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 
-import { createServer } from "../src/app.js";
-import { TaskEventStore } from "../src/task-event-store.js";
+import { createServer } from "../src/app.ts";
+import { TaskEventStore } from "../src/task-event-store.ts";
 
 function createTaskUpdatedEvent(overrides = {}) {
   const event = {

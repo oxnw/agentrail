@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile } from "node:fs/promises";
 
-import { TaskEventStore } from "../src/task-event-store.js";
+import { TaskEventStore } from "../src/task-event-store.ts";
 
 test("TaskEventStore persists appended events to an append-only local outbox file", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-store-"));

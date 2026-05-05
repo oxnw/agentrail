@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { GitHubSubmitAdapter } from "../src/github-submit-adapter.js";
+import { GitHubSubmitAdapter } from "../src/github-submit-adapter.ts";
 
 const taskId = "tsk_DEMOISSUETOSHIP01";
 const idempotencyKey = "idem-ship-001";

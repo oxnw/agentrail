@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { MultiCiStatusAdapter } from "../src/multi-ci-status-adapter.js";
+import { MultiCiStatusAdapter } from "../src/multi-ci-status-adapter.ts";
 
 test("MultiCiStatusAdapter returns the first provider result and forwards webhooks to capable adapters", async () => {
   const calls: string[] = [];

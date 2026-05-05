@@ -1,6 +1,6 @@
 /** GitHub issue intake adapter: maps a GitHub issue to the AgentRail task store. */
-import { TaskLifecycleError } from "./task-lifecycle-errors.js";
-import type { AgentTaskQueue } from "./agent-task-queue.js";
+import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
+import type { AgentTaskQueue } from "./agent-task-queue.ts";
 
 export interface GitHubIssueIntakePayload {
   issueNumber: number;

@@ -1,1 +1,0 @@
-export * from "./github-issue-intake-adapter.ts";

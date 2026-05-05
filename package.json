@@ -8,8 +8,8 @@
     "node": ">=22.6.0"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "demo:server": "AGENTRAIL_MODE=demo node src/server.js",
+    "start": "node src/server.ts",
+    "demo:server": "AGENTRAIL_MODE=demo node src/server.ts",
     "demo": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-e2e-demo.mjs",
     "demo:json": "npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build && node scripts/agentrail-e2e-demo.mjs --json",
     "lint:openapi": "spectral lint docs/api/task-lifecycle.openapi.yaml docs/api/intake-routing-admin.openapi.yaml -r .spectral.yaml",

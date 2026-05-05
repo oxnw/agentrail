@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { TaskLifecycleError } from "./task-lifecycle-errors.js";
-import { TaskStore, type TaskRecord } from "./task-store.js";
-import type { TaskEventStore } from "./task-event-store.js";
+import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
+import { TaskStore, type TaskRecord } from "./task-store.ts";
+import type { TaskEventStore } from "./task-event-store.ts";
 
 export interface AgentTaskQueueOptions {
   now?: () => Date;

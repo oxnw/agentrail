@@ -3,8 +3,6 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "allowJs": true,
-    "checkJs": true,
     "noEmit": true,
     "strict": false,
     "skipLibCheck": true,
@@ -15,7 +13,7 @@
     ]
   },
   "include": [
-    "src/**/*",
-    "test/**/*"
+    "src/**/*.ts",
+    "test/**/*.ts"
   ]
 }

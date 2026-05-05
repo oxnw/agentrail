@@ -3,9 +3,9 @@ import { once } from "node:events";
 import { performance } from "node:perf_hooks";
 
 import { AgentRailClient } from "../sdk/typescript/dist/index.js";
-import { createAgentShipCycleDemoStore } from "../src/agent-ship-cycle-demo.js";
-import { createServer } from "../src/app.js";
-import { TaskEventStore } from "../src/task-event-store.js";
+import { createAgentShipCycleDemoStore } from "../src/agent-ship-cycle-demo.ts";
+import { createServer } from "../src/app.ts";
+import { TaskEventStore } from "../src/task-event-store.ts";
 
 const JSON_OUTPUT = process.argv.includes("--json");
 

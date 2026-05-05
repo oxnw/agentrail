@@ -4,10 +4,10 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createHmac } from "node:crypto";
 
-import { createServer } from "../src/app.js";
-import { CircleCiStatusAdapter } from "../src/circleci-status-adapter.js";
-import { CiStatusSourceError } from "../src/github-actions-ci-adapter.js";
-import { TaskEventStore } from "../src/task-event-store.js";
+import { createServer } from "../src/app.ts";
+import { CircleCiStatusAdapter } from "../src/circleci-status-adapter.ts";
+import { CiStatusSourceError } from "../src/github-actions-ci-adapter.ts";
+import { TaskEventStore } from "../src/task-event-store.ts";
 import {
   circleCiTaskId,
   circleCiTaskSource,

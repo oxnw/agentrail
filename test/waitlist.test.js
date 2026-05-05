@@ -3,7 +3,7 @@ import http from "node:http";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { WaitlistStore, WaitlistValidationError } from "../src/waitlist-store.ts";
-import { createServer } from "../src/app.js";
+import { createServer } from "../src/app.ts";
 
 describe("WaitlistStore", () => {
   it("adds an entry with valid email", () => {
@@ -60,7 +60,7 @@ describe("POST /waitlist endpoint", () => {
   let baseUrl;
 
   before(async () => {
-    const { TaskEventStore } = await import("../src/task-event-store.js");
+    const { TaskEventStore } = await import("../src/task-event-store.ts");
     server = createServer({ store: new TaskEventStore() });
     await new Promise((resolve) => server.listen(0, resolve));
     const port = server.address().port;
@@ -127,7 +127,7 @@ describe("POST /waitlist email webhook", () => {
   let webhookStatusCode;
 
   before(async () => {
-    const { TaskEventStore } = await import("../src/task-event-store.js");
+    const { TaskEventStore } = await import("../src/task-event-store.ts");
 
     // Minimal webhook receiver — captures the last POST body and returns webhookStatusCode.
     webhookServer = http.createServer((req, res) => {

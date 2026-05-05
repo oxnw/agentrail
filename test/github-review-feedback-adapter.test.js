@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   GitHubReviewFeedbackAdapter,
   ReviewFeedbackSourceError
-} from "../src/github-review-feedback-adapter.js";
+} from "../src/github-review-feedback-adapter.ts";
 
 function mockFetch(routes) {
   return async (url) => {

@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import { CiStatusSourceError } from "./github-actions-ci-adapter.js";
+import { CiStatusSourceError } from "./github-actions-ci-adapter.ts";
 
 const DEFAULT_CIRCLECI_API_BASE_URL = "https://circleci.com/api/v2";
 const DEFAULT_PIPELINE_LIMIT = 20;

@@ -1,4 +1,4 @@
-import { TaskLifecycleError } from "./task-lifecycle-errors.js";
+import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 

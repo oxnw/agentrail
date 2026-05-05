@@ -1,9 +1,10 @@
 // @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { readFile } from "node:fs/promises";
 
 const removedInternalArtifacts = [
   "verify-browser.mjs",
@@ -67,3 +68,81 @@ test(".gitignore blocks local env files but keeps the public template", async ()
   assert.match(gitignore, /^\.env\.\*$/m);
   assert.match(gitignore, /^!\.env\.example$/m);
 });
+
+test("TypeScript source is canonical with no side-by-side JavaScript duplicates", async () => {
+  const duplicates = await findSideBySideSourceDuplicates(["src", "test", "sdk/typescript/src"]);
+
+  assert.deepEqual(duplicates, []);
+});
+
+test("TypeScript source duplicate guard scans nested directories", async (t) => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-duplicate-source-"));
+  t.after(() => rm(tempDir, { recursive: true, force: true }));
+
+  const nestedDir = path.join(tempDir, "nested", "adapters");
+  await mkdir(nestedDir, { recursive: true });
+  await writeFile(path.join(nestedDir, "provider.js"), "export const provider = null;\n");
+  await writeFile(path.join(nestedDir, "provider.ts"), "export const provider = null;\n");
+
+  assert.deepEqual(await findSideBySideSourceDuplicates([tempDir]), [
+    path.join(nestedDir, "provider.js"),
+    path.join(nestedDir, "provider.ts"),
+  ]);
+});
+
+test("runtime scripts execute TypeScript entrypoints directly", async () => {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+
+  assert.equal(packageJson.scripts.start, "node src/server.ts");
+  assert.equal(packageJson.scripts["demo:server"], "AGENTRAIL_MODE=demo node src/server.ts");
+  assert.match(packageJson.scripts["test:service"], /test\/\*\.test\.ts/);
+  assert.doesNotMatch(JSON.stringify(packageJson.scripts), /src\/[^"]+\.js/);
+
+  const tsconfig = JSON.parse(await readFile("tsconfig.json", "utf8"));
+  assert.equal(tsconfig.compilerOptions.allowJs, undefined);
+  assert.equal(tsconfig.compilerOptions.checkJs, undefined);
+});
+
+async function findSideBySideSourceDuplicates(roots) {
+  const duplicates = [];
+
+  for (const root of roots) {
+    const files = await listSourceFiles(root);
+    const stemsByExtension = new Map();
+
+    for (const filePath of files) {
+      const match = filePath.match(/^(.*)\.(js|ts)$/);
+      if (!match) continue;
+
+      const [, stem, extension] = match;
+      const extensions = stemsByExtension.get(stem) ?? new Set();
+      extensions.add(extension);
+      stemsByExtension.set(stem, extensions);
+    }
+
+    for (const [stem, extensions] of stemsByExtension) {
+      if (extensions.has("js") && extensions.has("ts")) {
+        duplicates.push(`${stem}.js`);
+        duplicates.push(`${stem}.ts`);
+      }
+    }
+  }
+
+  return duplicates.sort();
+}
+
+async function listSourceFiles(root) {
+  const entries = await readdir(root, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listSourceFiles(entryPath));
+    } else if (entry.isFile() && /\.(js|ts)$/.test(entry.name)) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
+}
