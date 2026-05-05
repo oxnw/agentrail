@@ -97,7 +97,7 @@ Save the returned `data.apiKey` value in your shell:
 
 ```bash
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=ar_live_replace_with_bootstrap_secret
+export AGENTRAIL_API_KEY=<paste-the-returned-data.apiKey-here>
 ```
 
 ## 4. Make the Same Calls by Hand
@@ -151,6 +151,9 @@ curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_SELFHOSTED000000000001/ship" \
   }'
 ```
 
+Use the task's current `headSha` from `GET /tasks/mine` or the GitHub pull
+request head commit for `expectedHeadSha`.
+
 ## 5. Give the Flow to a Coding Agent
 
 Open the repository where the agent should edit code. Then start the agent with
@@ -159,7 +162,7 @@ the AgentRail environment variables and the operating recipe:
 ```bash
 cd /path/to/target-repo
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=ar_live_replace_with_bootstrap_secret
+export AGENTRAIL_API_KEY=<paste-the-returned-data.apiKey-here>
 ```
 
 Claude Code:

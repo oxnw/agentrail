@@ -126,15 +126,17 @@ export async function runSetupWizard({
       ? "write"
       : "cancelled";
 
+  if (action === "write") {
     await prompt.note({
       title: "Next steps",
       body: [
         "Add tokens to .agentrail/agent.env file in this repository",
         "Template at .agentrail/agent.env.example",
-        "\n",
-        " - Happy building!"
+        "",
+        "Happy building!",
       ].join("\n"),
     });
+  }
 
   return {
     action,

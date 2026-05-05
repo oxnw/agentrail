@@ -16,15 +16,26 @@ Start the local AgentRail API from the repository root after configuring
 `GITHUB_TOKEN`, `AGENTRAIL_TASK_STORE_PATH`, and `AGENTRAIL_TASK_SOURCES`:
 
 ```bash
+export GITHUB_TOKEN=ghp_your_token
+export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
+export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
 npm start
 ```
+
+Create `AGENTRAIL_API_KEY` via the Authentication flow below before running the
+client examples.
 
 ```typescript
 import { AgentRailClient } from "@agentrail-core/sdk";
 
+const apiKey = process.env.AGENTRAIL_API_KEY;
+if (!apiKey) {
+  throw new Error("Set AGENTRAIL_API_KEY to the returned data.apiKey value.");
+}
+
 const client = new AgentRailClient({
   baseUrl: "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY!,
+  apiKey,
 });
 
 // List assigned tasks
@@ -109,9 +120,14 @@ console.log(`API Key: ${key.data.apiKey}`);
 The client retries failed requests with exponential backoff. Customize behavior:
 
 ```typescript
+const apiKey = process.env.AGENTRAIL_API_KEY;
+if (!apiKey) {
+  throw new Error("Set AGENTRAIL_API_KEY before constructing AgentRailClient.");
+}
+
 const client = new AgentRailClient({
   baseUrl: process.env.AGENTRAIL_BASE_URL ?? "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY!,
+  apiKey,
   retry: {
     maxAttempts: 5,          // default: 3
     initialDelayMs: 500,      // default: 1000
