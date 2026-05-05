@@ -1,4 +1,4 @@
-import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
+import { TaskLifecycleError } from "../../src/task-lifecycle-errors.ts";
 
 export const DEMO_TASK_ID = "tsk_DEMOISSUETOSHIP01";
 export const DEMO_HEAD_SHA = "b5bc7f86b9ad94f4f18f83d28bdf3e27a31e53a0";

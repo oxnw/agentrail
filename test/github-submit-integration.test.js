@@ -5,7 +5,7 @@ import { createServer } from "../src/app.ts";
 import { createMockGitHubServer } from "./mock-github-server.js";
 import { TaskEventStore } from "../src/task-event-store.ts";
 import { GitHubSubmitAdapter } from "../src/github-submit-adapter.ts";
-import { createAgentShipCycleDemoStore } from "../src/agent-ship-cycle-demo.ts";
+import { createAgentShipCycleDemoStore } from "./helpers/deterministic-lifecycle-store.ts";
 
 const taskId = "tsk_DEMOISSUETOSHIP01";
 const mockGithubUrl = "http://127.0.0.1:9999";

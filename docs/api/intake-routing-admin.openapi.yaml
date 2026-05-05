@@ -14,7 +14,7 @@ info:
     Worker agents consume assigned tasks through `task-lifecycle.openapi.yaml`.
 servers:
   - url: http://127.0.0.1:3000
-    description: Local OSS demo server
+    description: Local OSS self-hosted server
   - url: https://api.agentrail.app/v1
     description: Future AgentRail Cloud API
 security:

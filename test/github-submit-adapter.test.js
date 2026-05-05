@@ -218,7 +218,7 @@ test("finds existing PR by head branch match", async () => {
   assert.equal(result.data.prNumber, 7);
 });
 
-test("delegates to demo store when no task source exists", async () => {
+test("delegates to the fallback lifecycle store when no task source exists", async () => {
   let delegateCalled = false;
   const delegate = {
     submitTask: async () => {
@@ -235,7 +235,7 @@ test("delegates to demo store when no task source exists", async () => {
   });
 
   await adapter.submitTask("tsk_other", { summary: "test", artifacts: [{}] }, "key1");
-  assert.ok(delegateCalled, "should delegate to demo store");
+  assert.ok(delegateCalled, "should delegate to the fallback lifecycle store");
 });
 
 test("requires Idempotency-Key header", async () => {
