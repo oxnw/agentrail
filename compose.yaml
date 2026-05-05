@@ -7,7 +7,7 @@ services:
       AGENTRAIL_PUBLIC_BASE_URL: http://127.0.0.1:3000
       AGENTRAIL_EVENT_STORE_PATH: /data/task-events.jsonl
       AGENTRAIL_TASK_SOURCES: "{}"
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     ports:
       - "3000:3000"
     volumes:

@@ -239,8 +239,10 @@ agentrail server start
 ```
 
 `agentrail server start` reads `.agentrail/config.json`, binds the local server
-to `127.0.0.1` by default, and refuses real provider mode when required
-provider token env vars are absent.
+to `127.0.0.1` by default, and exits non-zero when real provider mode is
+configured but required provider token env vars are absent. The CLI prints a
+specific error such as `Missing required provider token: GITHUB_TOKEN` instead
+of silently falling back.
 
 ### Phase 2: Agent Registration
 

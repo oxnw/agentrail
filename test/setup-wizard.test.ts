@@ -109,6 +109,8 @@ test("runCli lets the user cancel instead of writing files at the final confirma
   assert.equal(exitCode, 1);
   assert.equal(didWrite, false);
   assert.match(stderr.toString(), /Setup cancelled\./);
+  assert.equal(prompt.notes.length, 1);
+  assert.equal(prompt.notes[0]?.title, "Before you confirm");
 });
 
 test("runCli requires explicit flags in non-TTY mode", async () => {

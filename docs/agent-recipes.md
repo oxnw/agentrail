@@ -128,9 +128,14 @@ human typing prompts into a CLI.
 ```ts
 import { AgentRailClient } from "@agentrail-core/sdk";
 
+const apiKey = process.env.AGENTRAIL_API_KEY;
+if (!apiKey) {
+  throw new Error("Set AGENTRAIL_API_KEY before starting the harness.");
+}
+
 const client = new AgentRailClient({
   baseUrl: process.env.AGENTRAIL_BASE_URL ?? "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY!,
+  apiKey,
 });
 
 const tasks = await client.listMyTasks({ status: "in_progress", limit: 1 });
@@ -167,9 +172,13 @@ from agentrail import TaskSubmitRequest
 
 
 async def main():
+    api_key = os.getenv("AGENTRAIL_API_KEY")
+    if not api_key:
+        raise ValueError("Set AGENTRAIL_API_KEY before starting the harness.")
+
     async with AgentRailClient(
         base_url=os.getenv("AGENTRAIL_BASE_URL", "http://127.0.0.1:3000"),
-        api_key=os.environ["AGENTRAIL_API_KEY"],
+        api_key=api_key,
     ) as client:
         tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS, limit=1)
         if not tasks.data:

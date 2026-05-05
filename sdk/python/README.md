@@ -18,8 +18,14 @@ Start the local AgentRail API from the repository root after configuring
 `GITHUB_TOKEN`, `AGENTRAIL_TASK_STORE_PATH`, and `AGENTRAIL_TASK_SOURCES`:
 
 ```bash
+export GITHUB_TOKEN=ghp_your_token
+export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
+export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
 npm start
 ```
+
+Create `AGENTRAIL_API_KEY` via the Authentication flow below before running the
+client examples.
 
 ```python
 import asyncio
@@ -27,9 +33,13 @@ import os
 from agentrail import AgentRailClient, TaskStatus
 
 async def main():
+    api_key = os.getenv("AGENTRAIL_API_KEY")
+    if not api_key:
+        raise ValueError("Set AGENTRAIL_API_KEY to the returned API key secret.")
+
     async with AgentRailClient(
         base_url="http://127.0.0.1:3000",
-        api_key=os.environ["AGENTRAIL_API_KEY"],
+        api_key=api_key,
     ) as client:
         # List assigned tasks
         tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS)
@@ -43,8 +53,8 @@ async def main():
 asyncio.run(main())
 ```
 
-Use the returned `data.apiKey` value from key creation; it starts with
-`ar_live_`. The `akey_...` value is the key ID, not the secret.
+Use the Authentication section below to create `AGENTRAIL_API_KEY` before
+running the quickstart snippet.
 
 ## Authentication
 
@@ -63,7 +73,7 @@ from agentrail import (
 
 async with AgentRailClient(
     base_url="http://127.0.0.1:3000",
-    api_key=os.environ["AGENTRAIL_API_KEY"],
+    api_key=os.getenv("AGENTRAIL_API_KEY", ""),
 ) as client:
     resp = await client.create_api_key(
         AgentApiKeyCreateRequest(
@@ -82,6 +92,9 @@ async with AgentRailClient(
     )
     print(resp.data.api_key)  # Store securely
 ```
+
+Use the returned `resp.data.api_key` value for later calls. Values that start
+with `akey_` are key ids, not secrets.
 
 ### Rotate a key
 

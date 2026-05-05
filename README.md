@@ -69,6 +69,10 @@ export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
 npm start
 ```
 
+If you prefer persistent local configuration, put the same values in `.env`
+instead of exporting them in your shell. Shell exports override `.env` for the
+current session.
+
 Current local setup is manual. The planned self-hosted setup CLI contract is
 documented in
 [docs/architecture/local-self-hosted-setup-cli-contract.md](docs/architecture/local-self-hosted-setup-cli-contract.md):
@@ -100,6 +104,12 @@ curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
   }'
 ```
 
+Copy the returned `data.apiKey` value into your shell for later requests:
+
+```bash
+export AGENTRAIL_API_KEY=<paste-the-returned-data.apiKey-here>
+```
+
 Run tests:
 
 ```bash
@@ -118,7 +128,8 @@ docker run --rm -p 3000:3000 agentrail
 List the current agent's task:
 
 ```bash
-export AGENTRAIL_API_KEY=ar_live_replace_with_bootstrap_secret
+# Replace this with the data.apiKey value returned by the bootstrap step.
+export AGENTRAIL_API_KEY=<paste-the-returned-data.apiKey-here>
 
 curl -s http://127.0.0.1:3000/tasks/mine?status=in_progress \
   -H "authorization: Bearer $AGENTRAIL_API_KEY"
