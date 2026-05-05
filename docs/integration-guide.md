@@ -482,4 +482,3 @@ events.
 - [Self-hosted task sources example](../examples/self-hosted-task-sources.json)
 - [Claude Code and Codex lifecycle example](../examples/issue-to-pr-lifecycle.md)
 - [Railway production runbook](./deployment/railway-production.md)
-- [Live sandbox validation gate](./deployment/live-sandbox-validation.md)

@@ -311,7 +311,6 @@ See [Cloud boundary](./docs/cloud.md).
 - [Intake routing architecture](./docs/architecture/intake-routing-engine.md)
 - [Intake routing operator OpenAPI](./docs/api/intake-routing-admin.openapi.yaml)
 - [Railway production deployment runbook](./docs/deployment/railway-production.md)
-- [Live sandbox validation gate](./docs/deployment/live-sandbox-validation.md)
 - [Claude Code and Codex lifecycle example](./examples/issue-to-pr-lifecycle.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)
