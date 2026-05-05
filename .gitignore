@@ -3,9 +3,11 @@ AGENTS.md
 .env
 .env.*
 !.env.example
+!.env.sandbox.example
 .idea/
 .vscode/
 browser-artifacts/
+.agentrail/
 
 node_modules/
 dist/
@@ -51,7 +53,6 @@ index-light.html
 !landing/index-light.html
 original-index-light.html
 docs/dogfood-setup.md
-docs/cloud.md
 docs/superpowers/
 docs/adr/
 ROADMAP.md

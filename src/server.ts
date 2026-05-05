@@ -171,7 +171,6 @@ function buildRuntime({
   const submitAdapter = new GitHubSubmitAdapter({
     taskSources,
     githubToken,
-    apiBaseUrl: publicBaseUrl,
   });
 
   const agentQueue = new AgentTaskQueue({
