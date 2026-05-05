@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
@@ -163,9 +164,14 @@ async function finalizeInit({
     repoRoot: config.targetRepo.path,
     config,
   });
+  const envPath = path.join(config.targetRepo.path, ".agentrail", "agent.env");
+  const envExamplePath = path.join(config.targetRepo.path, ".agentrail", "agent.env.example");
 
   stdout.write(`Wrote setup files:\n${result.writtenPaths.map((filePath) => `- ${filePath}`).join("\n")}\n`);
   stdout.write("`.agentrail/agent.env` is intentionally not created during init; it stays the later mode-0600 boundary for agent and provider secrets.\n");
+  stdout.write(`Next step: add your provider tokens to ${envPath} when you wire live providers.\n`);
+  stdout.write(`Use ${envExamplePath} as the template.\n`);
+  stdout.write("Happy hacking!\n");
   return 0;
 }
 

@@ -26,7 +26,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
     { kind: "input", value: "custom/agentrail" },
     { kind: "input", value: "develop" },
     { kind: "input", value: "http://127.0.0.1:4100" },
-    { kind: "select", value: "demo" },
+    { kind: "select", value: "disabled" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
   ]);
@@ -56,18 +56,23 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.equal(prompt.notes[0]?.title, "What these settings do");
   assert.match(prompt.notes[0]?.body ?? "", /Target GitHub repo/);
   assert.match(prompt.notes[0]?.body ?? "", /GitHub remote/);
+  assert.match(prompt.notes[0]?.body ?? "", /Provider mode/);
   assert.equal(prompt.messages[0], "Local git repo detected: /tmp/agentrail");
   assert.equal(prompt.notes[1]?.title, "Before you confirm");
   assert.match(prompt.notes[1]?.body ?? "", /Review setup plan:/);
   assert.match(prompt.notes[1]?.body ?? "", /Write \.agentrail\/config\.json/);
   assert.match(prompt.notes[1]?.body ?? "", /Leave \.agentrail\/agent\.env for the later registration step only/);
   assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
-  assert.equal(prompt.interactions[1]?.message, "GitHub remote (owner/repo)");
+  assert.equal(prompt.interactions[1]?.message, "GitHub remote repository:");
   assert.doesNotMatch(stdout.toString(), /AgentRail local setup/i);
   assert.doesNotMatch(stdout.toString(), /Local git repo detected:/);
   assert.doesNotMatch(stdout.toString(), /Review setup plan/i);
   assert.doesNotMatch(stdout.toString(), /Detected:/);
   assert.match(stdout.toString(), /Wrote setup files:/);
+  assert.match(stdout.toString(), /Next step: add your provider tokens to/);
+  assert.match(stdout.toString(), /\/tmp\/custom-agentrail\/\.agentrail\/agent\.env/);
+  assert.match(stdout.toString(), /agent\.env\.example/);
+  assert.match(stdout.toString(), /Happy hacking!/);
   assert.doesNotMatch(stdout.toString(), /Equivalent command:/);
   assert.equal(stderr.toString(), "");
   assert.equal(writes.length, 1);
@@ -85,7 +90,7 @@ test("runCli lets the user cancel instead of writing files at the final confirma
     { kind: "input", value: detectedRepo.remoteSlug ?? detectedRepo.repoPath },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
-    { kind: "select", value: "demo" },
+    { kind: "select", value: "disabled" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: false },
   ]);
@@ -126,7 +131,7 @@ test("runCli requires explicit flags in non-TTY mode", async () => {
   assert.equal(exitCode, 1);
   assert.equal(stdout.toString(), "");
   assert.match(stderr.toString(), /non-tty setup requires explicit flags or --yes/i);
-  assert.match(stderr.toString(), /--mode demo/i);
+  assert.match(stderr.toString(), /--mode server/i);
   assert.match(stderr.toString(), /--repo \/tmp\/agentrail/i);
 });
 
@@ -149,7 +154,7 @@ test("runCli rejects unsafe --yes defaults", async () => {
   assert.equal(exitCode, 1);
   assert.equal(stdout.toString(), "");
   assert.match(stderr.toString(), /--yes is only allowed for safe local defaults/i);
-  assert.match(stderr.toString(), /provider mode/i);
+  assert.match(stderr.toString(), /gitignore/i);
 });
 
 test("createPromptSession wraps Clack with AgentRail branding", async () => {
@@ -162,7 +167,7 @@ test("createPromptSession wraps Clack with AgentRail branding", async () => {
       },
       select: async (options) => {
         calls.push(["select", options]);
-        return "demo";
+        return "disabled" as any;
       },
       confirm: async () => true,
       text: async () => "",
@@ -175,20 +180,20 @@ test("createPromptSession wraps Clack with AgentRail branding", async () => {
   });
 
   const value = await session.select({
-    message: "Setup mode",
-    defaultValue: "demo",
+    message: "Provider mode",
+    defaultValue: "disabled",
     choices: [
-      { value: "demo", label: "Demo, no provider tokens" },
-      { value: "server", label: "Self-hosted with real GitHub/CI providers" },
+      { value: "disabled", label: "Disabled until configured" },
+      { value: "real", label: "Real GitHub and CircleCI" },
     ],
   });
 
-  assert.equal(value, "demo");
+  assert.equal(value, "disabled");
   assert.equal(calls[0][0], "intro");
   assert.match(String(calls[0][1]), /Local setup wizard/i);
   assert.match(String(calls[0][1]), /\n/);
   assert.equal(calls[1][0], "select");
-  assert.equal((calls[1][1] as { message: string }).message, "Setup mode");
+  assert.equal((calls[1][1] as { message: string }).message, "Provider mode");
 });
 
 test("createPromptSession forwards explanatory notes to Clack", async () => {
@@ -197,7 +202,7 @@ test("createPromptSession forwards explanatory notes to Clack", async () => {
     output: createMemoryWriter() as never,
     clack: {
       intro() {},
-      select: async () => "demo",
+      select: async () => "disabled" as any,
       confirm: async () => true,
       text: async () => "",
       note(message, title) {
@@ -224,7 +229,7 @@ test("createPromptSession forwards inline messages to Clack log.message", async 
     output: createMemoryWriter() as never,
     clack: {
       intro() {},
-      select: async () => "demo",
+      select: async () => "disabled" as any,
       confirm: async () => true,
       text: async () => "",
       note() {},
@@ -252,7 +257,7 @@ test("createPromptSession passes detected defaults through the Clack text placeh
     output: createMemoryWriter() as never,
     clack: {
       intro() {},
-      select: async () => "demo",
+      select: async () => "disabled" as any,
       confirm: async () => true,
       text: async (options) => {
         calls.push(["text", options]);
@@ -299,8 +304,8 @@ test("createPromptSession converts Clack cancellation into a typed error", async
 
   await assert.rejects(
     () => session.select({
-      message: "Setup mode",
-      choices: [{ value: "demo", label: "Demo" }],
+      message: "Provider mode",
+      choices: [{ value: "disabled", label: "Disabled" }],
     }),
     PromptCancelledError,
   );
