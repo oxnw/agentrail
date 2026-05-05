@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { runCli } from "../src/cli/index.ts";
+import {
+  createPromptSession,
+  PromptCancelledError,
+  type ClackPromptsLike,
+} from "../src/cli/prompt.ts";
 import type { DetectedRepoContext } from "../src/cli/setup-config.ts";
 import type { PromptChoice, PromptSession } from "../src/cli/prompt.ts";
 
@@ -79,6 +84,76 @@ test("runCli rejects unsafe --yes defaults", async () => {
   assert.equal(stdout.toString(), "");
   assert.match(stderr.toString(), /--yes is only allowed for safe local defaults/i);
   assert.match(stderr.toString(), /provider mode/i);
+});
+
+test("createPromptSession wraps Clack with AgentRail branding", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const session = createPromptSession({
+    output: createMemoryWriter() as never,
+    clack: {
+      intro(title) {
+        calls.push(["intro", title]);
+      },
+      select: async (options) => {
+        calls.push(["select", options]);
+        return "demo";
+      },
+      confirm: async () => true,
+      text: async () => "",
+      note() {},
+      cancel() {},
+      isCancel() {
+        return false;
+      },
+    } satisfies ClackPromptsLike,
+  });
+
+  const value = await session.select({
+    message: "Setup mode",
+    defaultValue: "demo",
+    choices: [
+      { value: "demo", label: "Demo, no provider tokens" },
+      { value: "server", label: "Self-hosted with real GitHub/CI providers" },
+    ],
+  });
+
+  assert.equal(value, "demo");
+  assert.equal(calls[0][0], "intro");
+  assert.match(String(calls[0][1]), /AgentRail/i);
+  assert.equal(calls[1][0], "select");
+  assert.equal((calls[1][1] as { message: string }).message, "Setup mode");
+});
+
+test("createPromptSession converts Clack cancellation into a typed error", async () => {
+  const cancelToken = Symbol("cancel");
+  const calls: Array<[string, unknown]> = [];
+  const session = createPromptSession({
+    output: createMemoryWriter() as never,
+    clack: {
+      intro() {},
+      select: async () => cancelToken,
+      confirm: async () => true,
+      text: async () => "",
+      note() {},
+      cancel(message) {
+        calls.push(["cancel", message]);
+      },
+      isCancel(value) {
+        return value === cancelToken;
+      },
+    } satisfies ClackPromptsLike,
+  });
+
+  await assert.rejects(
+    () => session.select({
+      message: "Setup mode",
+      choices: [{ value: "demo", label: "Demo" }],
+    }),
+    PromptCancelledError,
+  );
+
+  assert.equal(calls[0][0], "cancel");
+  assert.match(String(calls[0][1]), /cancelled/i);
 });
 
 function createMemoryWriter() {

@@ -2,7 +2,7 @@
 
 import { pathToFileURL } from "node:url";
 
-import { createPromptSession, type PromptSession } from "./prompt.ts";
+import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
 import { detectRepoContext } from "./repo-detection.ts";
 import { buildInitCommand, createSetupConfig, validateSafeDefaults, type DetectedRepoContext } from "./setup-config.ts";
 import { writeSetupFiles, type WriteSetupFilesResult } from "./setup-files.ts";
@@ -129,6 +129,10 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
       writeFiles,
     });
   } catch (error) {
+    if (error instanceof PromptCancelledError) {
+      return 1;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     stderr.write(`${message}\n`);
     return 1;

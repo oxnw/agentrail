@@ -1,10 +1,53 @@
-import readline from "node:readline/promises";
+import * as clack from "@clack/prompts";
 import type { Readable, Writable } from "node:stream";
 
 export interface PromptChoice {
   label: string;
   value: string;
 }
+
+export interface ClackPromptsLike {
+  intro(title?: string, opts?: { input?: Readable; output?: Writable }): void;
+  select<T>(opts: {
+    message: string;
+    options: Array<{
+      value: T;
+      label?: string;
+      hint?: string;
+      disabled?: boolean;
+    }>;
+    initialValue?: T;
+    input?: Readable;
+    output?: Writable;
+  }): Promise<T | symbol>;
+  confirm(opts: {
+    message: string;
+    initialValue?: boolean;
+    active?: string;
+    inactive?: string;
+    input?: Readable;
+    output?: Writable;
+  }): Promise<boolean | symbol>;
+  text(opts: {
+    message: string;
+    initialValue?: string;
+    placeholder?: string;
+    input?: Readable;
+    output?: Writable;
+  }): Promise<string | symbol>;
+  note?(message?: string, title?: string, opts?: { input?: Readable; output?: Writable }): void;
+  cancel(message?: string, opts?: { input?: Readable; output?: Writable }): void;
+  isCancel(value: unknown): boolean;
+}
+
+export class PromptCancelledError extends Error {
+  constructor(message = "Setup cancelled.") {
+    super(message);
+    this.name = "PromptCancelledError";
+  }
+}
+
+const AGENTRAIL_INTRO = "\u001b[32mAgentRail\u001b[0m";
 
 export interface PromptSession {
   select(options: {
@@ -26,73 +69,69 @@ export interface PromptSession {
 export function createPromptSession({
   input = process.stdin,
   output = process.stdout,
+  clack: clackPrompts = clack,
 }: {
   input?: Readable;
   output?: Writable;
+  clack?: ClackPromptsLike;
 } = {}): PromptSession {
-  const rl = readline.createInterface({ input, output });
+  let hasStarted = false;
+
+  function ensureIntro() {
+    if (hasStarted) return;
+    hasStarted = true;
+    clackPrompts.intro(AGENTRAIL_INTRO, { input, output });
+  }
+
+  function unwrapValue<T>(value: T | symbol): T {
+    if (clackPrompts.isCancel(value)) {
+      clackPrompts.cancel("Setup cancelled.", { input, output });
+      throw new PromptCancelledError();
+    }
+
+    return value as T;
+  }
 
   return {
     async select({ message, choices, defaultValue }) {
-      output.write(`${message}\n`);
-      choices.forEach((choice, index) => {
-        output.write(`  ${index + 1}. ${choice.label}\n`);
-      });
-
-      const fallbackValue = defaultValue ?? choices[0]?.value;
-
-      while (true) {
-        const answer = (await rl.question(
-          fallbackValue ? `> [${fallbackValue}] ` : "> ",
-        )).trim();
-
-        if (!answer && fallbackValue) {
-          return fallbackValue;
-        }
-
-        const numeric = Number.parseInt(answer, 10);
-        if (Number.isInteger(numeric) && numeric >= 1 && numeric <= choices.length) {
-          return choices[numeric - 1].value;
-        }
-
-        const exact = choices.find((choice) => choice.value === answer);
-        if (exact) {
-          return exact.value;
-        }
-
-        output.write("Enter a valid choice number or value.\n");
-      }
+      ensureIntro();
+      return unwrapValue(await clackPrompts.select({
+        message,
+        initialValue: defaultValue,
+        options: choices.map((choice) => ({
+          value: choice.value,
+          label: choice.label,
+        })),
+        input,
+        output,
+      }));
     },
 
     async confirm({ message = "Continue?", defaultValue = true } = {}) {
-      const suffix = defaultValue ? "[Y/n]" : "[y/N]";
-
-      while (true) {
-        const answer = (await rl.question(`${message} ${suffix} `)).trim().toLowerCase();
-        if (!answer) {
-          return defaultValue;
-        }
-        if (["y", "yes"].includes(answer)) {
-          return true;
-        }
-        if (["n", "no"].includes(answer)) {
-          return false;
-        }
-
-        output.write("Enter y or n.\n");
-      }
+      ensureIntro();
+      return unwrapValue(await clackPrompts.confirm({
+        message,
+        initialValue: defaultValue,
+        active: "Yes",
+        inactive: "No",
+        input,
+        output,
+      }));
     },
 
     async input({ message = "Value", defaultValue = "" } = {}) {
-      const answer = (await rl.question(
-        defaultValue ? `${message} [${defaultValue}] ` : `${message} `,
-      )).trim();
-
-      return answer || defaultValue;
+      ensureIntro();
+      return unwrapValue(await clackPrompts.text({
+        message,
+        initialValue: defaultValue,
+        placeholder: defaultValue || undefined,
+        input,
+        output,
+      }));
     },
 
     async close() {
-      rl.close();
+      return;
     },
   };
 }
