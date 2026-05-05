@@ -19,6 +19,7 @@ test("integration guide labels current, legacy, and planned behavior by capabili
     "Intake",
     "Routing",
     "Auth",
+    "Local/self-hosted setup",
     "Live task store",
     "Submit",
     "CI / review",
@@ -32,6 +33,26 @@ test("integration guide labels current, legacy, and planned behavior by capabili
     );
 
     assert.match(guide, row, `${capability} should have Current, Legacy, and Planned labels`);
+  }
+});
+
+test("local setup CLI contract defines two-phase setup and runner next commands", () => {
+  const contract = readFileSync(
+    path.join(repoRoot, "docs/architecture/local-self-hosted-setup-cli-contract.md"),
+    "utf8",
+  );
+
+  for (const requiredText of [
+    "agentrail init",
+    "agentrail server start",
+    "agentrail agent create",
+    "agentrail agent connect",
+    "GET /tasks/mine?status=in_progress&limit=1",
+    "source .agentrail/agent.env && cd /path/to/target-repo && codex",
+    'claude --append-system-prompt-file "$AGENTRAIL_AGENT_RECIPE_PATH"',
+    "cursor /path/to/target-repo",
+  ]) {
+    assert.match(contract, new RegExp(escapeRegExp(requiredText)));
   }
 });
 
@@ -147,4 +168,8 @@ function slugHeading(heading) {
 
 function relative(filePath) {
   return path.relative(repoRoot, filePath);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

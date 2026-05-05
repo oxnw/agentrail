@@ -161,6 +161,64 @@ test("getTaskReviewFeedback validates task source requires pullNumber", async ()
   );
 });
 
+test("getTaskReviewFeedback resolves pullNumber from persisted task submissions", async () => {
+  const adapter = new GitHubReviewFeedbackAdapter({
+    taskSources: {},
+    getTask: () => ({
+      id: "tsk_abc",
+      identifier: "AGEA-101",
+      title: "Persist PR metadata",
+      description: "",
+      status: "in_review",
+      priority: "high",
+      assignee: { id: "agt_test", name: "Test Agent" },
+      acceptanceCriteria: [],
+      links: { issue: "https://example.com/issues/101" },
+      context: { project: "acme/web", goal: "test" },
+      updatedAt: "2026-05-05T12:00:00Z",
+      availableActions: ["ship", "view_review_feedback"],
+      submissions: [
+        {
+          id: "ghpr_42",
+          summary: "Persist submit state",
+          artifacts: [],
+          checks: [],
+          notes: null,
+          submittedAt: "2026-05-05T12:00:00Z",
+          prUrl: "https://github.com/acme/web/pull/42",
+          prNumber: 42,
+        },
+      ],
+      latestSubmissionId: "ghpr_42",
+      ciStatus: null,
+      reviewOutcome: null,
+      shipOperation: null,
+      rollbackOperation: null,
+      dueAt: null,
+      createdAt: "2026-05-05T12:00:00Z",
+      version: 2,
+      source: {
+        provider: "github",
+        owner: "acme",
+        repo: "web",
+        branch: "feat/persist-submit",
+        baseBranch: "main",
+      },
+    }),
+    fetch: mockFetch({
+      "pulls/42/reviews": jsonResponse([]),
+      "pulls/42/comments": jsonResponse([]),
+      "issues/42/comments": jsonResponse([]),
+    }),
+  });
+
+  const result = await adapter.getTaskReviewFeedback("tsk_abc");
+
+  assert.equal(result.data.taskId, "tsk_abc");
+  assert.equal(result.data.latestDecision.outcome, "pending");
+  assert.deepEqual(result.data.comments, []);
+});
+
 test("getTaskReviewFeedback extracts suggestion blocks from review comments", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
     taskSources: {

@@ -1,3 +1,6 @@
+import { resolveTaskSource } from "./task-source-resolution.ts";
+import type { TaskRecord } from "./task-store.ts";
+
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 const MAX_COMMENTS = 100;
 
@@ -21,8 +24,10 @@ export class GitHubReviewFeedbackAdapter {
   declare githubToken: string | undefined;
   declare fetch: typeof globalThis.fetch;
   declare apiBaseUrl: string;
+  declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
     taskSources = {},
+    getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
     apiBaseUrl = DEFAULT_GITHUB_API_BASE_URL
@@ -32,13 +37,17 @@ export class GitHubReviewFeedbackAdapter {
     }
 
     this.taskSources = taskSources;
+    this.getTask = getTask;
     this.githubToken = githubToken;
     this.fetch = fetch;
     this.apiBaseUrl = apiBaseUrl.replace(/\/$/, "");
   }
 
   async getTaskReviewFeedback(taskId) {
-    const source = lookupTaskSource(this.taskSources, taskId);
+    const source = resolveTaskSource(taskId, {
+      taskSources: this.taskSources,
+      getTask: this.getTask,
+    });
     if (!source) {
       return null;
     }
@@ -108,14 +117,6 @@ export class GitHubReviewFeedbackAdapter {
 
     return headers;
   }
-}
-
-function lookupTaskSource(taskSources, taskId) {
-  if (taskSources instanceof Map) {
-    return taskSources.get(taskId) ?? null;
-  }
-
-  return taskSources?.[taskId] ?? null;
 }
 
 function validateTaskSource(source) {

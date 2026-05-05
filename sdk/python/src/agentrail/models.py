@@ -315,6 +315,11 @@ class TaskDetail(BaseModel):
     links: TaskLinks
     context: TaskContext
     updated_at: datetime = Field(alias="updatedAt")
+    submission_id: str | None = Field(default=None, alias="submissionId")
+    pr_url: str | None = Field(default=None, alias="prUrl")
+    pr_number: int | None = Field(default=None, alias="prNumber")
+    branch: str | None = None
+    base_branch: str | None = Field(default=None, alias="baseBranch")
     available_actions: list[str] = Field(alias="availableActions")
 
     model_config = {"populate_by_name": True}
@@ -399,6 +404,8 @@ class TaskSubmissionData(BaseModel):
     review_route: ReviewRoute | None = Field(default=None, alias="reviewRoute")
     pr_url: str | None = Field(default=None, alias="prUrl")
     pr_number: int | None = Field(default=None, alias="prNumber")
+    head: str | None = None
+    base: str | None = None
     action: TaskSubmissionAction | None = None
     idempotency_key: str | None = Field(default=None, alias="idempotencyKey")
     accepted_at: datetime = Field(alias="acceptedAt")
