@@ -4,6 +4,9 @@
   "description": "Local OSS release candidate for the AgentRail task lifecycle API",
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "agentrail": "./src/cli/index.ts"
+  },
   "engines": {
     "node": ">=22.6.0"
   },
