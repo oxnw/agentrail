@@ -30,6 +30,7 @@ export interface ClackPromptsLike {
   }): Promise<boolean | symbol>;
   text(opts: {
     message: string;
+    defaultValue?: string;
     initialValue?: string;
     placeholder?: string;
     input?: Readable;
@@ -123,7 +124,7 @@ export function createPromptSession({
       ensureIntro();
       return unwrapValue(await clackPrompts.text({
         message,
-        initialValue: defaultValue,
+        defaultValue: defaultValue || undefined,
         placeholder: defaultValue || undefined,
         input,
         output,

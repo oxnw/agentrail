@@ -22,6 +22,10 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   const stderr = createMemoryWriter();
   const prompt = new ScriptedPromptSession([
     { kind: "select", value: "demo" },
+    { kind: "input", value: "/tmp/custom-agentrail" },
+    { kind: "input", value: "custom/agentrail" },
+    { kind: "input", value: "develop" },
+    { kind: "input", value: "http://127.0.0.1:4100" },
     { kind: "confirm", value: false },
     { kind: "select", value: "print_only" },
   ]);
@@ -37,10 +41,14 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   });
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(prompt.calls, ["select", "confirm", "select"]);
+  assert.deepEqual(prompt.calls, ["select", "input", "input", "input", "input", "confirm", "select"]);
   assert.match(stdout.toString(), /AgentRail local setup/i);
   assert.match(stdout.toString(), /Review setup plan/i);
   assert.match(stdout.toString(), /agentrail init --mode demo/);
+  assert.match(stdout.toString(), /--repo '\/tmp\/custom-agentrail'/);
+  assert.match(stdout.toString(), /--repo-allowlist custom\/agentrail/);
+  assert.match(stdout.toString(), /--default-branch develop/);
+  assert.match(stdout.toString(), /--base-url http:\/\/127\.0\.0\.1:4100/);
   assert.equal(stderr.toString(), "");
 });
 
@@ -122,6 +130,37 @@ test("createPromptSession wraps Clack with AgentRail branding", async () => {
   assert.match(String(calls[0][1]), /AgentRail/i);
   assert.equal(calls[1][0], "select");
   assert.equal((calls[1][1] as { message: string }).message, "Setup mode");
+});
+
+test("createPromptSession passes detected defaults through the Clack text placeholder path", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const session = createPromptSession({
+    output: createMemoryWriter() as never,
+    clack: {
+      intro() {},
+      select: async () => "demo",
+      confirm: async () => true,
+      text: async (options) => {
+        calls.push(["text", options]);
+        return options.defaultValue ?? "";
+      },
+      note() {},
+      cancel() {},
+      isCancel() {
+        return false;
+      },
+    } satisfies ClackPromptsLike,
+  });
+
+  const value = await session.input({
+    message: "Target repo path",
+    defaultValue: "/tmp/agentrail",
+  });
+
+  assert.equal(value, "/tmp/agentrail");
+  assert.equal(calls[0][0], "text");
+  assert.equal((calls[0][1] as { defaultValue?: string }).defaultValue, "/tmp/agentrail");
+  assert.equal((calls[0][1] as { placeholder?: string }).placeholder, "/tmp/agentrail");
 });
 
 test("createPromptSession converts Clack cancellation into a typed error", async () => {

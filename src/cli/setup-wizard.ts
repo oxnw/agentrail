@@ -54,6 +54,8 @@ export async function runSetupWizard({
   writeLine("AgentRail local setup");
   writeLine("");
 
+  const detectedAllowlist = detectedRepo.remoteSlug ?? detectedRepo.repoPath;
+  const detectedBaseUrl = flags.baseUrl ?? "http://127.0.0.1:3000";
   const mode = flags.mode ?? await prompt.select({
     message: "Setup mode",
     defaultValue: "demo",
@@ -62,6 +64,36 @@ export async function runSetupWizard({
       { label: "Self-hosted with real GitHub/CI providers", value: "server" },
     ],
   }) as SetupMode;
+  const repoPath = flags.repo ?? resolvePromptValue(
+    await prompt.input({
+      message: "Target repo path",
+      defaultValue: detectedRepo.repoPath,
+    }),
+    detectedRepo.repoPath,
+  );
+  const repoAllowlist = flags.repoAllowlist ?? [
+    resolvePromptValue(
+      await prompt.input({
+        message: "Repo allowlist",
+        defaultValue: detectedAllowlist,
+      }),
+      detectedAllowlist,
+    ),
+  ];
+  const defaultBranch = flags.defaultBranch ?? resolvePromptValue(
+    await prompt.input({
+      message: "Default branch",
+      defaultValue: detectedRepo.defaultBranch,
+    }),
+    detectedRepo.defaultBranch,
+  );
+  const baseUrl = flags.baseUrl ?? resolvePromptValue(
+    await prompt.input({
+      message: "Local API base URL",
+      defaultValue: detectedBaseUrl,
+    }),
+    detectedBaseUrl,
+  );
   const markdownExport = flags.markdownExport ?? await prompt.confirm({
     message: "Enable Markdown/Obsidian export?",
     defaultValue: false,
@@ -75,12 +107,12 @@ export async function runSetupWizard({
     mode,
     host: flags.host,
     port: flags.port,
-    baseUrl: flags.baseUrl,
+    baseUrl,
     persistence: flags.persistence,
     providerMode: flags.providerMode,
-    repoPath: flags.repo,
-    repoAllowlist: flags.repoAllowlist,
-    defaultBranch: flags.defaultBranch,
+    repoPath,
+    repoAllowlist,
+    defaultBranch,
     markdownExport,
   });
   const summaryLines = buildDetectedSummary(config, detectedRepo);
@@ -110,6 +142,10 @@ export async function runSetupWizard({
     command: buildInitCommand(config),
     planLines,
   };
+}
+
+function resolvePromptValue(value: string, fallback: string): string {
+  return value.trim() || fallback;
 }
 
 export function acceptedDefaultsFromFlags(flags: InitFlags): boolean {
