@@ -160,14 +160,13 @@ async function finalizeInit({
     return 0;
   }
 
-  const result = await writeFiles({
+  await writeFiles({
     repoRoot: config.targetRepo.path,
     config,
   });
   const envPath = path.join(config.targetRepo.path, ".agentrail", "agent.env");
   const envExamplePath = path.join(config.targetRepo.path, ".agentrail", "agent.env.example");
 
-  stdout.write(`Wrote setup files:\n${result.writtenPaths.map((filePath) => `- ${filePath}`).join("\n")}\n`);
   stdout.write([
     "Next steps:",
     `- Add your provider tokens to ${envPath} when you wire live providers.`,
