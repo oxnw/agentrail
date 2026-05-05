@@ -169,7 +169,7 @@ export function validateSafeDefaults(
   }
 
   if (config.providers.github.mode === "real" || config.providers.circleci.mode === "real") {
-    reasons.push("`--yes` cannot be used when provider mode would enable real providers.");
+    reasons.push("`--yes` cannot be used when live GitHub or CircleCI providers would be enabled.");
   }
 
   if (!detectedRepo.gitIgnoreHasAgentrail) {
@@ -221,17 +221,6 @@ export function buildSetupPlan(config: SetupConfig): string[] {
   steps.push("Leave .agentrail/agent.env for the later registration step only");
 
   return steps;
-}
-
-export function buildDetectedSummary(config: SetupConfig, detectedRepo: DetectedRepoContext): string[] {
-  return [
-    "Detected:",
-    `- Target GitHub repo: ${detectedRepo.remoteSlug ?? config.targetRepo.path}`,
-    `- GitHub repo allowlist: ${config.targetRepo.allowlist.join(", ")}`,
-    `- Default branch: ${config.targetRepo.defaultBranch}`,
-    `- Local API: ${config.server.baseUrl}`,
-    `- Provider mode: ${config.providers.github.mode}`,
-  ];
 }
 
 function resolveServer({
