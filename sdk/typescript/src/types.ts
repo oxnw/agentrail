@@ -214,6 +214,11 @@ export interface TaskDetail {
   links: TaskLinks;
   context: TaskContext;
   updatedAt: string;
+  submissionId?: string | null;
+  prUrl?: string | null;
+  prNumber?: number | null;
+  branch?: string | null;
+  baseBranch?: string | null;
   availableActions: string[];
 }
 
@@ -277,6 +282,8 @@ export interface TaskSubmissionData {
   reviewRoute?: { participants: ReviewParticipant[] };
   prUrl?: string;
   prNumber?: number;
+  head?: string | null;
+  base?: string | null;
   action?: TaskSubmissionAction;
   idempotencyKey?: string;
   acceptedAt: string;

@@ -19,12 +19,22 @@ export interface TaskContext {
 
 export type TaskStatus = "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled";
 export type TaskPriority = "low" | "medium" | "high" | "critical";
+export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "manual_triage" | "provider_assignee_mapping";
 
 export interface TaskSource {
   provider: string;
   owner?: string;
   repo?: string;
   issueNumber?: number;
+  branch?: string;
+  baseBranch?: string;
+  headSha?: string;
+  projectSlug?: string;
+  ciProvider?: string;
+  reviewers?: string[];
+  pullNumber?: number;
+  prUrl?: string;
+  submissionId?: string;
   labels?: string[];
   assignees?: string[];
   deliveryId?: string;
@@ -54,6 +64,21 @@ export interface TaskRecord {
   createdAt: string;
   version: number;
   source?: TaskSource;
+  assigneeAgentId?: string | null;
+  triageQueueId?: string | null;
+  assignmentSource?: TaskAssignmentSource | null;
+  routingDecisionId?: string | null;
+  routingReason?: {
+    summary: string;
+    matchedRules: Array<{ id: string; name: string; confidence: number }>;
+    classifier: {
+      provider: string;
+      confidence: number;
+      suggestedTarget: { type: "agent" | "triage_queue"; id: string };
+    } | null;
+    conflictReasons: string[];
+  } | null;
+  routingConfidence?: number | null;
 }
 
 export interface IdempotencyEntry {
@@ -70,6 +95,9 @@ export interface TaskSubmission {
   submittedAt: string;
   prUrl?: string | null;
   prNumber?: number | null;
+  branch?: string | null;
+  baseBranch?: string | null;
+  headSha?: string | null;
 }
 
 export interface ShipOperation {
@@ -334,6 +362,12 @@ export class TaskStore {
       createdAt: partial.createdAt ?? now,
       version: partial.version ?? 1,
       source: partial.source,
+      assigneeAgentId: "assigneeAgentId" in partial ? (partial.assigneeAgentId ?? null) : (partial.assignee?.id ?? null),
+      triageQueueId: "triageQueueId" in partial ? (partial.triageQueueId ?? null) : null,
+      assignmentSource: "assignmentSource" in partial ? (partial.assignmentSource ?? null) : null,
+      routingDecisionId: "routingDecisionId" in partial ? (partial.routingDecisionId ?? null) : null,
+      routingReason: "routingReason" in partial ? (partial.routingReason ?? null) : null,
+      routingConfidence: "routingConfidence" in partial ? (partial.routingConfidence ?? null) : null,
     };
     this._tasks.set(id, task);
     this.persist();

@@ -12,6 +12,9 @@ info:
     Separate operator/admin contract for AgentRail intake routing.
     This API is intentionally not part of the normal agent task lifecycle SDK.
     Worker agents consume assigned tasks through `task-lifecycle.openapi.yaml`.
+    Routing data is configurable through versioned rule sets; the engine keeps
+    supported predicates, conflict handling, permissions, audit writes, and task
+    assignment side effects in reviewed server code.
 servers:
   - url: http://127.0.0.1:3000
     description: Local OSS self-hosted server
@@ -24,6 +27,8 @@ tags:
     description: Provider issue ingestion surfaces used by adapters and sync jobs.
   - name: Routing
     description: Rule set management and route evaluation for operators.
+  - name: Agent Profiles
+    description: Operator-managed routable agent metadata used by the routing engine.
   - name: Routing Audit
     description: Read-only route decision history and explanations.
 paths:
@@ -176,6 +181,8 @@ paths:
         Replaces the active rule set by creating an immutable new revision.
         Historical rule set revisions remain queryable through audit records.
         Safe to retry with the same `Idempotency-Key` and identical request body.
+        This is the normal path for operator-owned routing changes that should
+        not require an AgentRail code deployment.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKeyHeader'
       requestBody:
@@ -257,6 +264,122 @@ paths:
                     availableActions: [evaluate]
                     meta:
                       requestId: req_01JZROUTE0000000000000103
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /operator/routing/agent-profiles/{agentId}:
+    get:
+      tags: [Agent Profiles]
+      operationId: getRoutingAgentProfile
+      summary: Get one routable agent profile
+      description: |
+        Returns operator-managed routing metadata for one agent. Worker agents
+        do not write their own profiles; profiles are created by admin flows,
+        agent creation/hiring flows, or trusted infrastructure sync.
+      parameters:
+        - $ref: '#/components/parameters/AgentIdPath'
+      responses:
+        '200':
+          description: Agent profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentProfileResponse'
+              examples:
+                cto_profile:
+                  value:
+                    data:
+                      agentId: agt_cto
+                      displayName: CTO
+                      role: cto
+                      status: active
+                      capabilityTags: [api-design, architecture, security-review]
+                      ownershipTags: [control-plane, docs]
+                      repoAllowlist: [oxnw/agentrail]
+                      providerIdentityMappings:
+                        - provider: github
+                          subject: cto-github-login
+                      maxConcurrentTasks: 3
+                      source: operator_admin
+                      sourceRef: AGEA-95
+                      updatedBy: agt_ceo
+                      updatedAt: '2026-05-05T15:40:00Z'
+                    availableActions: [update, view_audit]
+                    meta:
+                      requestId: req_01JZROUTE0000000000000400
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Agent Profiles]
+      operationId: replaceRoutingAgentProfile
+      summary: Create or replace one routable agent profile
+      description: |
+        Creates or replaces the routing profile used by the engine for
+        eligibility, ownership, capability, provider assignee mapping, and
+        capacity checks. Safe to retry with the same `Idempotency-Key` and
+        identical request body. Worker task keys must not receive this scope.
+      parameters:
+        - $ref: '#/components/parameters/AgentIdPath'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentProfileReplaceRequest'
+            examples:
+              cto_profile:
+                value:
+                  displayName: CTO
+                  role: cto
+                  status: active
+                  capabilityTags: [api-design, architecture, security-review]
+                  ownershipTags: [control-plane, docs]
+                  repoAllowlist: [oxnw/agentrail]
+                  providerIdentityMappings:
+                    - provider: github
+                      subject: cto-github-login
+                  maxConcurrentTasks: 3
+                  sourceRef: AGEA-95
+                  changeReason: Seed CTO routing profile for architecture/API work.
+      responses:
+        '200':
+          description: Agent profile created or replaced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentProfileResponse'
+              examples:
+                updated:
+                  value:
+                    data:
+                      agentId: agt_cto
+                      displayName: CTO
+                      role: cto
+                      status: active
+                      capabilityTags: [api-design, architecture, security-review]
+                      ownershipTags: [control-plane, docs]
+                      repoAllowlist: [oxnw/agentrail]
+                      providerIdentityMappings:
+                        - provider: github
+                          subject: cto-github-login
+                      maxConcurrentTasks: 3
+                      source: operator_admin
+                      sourceRef: AGEA-95
+                      updatedBy: agt_ceo
+                      updatedAt: '2026-05-05T15:41:00Z'
+                    availableActions: [evaluate, view_audit]
+                    meta:
+                      requestId: req_01JZROUTE0000000000000401
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -433,6 +556,13 @@ components:
       schema:
         type: string
       description: Stable routing decision identifier.
+    AgentIdPath:
+      name: agentId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Stable AgentRail `AgentIdentity.id`; this is the routing and task ownership key.
   responses:
     ValidationError:
       description: Request validation failed
@@ -620,6 +750,140 @@ components:
           type: string
         defaultBranch:
           type: string
+    AgentProfileReplaceRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - displayName
+        - role
+        - status
+        - capabilityTags
+        - ownershipTags
+        - repoAllowlist
+        - providerIdentityMappings
+        - maxConcurrentTasks
+        - sourceRef
+        - changeReason
+      properties:
+        displayName:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+          enum: [active, paused, disabled]
+        capabilityTags:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        ownershipTags:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        repoAllowlist:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+        providerIdentityMappings:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/ProviderIdentityMapping'
+        maxConcurrentTasks:
+          type: integer
+          minimum: 0
+          maximum: 50
+        sourceRef:
+          type: string
+        changeReason:
+          type: string
+          maxLength: 500
+    AgentProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - displayName
+        - role
+        - status
+        - capabilityTags
+        - ownershipTags
+        - repoAllowlist
+        - providerIdentityMappings
+        - maxConcurrentTasks
+        - source
+        - sourceRef
+        - updatedBy
+        - updatedAt
+      properties:
+        agentId:
+          type: string
+          description: Stable AgentRail `AgentIdentity.id`; provider and runtime identities map into this value.
+        displayName:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+          enum: [active, paused, disabled]
+        capabilityTags:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        ownershipTags:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        repoAllowlist:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+        providerIdentityMappings:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/ProviderIdentityMapping'
+        maxConcurrentTasks:
+          type: integer
+          minimum: 0
+          maximum: 50
+        source:
+          type: string
+          enum: [agent_created, operator_admin, skill_assignment_sync, config_file_import]
+        sourceRef:
+          type: string
+        updatedBy:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+    AgentProfileResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/AgentProfile'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ProviderIdentityMapping:
+      type: object
+      additionalProperties: false
+      required: [provider, subject]
+      properties:
+        provider:
+          type: string
+          enum: [github, linear, jira, gitlab]
+        subject:
+          type: string
     RoutingRuleSetReplaceRequest:
       type: object
       additionalProperties: false
@@ -701,6 +965,10 @@ components:
           $ref: '#/components/schemas/ResponseMeta'
     RoutingRule:
       type: object
+      description: |
+        Configurable routing data. Conditions may use only the predicate fields
+        supported by the routing engine; arbitrary executable code is not
+        accepted in rule sets.
       additionalProperties: false
       required: [id, name, enabled, priority, conditions, target, confidence, explanation]
       properties:
@@ -769,6 +1037,7 @@ components:
           enum: [agent, triage_queue]
         id:
           type: string
+          description: AgentRail `AgentIdentity.id` when `type` is `agent`; triage queue ID when `type` is `triage_queue`.
     ClassifierConfig:
       type: object
       additionalProperties: false

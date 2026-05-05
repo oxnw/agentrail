@@ -249,6 +249,96 @@ test("GitHubActionsCiAdapter keeps green responses compact", async () => {
   assert.ok(JSON.stringify(body).length < 1200);
 });
 
+test("GitHubActionsCiAdapter resolves CI source from persisted task state", async () => {
+  const adapter = new GitHubActionsCiAdapter({
+    taskSources: {},
+    getTask: () => ({
+      id: taskId,
+      identifier: "AGEA-101",
+      title: "Persist PR metadata",
+      description: "",
+      status: "in_review",
+      priority: "high",
+      assignee: { id: "agt_test", name: "Test Agent" },
+      acceptanceCriteria: [],
+      links: { issue: "https://example.com/issues/101" },
+      context: { project: "oxnw/agentrail", goal: "test" },
+      updatedAt: "2026-05-05T12:00:00Z",
+      availableActions: ["ship", "view_ci_status"],
+      submissions: [
+        {
+          id: "sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2",
+          summary: "Persist submit state",
+          artifacts: [],
+          checks: [],
+          notes: null,
+          submittedAt: "2026-05-05T12:00:00Z",
+          prUrl: "https://github.com/oxnw/agentrail/pull/42",
+          prNumber: 42,
+        },
+      ],
+      latestSubmissionId: "sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2",
+      ciStatus: null,
+      reviewOutcome: null,
+      shipOperation: null,
+      rollbackOperation: null,
+      dueAt: null,
+      createdAt: "2026-05-05T12:00:00Z",
+      version: 2,
+      source: {
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        branch: "feature/ci-status",
+        headSha: "abc123",
+      },
+    }),
+    fetch: async (url) => {
+      if (String(url).includes("/actions/runs?")) {
+        return jsonResponse({
+          workflow_runs: [
+            {
+              id: 1201,
+              name: "CI",
+              path: ".github/workflows/ci.yml",
+              status: "completed",
+              conclusion: "success",
+              html_url: "https://github.com/oxnw/agentrail/actions/runs/1201",
+              head_sha: "abc123",
+              updated_at: "2026-05-01T03:03:19Z",
+              run_attempt: 1,
+            },
+          ],
+        });
+      }
+
+      if (String(url).endsWith("/actions/runs/1201/jobs?per_page=100")) {
+        return jsonResponse({
+          jobs: [
+            {
+              id: 11,
+              name: "unit-tests",
+              status: "completed",
+              conclusion: "success",
+              html_url: "https://github.com/oxnw/agentrail/actions/runs/1201/job/11",
+              started_at: "2026-05-01T03:02:00Z",
+              completed_at: "2026-05-01T03:02:42Z",
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  const body = await adapter.getTaskCiStatus(taskId);
+
+  assert.equal(body.data.taskId, taskId);
+  assert.equal(body.data.submissionId, "sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2");
+  assert.equal(body.data.overallStatus, "passed");
+});
+
 function jsonResponse(body, status = 200) {
   return {
     ok: status >= 200 && status < 300,
