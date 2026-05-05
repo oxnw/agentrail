@@ -13,7 +13,7 @@ test("OpenAPI lint script validates lifecycle and intake routing contracts", () 
   assert.match(lintScript, /docs\/api\/intake-routing-admin\.openapi\.yaml/);
 });
 
-test("integration guide labels current, demo, and planned behavior by capability", () => {
+test("integration guide labels current, legacy, and planned behavior by capability", () => {
   const guide = readFileSync(path.join(repoRoot, "docs/integration-guide.md"), "utf8");
   const requiredCapabilities = [
     "Intake",
@@ -28,10 +28,10 @@ test("integration guide labels current, demo, and planned behavior by capability
   for (const capability of requiredCapabilities) {
     const escaped = capability.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const row = new RegExp(
-      `\\|\\s*${escaped}\\s*\\|\\s*\\*\\*Current:\\*\\*[\\s\\S]*?\\|\\s*\\*\\*Demo:\\*\\*[\\s\\S]*?\\|\\s*\\*\\*Planned:\\*\\*`,
+      `\\|\\s*${escaped}\\s*\\|\\s*\\*\\*Current:\\*\\*[\\s\\S]*?\\|\\s*\\*\\*Legacy:\\*\\*[\\s\\S]*?\\|\\s*\\*\\*Planned:\\*\\*`,
     );
 
-    assert.match(guide, row, `${capability} should have Current, Demo, and Planned labels`);
+    assert.match(guide, row, `${capability} should have Current, Legacy, and Planned labels`);
   }
 });
 

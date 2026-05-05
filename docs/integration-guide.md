@@ -12,7 +12,7 @@ and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards, support,
 compliance, and hosted reliability. See [Cloud boundary](./cloud.md).
 
 Use this guide when you are integrating AgentRail into a real agent workflow.
-If you only want to run the demo once, start with the
+If you want to bootstrap a local self-hosted setup quickly, start with the
 [five-minute quick start](./quick-start.md). If you want copy-paste agent
 instructions for Claude Code, Codex, or Cursor, use
 [agent recipes](./agent-recipes.md).
@@ -478,7 +478,8 @@ events.
 - [Cloud boundary](./cloud.md)
 - [Local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md)
 - [OpenAPI contract](./api/task-lifecycle.openapi.yaml)
-- [End-to-end demo](./demo/agentrail-e2e-demo.md)
+- [Self-hosted task store example](../examples/self-hosted-task-store.json)
+- [Self-hosted task sources example](../examples/self-hosted-task-sources.json)
 - [Claude Code and Codex lifecycle example](../examples/issue-to-pr-lifecycle.md)
 - [Railway production runbook](./deployment/railway-production.md)
 - [Live sandbox validation gate](./deployment/live-sandbox-validation.md)
