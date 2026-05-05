@@ -20,6 +20,7 @@ test("TypeScript SDK exposes adapter-managed submit without caller-supplied arti
         "--strict",
         "--types",
         "node",
+        "--allowImportingTsExtensions",
         "test/fixtures/sdk-submit-contract.ts",
       ],
       { cwd: new URL("..", import.meta.url), stdio: "pipe" },

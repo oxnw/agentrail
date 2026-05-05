@@ -1,4 +1,4 @@
-import type { ErrorDetail } from "./types.js";
+import type { ErrorDetail } from "./types.ts";
 
 export class AgentRailError extends Error {
   readonly statusCode: number;

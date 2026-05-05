@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 
-import { CircleCiStatusAdapter } from "../src/circleci-status-adapter.js";
+import { CircleCiStatusAdapter } from "../src/circleci-status-adapter.ts";
 import {
   circleCiTaskId,
   circleCiTaskSource,

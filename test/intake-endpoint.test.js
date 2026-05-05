@@ -3,11 +3,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 
-import { createServer } from "../src/app.js";
-import { AgentAuthStore } from "../src/agent-auth-store.js";
-import { AgentTaskQueue } from "../src/agent-task-queue.js";
-import { GitHubIssueIntakeAdapter } from "../src/github-issue-intake-adapter.js";
-import { TaskEventStore } from "../src/task-event-store.js";
+import { createServer } from "../src/app.ts";
+import { AgentAuthStore } from "../src/agent-auth-store.ts";
+import { AgentTaskQueue } from "../src/agent-task-queue.ts";
+import { GitHubIssueIntakeAdapter } from "../src/github-issue-intake-adapter.ts";
+import { TaskEventStore } from "../src/task-event-store.ts";
 
 async function listen(server) {
   server.listen(0, "127.0.0.1");
@@ -23,10 +23,11 @@ test("POST /providers/github/intake creates a task and returns 201", async () =>
   const intakeAdapter = new GitHubIssueIntakeAdapter({ taskQueue });
 
   const authStore = new AgentAuthStore({ now });
-  const { data: testKey } = authStore.createKey({ name: "test", agentId: "agt_test", scopes: ["tasks:write", "tasks:read"], role: "developer" }, "idemp_test");
+  const { data: testKey } = authStore.createKey({ name: "test", agent: { id: "agt_test", displayName: "Test Agent", role: "developer", externalIdentities: [] }, scopes: ["tasks:write", "tasks:read"] }, "idemp_test");
 
   const server = createServer({
     store: eventStore,
+    taskLifecycleStore: taskQueue,
     intakeAdapter,
     authStore,
     now,
@@ -39,7 +40,7 @@ test("POST /providers/github/intake creates a task and returns 201", async () =>
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${testKey.key}`,
+        authorization: `Bearer ${testKey.apiKey}`,
         "idempotency-key": "idemp_01GITHUBINTAKE",
       },
       body: JSON.stringify({
@@ -54,8 +55,9 @@ test("POST /providers/github/intake creates a task and returns 201", async () =>
       }),
     });
 
-    assert.strictEqual(res.status, 201, `Expected 201, got ${res.status}: ${await res.text()}`);
-    const json = await res.json();
+    const bodyText = await res.text();
+    assert.strictEqual(res.status, 201, `Expected 201, got ${res.status}: ${bodyText}`);
+    const json = JSON.parse(bodyText);
     assert.ok(json.data.taskId.startsWith("tsk_"));
     assert.strictEqual(json.data.identifier, "github:oxnw/agentrail:issues/42");
     assert.strictEqual(json.data.status, "todo");
@@ -64,7 +66,7 @@ test("POST /providers/github/intake creates a task and returns 201", async () =>
     // Verify the created task is later reachable via GET /tasks/{id} (if agent is assigned)
     const getRes = await fetch(`${baseUrl}/tasks/${json.data.taskId}`, {
       headers: {
-        authorization: `Bearer ${testKey.key}`,
+        authorization: `Bearer ${testKey.apiKey}`,
       },
     });
     assert.strictEqual(getRes.status, 200);
@@ -78,7 +80,7 @@ test("POST /providers/github/intake creates a task and returns 201", async () =>
 test("POST /providers/github/intake returns 404 when intake adapter is missing", async () => {
   const eventStore = new TaskEventStore({ now: () => new Date() });
   const authStore = new AgentAuthStore({ now: () => new Date() });
-  const { data: writeKey } = authStore.createKey({ name: "write", agentId: "agt_test", scopes: ["tasks:write"], role: "developer" }, "idemp_write");
+  const { data: writeKey } = authStore.createKey({ name: "write", agent: { id: "agt_test", displayName: "Test Agent", role: "developer", externalIdentities: [] }, scopes: ["tasks:write"] }, "idemp_write");
 
   const server = createServer({
     store: eventStore,
@@ -93,7 +95,7 @@ test("POST /providers/github/intake returns 404 when intake adapter is missing",
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${writeKey.key}`,
+        authorization: `Bearer ${writeKey.apiKey}`,
       },
       body: JSON.stringify({
         issueNumber: 1,
@@ -114,7 +116,7 @@ test("POST /providers/github/intake returns 404 when intake adapter is missing",
 test("POST /providers/github/intake returns 403 without tasks:write scope", async () => {
   const eventStore = new TaskEventStore({ now: () => new Date() });
   const authStore = new AgentAuthStore({ now: () => new Date() });
-  const { data: readKey } = authStore.createKey({ name: "read", agentId: "agt_test", scopes: ["tasks:read"], role: "developer" }, "idemp_read");
+  const { data: readKey } = authStore.createKey({ name: "read", agent: { id: "agt_test", displayName: "Test Agent", role: "developer", externalIdentities: [] }, scopes: ["tasks:read"] }, "idemp_read");
 
   const server = createServer({
     store: eventStore,
@@ -129,7 +131,7 @@ test("POST /providers/github/intake returns 403 without tasks:write scope", asyn
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${readKey.key}`,
+        authorization: `Bearer ${readKey.apiKey}`,
       },
       body: JSON.stringify({}),
     });

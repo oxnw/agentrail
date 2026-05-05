@@ -1,4 +1,4 @@
-import { parseErrorResponse, RateLimitError } from "./errors.js";
+import { parseErrorResponse, RateLimitError } from "./errors.ts";
 import type {
   AgentApiKeyCreateRequest,
   AgentApiKeyResponse,
@@ -20,7 +20,7 @@ import type {
   TaskWebhookSubscriptionCreateRequest,
   TaskWebhookSubscriptionListResponse,
   TaskWebhookSubscriptionResponse,
-} from "./types.js";
+} from "./types.ts";
 
 const DEFAULT_RETRY: Required<RetryOptions> = {
   maxAttempts: 3,
@@ -181,7 +181,7 @@ export class AgentRailClient {
 
     const res = await fetch(url, { headers, signal: options?.signal });
     if (!res.ok) {
-      const body = (await res.json()) as { error: import("./types.js").ErrorDetail };
+      const body = (await res.json()) as { error: import("./types.ts").ErrorDetail };
       throw parseErrorResponse(res.status, body, res.headers);
     }
     if (!res.body) throw new Error("No response body for SSE stream");
@@ -254,7 +254,7 @@ export class AgentRailClient {
           message: `HTTP ${res.status}`,
           details: {},
         },
-      }))) as { error: import("./types.js").ErrorDetail };
+      }))) as { error: import("./types.ts").ErrorDetail };
 
       const err = parseErrorResponse(res.status, body, res.headers);
 

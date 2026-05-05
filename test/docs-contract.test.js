@@ -120,7 +120,8 @@ function shouldSkipTarget(target) {
   return (
     /^[a-z][a-z0-9+.-]*:/i.test(target) ||
     target.startsWith("//") ||
-    target.startsWith("mailto:")
+    target.startsWith("mailto:") ||
+    /^\/[A-Z0-9]+\/(?:issues|agents|projects|approvals)\//.test(target)
   );
 }
 

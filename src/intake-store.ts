@@ -1,6 +1,6 @@
-import type { AgentTaskQueue } from "./agent-task-queue.js";
-import type { TaskRecord } from "./task-store.js";
-import type { TaskEvent } from "./task-event-store.js";
+import type { AgentTaskQueue } from "./agent-task-queue.ts";
+import type { TaskRecord } from "./task-store.ts";
+import type { TaskEvent } from "./task-event-store.ts";
 
 /**
  * IntakeStore contract.

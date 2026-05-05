@@ -1,17 +1,17 @@
 import fs from "node:fs";
 
-import { createAgentShipCycleDemoStore } from "./agent-ship-cycle-demo.js";
-import { createServer } from "./app.js";
-import { AgentAuthStore } from "./agent-auth-store.js";
-import { CircleCiStatusAdapter } from "./circleci-status-adapter.js";
-import { GitHubActionsCiAdapter } from "./github-actions-ci-adapter.js";
-import { GitHubReviewFeedbackAdapter } from "./github-review-feedback-adapter.js";
-import { GitHubRollbackAdapter } from "./github-rollback-adapter.js";
-import { GitHubSubmitAdapter } from "./github-submit-adapter.js";
-import { MultiCiStatusAdapter } from "./multi-ci-status-adapter.js";
-import { TaskEventStore } from "./task-event-store.js";
-import { AgentTaskQueue } from "./agent-task-queue.js";
-import { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.js";
+import { createAgentShipCycleDemoStore } from "./agent-ship-cycle-demo.ts";
+import { createServer } from "./app.ts";
+import { AgentAuthStore } from "./agent-auth-store.ts";
+import { CircleCiStatusAdapter } from "./circleci-status-adapter.ts";
+import { GitHubActionsCiAdapter } from "./github-actions-ci-adapter.ts";
+import { GitHubReviewFeedbackAdapter } from "./github-review-feedback-adapter.ts";
+import { GitHubRollbackAdapter } from "./github-rollback-adapter.ts";
+import { GitHubSubmitAdapter } from "./github-submit-adapter.ts";
+import { MultiCiStatusAdapter } from "./multi-ci-status-adapter.ts";
+import { TaskEventStore } from "./task-event-store.ts";
+import { AgentTaskQueue } from "./agent-task-queue.ts";
+import { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
 
 loadDotEnv();
 

@@ -6,7 +6,7 @@ import {
   RateLimitExceededError,
   ScopeDeniedError,
   UnauthorizedError
-} from "../src/agent-auth-store.js";
+} from "../src/agent-auth-store.ts";
 
 test("creates an agent API key with normalized identity, scopes, and rate limits", () => {
   const now = new Date("2026-05-01T04:00:00Z");

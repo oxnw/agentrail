@@ -7,15 +7,15 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 
-import { TaskEventStore } from "../src/task-event-store.js";
+import { TaskEventStore } from "../src/task-event-store.ts";
 import {
   TaskWebhookSubscriptionStore,
   signatureForPayload
-} from "../src/task-webhook-store.js";
+} from "../src/task-webhook-store.ts";
 
 async function importWorkerModule() {
   try {
-    return await import("../src/task-webhook-delivery-worker.js");
+    return await import("../src/task-webhook-delivery-worker.ts");
   } catch {
     assert.fail("TaskWebhookDeliveryWorker module should exist.");
   }

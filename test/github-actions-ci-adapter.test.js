@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { GitHubActionsCiAdapter } from "../src/github-actions-ci-adapter.js";
+import { GitHubActionsCiAdapter } from "../src/github-actions-ci-adapter.ts";
 
 const taskId = "tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V";
 

@@ -7,7 +7,7 @@ const DEMO_TASK_ID = "tsk_DEMOISSUETOSHIP01";
 
 test("default non-demo server mode does not expose deterministic demo task", async (t) => {
   const port = 34000 + Math.floor(Math.random() * 1000);
-  const server = spawn(process.execPath, ["src/server.js"], {
+  const server = spawn(process.execPath, ["src/server.ts"], {
     env: {
       ...process.env,
       AGENTRAIL_HOST: "127.0.0.1",
@@ -41,12 +41,7 @@ test("default non-demo server mode does not expose deterministic demo task", asy
   server.stdout.on("data", (chunk) => output.push(chunk));
   server.stderr.on("data", (chunk) => output.push(chunk));
 
-  await Promise.race([
-    once(server.stdout, "data"),
-    once(server, "exit").then(([code]) => {
-      throw new Error(`server exited before listening with code ${code}: ${output.join("")}`);
-    })
-  ]);
+  await waitForServerReady(server, output);
 
   // Bootstrap an admin API key so we can test task isolation behind auth
   const bootstrapRes = await fetch(`http://127.0.0.1:${port}/agent-api-keys`, {
@@ -80,3 +75,37 @@ test("default non-demo server mode does not expose deterministic demo task", asy
   assert.equal(response.status, 404);
   assert.doesNotMatch(body, new RegExp(DEMO_TASK_ID));
 });
+
+async function waitForServerReady(server, output) {
+  let timeout;
+  const onDataCallbacks = [];
+
+  try {
+    await Promise.race([
+      new Promise((resolve) => {
+        const onData = () => {
+          if (output.join("").includes("API listening")) {
+            server.stdout.off("data", onData);
+            resolve(undefined);
+          }
+        };
+        onDataCallbacks.push(onData);
+        server.stdout.on("data", onData);
+        onData();
+      }),
+      once(server, "exit").then(([code]) => {
+        throw new Error(`server exited before listening with code ${code}: ${output.join("")}`);
+      }),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`server did not start listening: ${output.join("")}`)), 10_000);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    for (const onData of onDataCallbacks) {
+      server.stdout.off("data", onData);
+    }
+  }
+}

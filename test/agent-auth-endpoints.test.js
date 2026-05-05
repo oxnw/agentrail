@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 
-import { createServer } from "../src/app.js";
-import { AgentAuthStore } from "../src/agent-auth-store.js";
-import { TaskEventStore } from "../src/task-event-store.js";
+import { createServer } from "../src/app.ts";
+import { AgentAuthStore } from "../src/agent-auth-store.ts";
+import { TaskEventStore } from "../src/task-event-store.ts";
 
 async function listen(server) {
   server.listen(0, "127.0.0.1");

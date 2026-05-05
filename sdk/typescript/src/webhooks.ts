@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { TaskLifecycleEvent, WebhookHeaders } from "./types.js";
+import type { TaskLifecycleEvent, WebhookHeaders } from "./types.ts";
 
 export function verifyWebhookSignature(
   rawBody: string | Buffer,
