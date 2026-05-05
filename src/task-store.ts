@@ -20,6 +20,17 @@ export interface TaskContext {
 export type TaskStatus = "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled";
 export type TaskPriority = "low" | "medium" | "high" | "critical";
 
+export interface TaskSource {
+  provider: string;
+  owner?: string;
+  repo?: string;
+  issueNumber?: number;
+  labels?: string[];
+  assignees?: string[];
+  deliveryId?: string;
+  receivedAt?: string;
+}
+
 export interface TaskRecord {
   id: string;
   identifier: string;
@@ -42,6 +53,12 @@ export interface TaskRecord {
   dueAt: string | null;
   createdAt: string;
   version: number;
+  source?: TaskSource;
+}
+
+export interface IdempotencyEntry {
+  fingerprint: string;
+  response: unknown;
 }
 
 export interface TaskSubmission {
@@ -51,6 +68,8 @@ export interface TaskSubmission {
   checks: unknown[];
   notes: string | null;
   submittedAt: string;
+  prUrl?: string | null;
+  prNumber?: number | null;
 }
 
 export interface ShipOperation {
@@ -109,27 +128,35 @@ function createId(): string {
   return `tsk_${crypto.randomBytes(10).toString("hex")}`;
 }
 
-function loadTasks(storagePath: string | undefined): Map<string, TaskRecord> {
-  const map = new Map<string, TaskRecord>();
-  if (!storagePath || !existsSync(storagePath)) return map;
+interface PersistedState {
+  tasks?: TaskRecord[];
+  idempotencyEntries?: Array<[string, IdempotencyEntry]>;
+}
+
+function loadState(storagePath: string | undefined): PersistedState {
+  if (!storagePath || !existsSync(storagePath)) return {};
   const content = readFileSync(storagePath, "utf8");
-  if (!content.trim()) return map;
-  const lines = content.split("\n").filter(Boolean);
-  for (const line of lines) {
-    const record = JSON.parse(line) as TaskRecord;
+  if (!content.trim()) return {};
+  return JSON.parse(content) as PersistedState;
+}
+
+function loadTasks(state: PersistedState): Map<string, TaskRecord> {
+  const map = new Map<string, TaskRecord>();
+  if (!state.tasks) return map;
+  for (const record of state.tasks) {
     map.set(record.id, record);
   }
   return map;
 }
 
-function persistTasks(storagePath: string | undefined, tasks: Map<string, TaskRecord>): void {
+function persistState(storagePath: string | undefined, tasks: Map<string, TaskRecord>, idempotencyEntries: Map<string, IdempotencyEntry>): void {
   if (!storagePath) return;
   mkdirSync(path.dirname(storagePath), { recursive: true });
-  const lines: string[] = [];
-  for (const record of tasks.values()) {
-    lines.push(JSON.stringify(record));
-  }
-  writeFileSync(storagePath, lines.join("\n") + (lines.length > 0 ? "\n" : ""), "utf8");
+  const state: PersistedState = {
+    tasks: [...tasks.values()],
+    idempotencyEntries: [...idempotencyEntries.entries()],
+  };
+  writeFileSync(storagePath, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
 function toTaskSummary(task: TaskRecord): TaskSummary {
@@ -147,13 +174,16 @@ function toTaskSummary(task: TaskRecord): TaskSummary {
 
 export class TaskStore {
   private _tasks: Map<string, TaskRecord>;
+  private _idempotency: Map<string, IdempotencyEntry>;
   private readonly now: () => Date;
   private readonly storagePath: string | undefined;
 
   constructor({ now = () => new Date(), storagePath }: TaskStoreOptions = {}) {
     this.now = now;
     this.storagePath = storagePath;
-    this._tasks = loadTasks(storagePath);
+    const state = loadState(storagePath);
+    this._tasks = loadTasks(state);
+    this._idempotency = new Map(state.idempotencyEntries ?? []);
   }
 
   listTasks({ status, assigneeAgentId, limit = 25, cursor = null }: ListTasksOptions = {}): ListTasksResult {
@@ -192,6 +222,24 @@ export class TaskStore {
     return task ? structuredClone(task) : null;
   }
 
+  getIdempotencyEntry(key: string): IdempotencyEntry | null {
+    return this._idempotency.get(key) ?? null;
+  }
+
+  setIdempotencyEntry(key: string, entry: IdempotencyEntry): void {
+    this._idempotency.set(key, entry);
+    this.persist();
+  }
+
+  findTaskByIdentifier(identifier: string): TaskRecord | null {
+    for (const task of this._tasks.values()) {
+      if (task.identifier === identifier) {
+        return structuredClone(task);
+      }
+    }
+    return null;
+  }
+
   createTask(partial: Omit<Partial<TaskRecord>, "id"> & { identifier: string; title: string }): TaskRecord {
     const id = createId();
     const now = this.now().toISOString();
@@ -217,6 +265,7 @@ export class TaskStore {
       dueAt: partial.dueAt ?? null,
       createdAt: partial.createdAt ?? now,
       version: partial.version ?? 1,
+      source: partial.source,
     };
     this._tasks.set(id, task);
     this.persist();
@@ -254,6 +303,6 @@ export class TaskStore {
   }
 
   persist(): void {
-    persistTasks(this.storagePath, this._tasks);
+    persistState(this.storagePath, this._tasks, this._idempotency);
   }
 }

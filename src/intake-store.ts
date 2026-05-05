@@ -18,6 +18,9 @@ export interface IntakeStore {
   updateTask(taskId: string, patch: Parameters<AgentTaskQueue["updateTask"]>[1]): TaskRecord | null;
   deleteTask(taskId: string): boolean;
   getRawTask(taskId: string): TaskRecord | null;
+  findTaskByIdentifier(identifier: string): TaskRecord | null;
+  getIdempotencyEntry(key: string): { fingerprint: string; response: unknown } | null;
+  setIdempotencyEntry(key: string, entry: { fingerprint: string; response: unknown }): void;
   upsertTask(record: TaskRecord): TaskRecord;
   appendEvent?(event: TaskEvent): Promise<void> | void;
 }

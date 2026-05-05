@@ -87,12 +87,73 @@ export class AgentTaskQueue {
   }
 
   async submitTask(taskId: string, payload: unknown, idempotencyKey: string | undefined) {
-    if (this.delegate?.submitTask) {
-      return this.delegate.submitTask(taskId, payload, idempotencyKey);
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"],
+      });
     }
-    throw new TaskLifecycleError(501, "not_implemented", "Task submission is not supported by the current runtime configuration.", {
-      availableActions: ["list_my_tasks"],
-    });
+
+    if (!this.delegate?.submitTask) {
+      throw new TaskLifecycleError(501, "not_implemented", "Task submission is not supported by the current runtime configuration.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+
+    const key = `submit:${idempotencyKey}`;
+    const fingerprint = JSON.stringify(payload);
+    const existing = this.store.getIdempotencyEntry(key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new TaskLifecycleError(
+          409,
+          "conflict",
+          "Idempotency-Key has already been used with a different request payload.",
+          { idempotencyKey, availableActions: ["retry"] },
+        );
+      }
+      return structuredClone(existing.response);
+    }
+
+    const response = await this.delegate.submitTask(taskId, payload, idempotencyKey);
+    const responseData = (response as any)?.data;
+
+    // Persist PR metadata onto the live task record
+    const task = this.store.getTask(taskId);
+    if (task && responseData?.submissionId) {
+      const previousStatus = task.status;
+      const newSubmission = {
+        id: responseData.submissionId,
+        summary: (payload as any)?.summary ?? "",
+        artifacts: (payload as any)?.artifacts ?? [],
+        checks: (payload as any)?.checks ?? [],
+        notes: (payload as any)?.notes ?? null,
+        submittedAt: this.now().toISOString(),
+        prUrl: responseData.prUrl ?? null,
+        prNumber: responseData.prNumber ?? null,
+      };
+      const submissions = [...task.submissions, newSubmission];
+      const latestSubmissionId = responseData.submissionId;
+      const status: TaskRecord["status"] = "in_review";
+      const availableActions = ["ship", "view_ci_status", "view_review_feedback"];
+
+      const updated = this.store.updateTask(taskId, {
+        submissions,
+        latestSubmissionId,
+        status,
+        availableActions,
+        updatedAt: this.now().toISOString(),
+      });
+
+      if (updated) {
+        await this.appendTaskUpdatedEvent(updated, {
+          previousStatus,
+          summary: `Submission accepted: ${responseData.submissionId}${responseData.prNumber ? ` (PR #${responseData.prNumber})` : ""}`,
+        });
+      }
+    }
+
+    this.store.setIdempotencyEntry(key, { fingerprint, response: structuredClone(response) });
+    return response;
   }
 
   async shipTask(taskId: string, payload: unknown, idempotencyKey: string | undefined) {
@@ -128,6 +189,18 @@ export class AgentTaskQueue {
 
   getRawTask(taskId: string) {
     return this.store.getTask(taskId);
+  }
+
+  findTaskByIdentifier(identifier: string) {
+    return this.store.findTaskByIdentifier(identifier);
+  }
+
+  getIdempotencyEntry(key: string) {
+    return this.store.getIdempotencyEntry(key);
+  }
+
+  setIdempotencyEntry(key: string, entry: Parameters<TaskStore["setIdempotencyEntry"]>[1]) {
+    return this.store.setIdempotencyEntry(key, entry);
   }
 
   private async appendTaskUpdatedEvent(
