@@ -50,12 +50,12 @@ export async function runSetupWizard({
   prompt,
   writeLine,
 }: RunSetupWizardOptions): Promise<SetupWizardResult> {
-  writeLine("AgentRail local setup");
-  writeLine(`Local git repo detected: ${detectedRepo.repoPath}`);
-  writeLine("");
-
   const detectedAllowlist = detectedRepo.remoteSlug ?? detectedRepo.repoPath;
   const detectedBaseUrl = flags.baseUrl ?? "http://127.0.0.1:3000";
+  await prompt.note({
+    title: "Local git repo detected",
+    body: detectedRepo.repoPath,
+  });
   await prompt.note({
     title: "What these settings do",
     body: [

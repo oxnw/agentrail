@@ -53,14 +53,16 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
 
   assert.equal(exitCode, 0);
   assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "select", "confirm", "confirm"]);
-  assert.equal(prompt.notes[0]?.title, "What these settings do");
-  assert.match(prompt.notes[0]?.body ?? "", /Target GitHub repo/);
-  assert.match(prompt.notes[0]?.body ?? "", /GitHub remote/);
-  assert.equal(prompt.notes[1]?.title, "Before you confirm");
+  assert.equal(prompt.notes[0]?.title, "Local git repo detected");
+  assert.equal(prompt.notes[0]?.body, "/tmp/agentrail");
+  assert.equal(prompt.notes[1]?.title, "What these settings do");
+  assert.match(prompt.notes[1]?.body ?? "", /Target GitHub repo/);
+  assert.match(prompt.notes[1]?.body ?? "", /GitHub remote/);
+  assert.equal(prompt.notes[2]?.title, "Before you confirm");
   assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
   assert.equal(prompt.interactions[1]?.message, "GitHub remote (owner/repo)");
-  assert.match(stdout.toString(), /AgentRail local setup/i);
-  assert.match(stdout.toString(), /Local git repo detected: \/tmp\/agentrail/);
+  assert.doesNotMatch(stdout.toString(), /AgentRail local setup/i);
+  assert.doesNotMatch(stdout.toString(), /Local git repo detected:/);
   assert.match(stdout.toString(), /Review setup plan/i);
   assert.doesNotMatch(stdout.toString(), /Detected:/);
   assert.match(stdout.toString(), /Wrote setup files:/);
@@ -181,7 +183,7 @@ test("createPromptSession wraps Clack with AgentRail branding", async () => {
 
   assert.equal(value, "demo");
   assert.equal(calls[0][0], "intro");
-  assert.match(String(calls[0][1]), /AgentRail/i);
+  assert.match(String(calls[0][1]), /Local setup wizard/i);
   assert.match(String(calls[0][1]), /\n/);
   assert.equal(calls[1][0], "select");
   assert.equal((calls[1][1] as { message: string }).message, "Setup mode");
