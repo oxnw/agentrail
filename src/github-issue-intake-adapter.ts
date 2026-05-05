@@ -183,8 +183,10 @@ export class GitHubIssueIntakeAdapter {
 
     try {
       const url = new URL(payload.issueUrl);
-      const parts = url.pathname.split("/");
-      const [_, owner, repo] = parts;
+      const parts = url.pathname.split("/").filter(Boolean);
+      const [owner, repo] = parts[0] === "repos"
+        ? [parts[1], parts[2]]
+        : [parts[0], parts[1]];
       if (owner && repo) {
         return { owner, repo };
       }

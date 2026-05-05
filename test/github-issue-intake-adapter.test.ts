@@ -241,6 +241,24 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(stored!.source!.repo, "widgets");
   });
 
+  it("derives owner and repo from GitHub REST API issue urls when repository is missing", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const result = await adapter.ingest({
+      issueNumber: 30,
+      issueUrl: "https://api.github.com/repos/acme/widgets/issues/30",
+      issueTitle: "Missing repo mapping via API URL",
+    });
+
+    assert.strictEqual(result.identifier, "github:acme/widgets:issues/30");
+
+    const stored = queue.getRawTask(result.taskId);
+    assert.strictEqual(stored!.context.project, "acme/widgets");
+    assert.strictEqual(stored!.source!.owner, "acme");
+    assert.strictEqual(stored!.source!.repo, "widgets");
+  });
+
   it("rejects payloads that omit repository context and provide an unparseable issue url", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
