@@ -11,6 +11,7 @@ import { GitHubSubmitAdapter } from "./github-submit-adapter.js";
 import { MultiCiStatusAdapter } from "./multi-ci-status-adapter.js";
 import { TaskEventStore } from "./task-event-store.js";
 import { AgentTaskQueue } from "./agent-task-queue.js";
+import { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.js";
 
 loadDotEnv();
 
@@ -51,6 +52,7 @@ try {
     ciStatusAdapter: runtime.ciStatusAdapter,
     reviewFeedbackAdapter: runtime.reviewFeedbackAdapter,
     rollbackAdapter: runtime.rollbackAdapter,
+    intakeAdapter: runtime.intakeAdapter,
     authStore,
     now,
     publicBaseUrl,
@@ -198,7 +200,8 @@ function buildRuntime({
     rollbackAdapter: new GitHubRollbackAdapter({
       taskSources,
       githubToken
-    })
+    }),
+    intakeAdapter: new GitHubIssueIntakeAdapter({ taskQueue: agentQueue }),
   };
 }
 

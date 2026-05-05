@@ -123,6 +123,7 @@ interface RouteRequestOptions extends CreateServerOptions {
   request: http.IncomingMessage;
   response: http.ServerResponse;
   webhookStore: TaskWebhookSubscriptionStore;
+  intakeAdapter?: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
 }
 
 async function routeRequest({
@@ -134,6 +135,7 @@ async function routeRequest({
   ciStatusAdapter,
   reviewFeedbackAdapter,
   rollbackAdapter,
+  intakeAdapter = null,
   authStore,
   taskLifecycleStore,
   waitlistStore,
@@ -433,6 +435,29 @@ async function routeRequest({
 
   if (request.method === "POST" && pathname === "/providers/circleci/webhooks") {
     await handleCircleCiWebhook({ request, response, ciStatusAdapter });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/providers/github/intake") {
+    obs.operation = "github_issue_intake";
+    obs.provider = "github";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "tasks:write",
+      operation: "github_issue_intake"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleGitHubIssueIntake({
+      request,
+      response,
+      intakeAdapter,
+    });
     return;
   }
 
@@ -1527,6 +1552,40 @@ async function sendSendGridConfirmation({ entry, apiKey, from }: { entry: { name
   } catch (err) {
     process.stderr.write(`[sendgrid] fetch error: ${err instanceof Error ? err.message : String(err)}\n`);
     return "failed";
+  }
+}
+
+interface GitHubIssueIntakeOptions {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  intakeAdapter: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
+}
+
+async function handleGitHubIssueIntake({ request, response, intakeAdapter }: GitHubIssueIntakeOptions) {
+  if (!intakeAdapter || typeof intakeAdapter.ingest !== "function") {
+    writeError(response, 404, "not_found", "GitHub issue intake is not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  try {
+    const payload = await readJsonBody(request);
+    const body = await intakeAdapter.ingest(
+      payload,
+      request.headers["idempotency-key"] as string | undefined
+    );
+    writeJson(response, 201, {
+      data: body,
+      availableActions: ["get_task"]
+    });
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+
+    throw error;
   }
 }
 
