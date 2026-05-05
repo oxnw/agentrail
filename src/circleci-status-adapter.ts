@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { CiStatusSourceError } from "./github-actions-ci-adapter.ts";
+import { resolveTaskSource } from "./task-source-resolution.ts";
+import type { TaskRecord } from "./task-store.ts";
 
 const DEFAULT_CIRCLECI_API_BASE_URL = "https://circleci.com/api/v2";
 const DEFAULT_PIPELINE_LIMIT = 20;
@@ -17,8 +19,10 @@ export class CircleCiStatusAdapter {
   declare testResultsByJobKey: Map<string, any>;
   declare webhookSnapshots: Map<string, any>;
   declare processedWebhookIds: Set<string>;
+  declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
     taskSources = {},
+    getTask = null,
     circleciToken = process.env.CIRCLECI_TOKEN,
     webhookSecret = process.env.CIRCLECI_WEBHOOK_SECRET || null,
     fetch = globalThis.fetch,
@@ -30,6 +34,7 @@ export class CircleCiStatusAdapter {
     }
 
     this.taskSources = taskSources;
+    this.getTask = getTask;
     this.circleciToken = circleciToken;
     this.webhookSecret = webhookSecret;
     this.fetch = fetch;
@@ -42,7 +47,10 @@ export class CircleCiStatusAdapter {
   }
 
   async getTaskCiStatus(taskId) {
-    const source = lookupTaskSource(this.taskSources, taskId);
+    const source = resolveTaskSource(taskId, {
+      taskSources: this.taskSources,
+      getTask: this.getTask,
+    });
     if (!source || !isCircleCiSource(source)) {
       return null;
     }
