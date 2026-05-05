@@ -219,29 +219,22 @@ release bundle.
 
 | Status | Feature | Description |
 |--------|---------|-------------|
-| **Done** | Task lifecycle API | Issue → PR → CI → review → ship through one typed API |
-| **Done** | GitHub Actions CI adapter | Query CI status through unified endpoint |
-| **Done** | GitHub review feedback adapter | Structured review feedback for agents |
-| **Done** | GitHub submit adapter | Create PRs and submit work programmatically |
-| **Done** | GitHub ship adapter | Merge PRs and deploy with guardrails |
-| **Done** | TypeScript SDK | Typed client with retry logic, SSE streaming |
-| **Done** | Python SDK | Async client with structured errors |
-| **Done** | Agent auth & scoped API keys | Per-agent keys with fine-grained scopes |
-| **Done** | SSE event streams | Real-time task events with cursor replay |
-| **Done** | Webhook subscriptions | HMAC-signed delivery with retry logic |
-| **Done** | CircleCI CI adapter | Multi-CI support via adapter pattern |
-| **Done** | GitHub Issues task store | Use GitHub Issues as the task source |
-| **Done** | Rollback adapter | Revert shipped PRs safely |
-| **Done** | Waitlist & landing page | Design partner onboarding flow |
-| **In progress** | Railway production deploy | One-click hosted deployment |
-| **Planned** | Linear task adapter | Sync tasks from Linear projects |
-| **Planned** | Jira task adapter | Sync tasks from Jira boards |
-| **Planned** | GitLab CI adapter | GitLab pipelines as CI source |
-| **Planned** | GitLab merge request adapter | Submit and ship via GitLab MRs |
-| **Planned** | Multi-agent coordination | Task claiming, handoff, and conflict resolution |
-| **Planned** | Dashboard UI | Real-time view of agent activity and task state |
-| **Planned** | Usage analytics | Token savings tracking and agent performance metrics |
-| **Planned** | Cloud hosted offering | Managed AgentRail with team workspaces |
+| :white_check_mark: | Task lifecycle API | Issue → PR → CI → review → ship through one typed API |
+| :white_check_mark: | GitHub Actions adapter | CI status, PR submission, review feedback, merge & ship |
+| :white_check_mark: | CircleCI adapter | Multi-CI support via pluggable adapter pattern |
+| :white_check_mark: | TypeScript & Python SDKs | Typed clients with retry logic, SSE streaming, structured errors |
+| :white_check_mark: | Agent auth & scoped keys | Per-agent API keys with fine-grained scopes and audit |
+| :white_check_mark: | SSE event streams | Real-time task events with cursor replay and filtering |
+| :white_check_mark: | Webhook subscriptions | HMAC-signed delivery with retry and backoff |
+| :white_check_mark: | Rollback support | Safely revert shipped PRs when needed |
+| :construction: | Hosted deployment | One-click deploy to Railway or your own infra |
+| :construction: | Dashboard UI | Real-time view of agent activity and task state |
+| :dart: | Linear integration | Sync tasks from Linear projects |
+| :dart: | Jira integration | Sync tasks from Jira boards |
+| :dart: | GitLab adapter | CI pipelines, merge requests, and shipping via GitLab |
+| :dart: | Multi-agent coordination | Task claiming, handoff, and conflict resolution across agents |
+| :dart: | Usage analytics | Token savings tracking and agent performance metrics |
+| :dart: | Cloud offering | Managed AgentRail with team workspaces and hosted connectors |
 
 ## Repository Docs
 
