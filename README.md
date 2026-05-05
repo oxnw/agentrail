@@ -215,6 +215,34 @@ local API server, SDKs, demo flow, and operator-facing integration docs.
 Internal planning and architecture decision records are kept outside the public
 release bundle.
 
+## Roadmap
+
+| Status | Feature | Description |
+|--------|---------|-------------|
+| **Done** | Task lifecycle API | Issue → PR → CI → review → ship through one typed API |
+| **Done** | GitHub Actions CI adapter | Query CI status through unified endpoint |
+| **Done** | GitHub review feedback adapter | Structured review feedback for agents |
+| **Done** | GitHub submit adapter | Create PRs and submit work programmatically |
+| **Done** | GitHub ship adapter | Merge PRs and deploy with guardrails |
+| **Done** | TypeScript SDK | Typed client with retry logic, SSE streaming |
+| **Done** | Python SDK | Async client with structured errors |
+| **Done** | Agent auth & scoped API keys | Per-agent keys with fine-grained scopes |
+| **Done** | SSE event streams | Real-time task events with cursor replay |
+| **Done** | Webhook subscriptions | HMAC-signed delivery with retry logic |
+| **Done** | CircleCI CI adapter | Multi-CI support via adapter pattern |
+| **Done** | GitHub Issues task store | Use GitHub Issues as the task source |
+| **Done** | Rollback adapter | Revert shipped PRs safely |
+| **Done** | Waitlist & landing page | Design partner onboarding flow |
+| **In progress** | Railway production deploy | One-click hosted deployment |
+| **Planned** | Linear task adapter | Sync tasks from Linear projects |
+| **Planned** | Jira task adapter | Sync tasks from Jira boards |
+| **Planned** | GitLab CI adapter | GitLab pipelines as CI source |
+| **Planned** | GitLab merge request adapter | Submit and ship via GitLab MRs |
+| **Planned** | Multi-agent coordination | Task claiming, handoff, and conflict resolution |
+| **Planned** | Dashboard UI | Real-time view of agent activity and task state |
+| **Planned** | Usage analytics | Token savings tracking and agent performance metrics |
+| **Planned** | Cloud hosted offering | Managed AgentRail with team workspaces |
+
 ## Repository Docs
 
 - [Integration guide for Claude Code / Codex / Cursor](./docs/integration-guide.md)
@@ -223,7 +251,6 @@ release bundle.
 - [OpenAPI contract](./docs/api/task-lifecycle.openapi.yaml)
 - [Railway production deployment runbook](./docs/deployment/railway-production.md)
 - [End-to-end demo](./docs/demo/agentrail-e2e-demo.md)
-- [Release hygiene checklist](./docs/security/release-hygiene.md)
 - [Claude Code and Codex lifecycle example](./examples/issue-to-pr-lifecycle.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)

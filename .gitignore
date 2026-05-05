@@ -22,6 +22,16 @@ __pycache__/
 
 docs/demo/*.tmp
 
+# Internal Paperclip scripts
+scripts/ls_agents.py
+scripts/paperclip-issue-update.sh
+
+# Internal docs (not for end users)
+docs/typescript-migration.md
+docs/release-sdk-publishing.md
+docs/security/release-hygiene.md
+docs/testing/
+
 # Internal release-prep artifacts
 verify-browser.mjs
 verify-waitlist.mjs
