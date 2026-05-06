@@ -7,21 +7,40 @@ import { GitHubSubmitAdapter } from "../src/github-submit-adapter.ts";
 const taskId = "tsk_DEMOISSUETOSHIP01";
 const idempotencyKey = "idem-ship-001";
 
-function makeTaskSources(overrides = {}) {
-  return new Map([
-    [
-      taskId,
-      {
-        owner: "acme",
-        repo: "webapp",
-        branch: "feat/fix-auth",
-        baseBranch: "main",
-        issueNumber: 42,
-        prNumber: 7,
-        ...overrides,
-      },
-    ],
-  ]);
+function makeTask(overrides = {}) {
+  return {
+    id: taskId,
+    identifier: "AGEA-101",
+    title: "Ship provider-backed task",
+    description: "",
+    status: "in_review",
+    priority: "high",
+    assignee: { id: "agt_test", name: "Test Agent" },
+    acceptanceCriteria: [],
+    links: { issue: "https://github.com/acme/webapp/issues/42" },
+    context: { project: "acme/webapp", goal: "test" },
+    updatedAt: "2026-05-05T12:00:00Z",
+    availableActions: ["ship"],
+    submissions: [],
+    latestSubmissionId: null,
+    ciStatus: null,
+    reviewOutcome: null,
+    shipOperation: null,
+    rollbackOperation: null,
+    dueAt: null,
+    createdAt: "2026-05-05T12:00:00Z",
+    version: 1,
+    source: {
+      provider: "github",
+      owner: "acme",
+      repo: "webapp",
+      branch: "feat/fix-auth",
+      baseBranch: "main",
+      issueNumber: 42,
+      prNumber: 7,
+      ...overrides,
+    },
+  };
 }
 
 function makePR(overrides = {}) {
@@ -64,7 +83,7 @@ test("shipTask merges PR and closes issue (happy path)", async () => {
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url, options) => {
       fetchCalls.push({ url: String(url), method: options?.method ?? "GET" });
 
@@ -113,7 +132,7 @@ test("shipTask returns merged status without re-attempting when PR already merge
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url) => {
       fetchCalls.push({ url: String(url), method: "GET" });
 
@@ -146,7 +165,7 @@ test("shipTask rejects mismatched payload on same idempotency key with 409", asy
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url) => {
       if (String(url).includes("/pulls/7")) return jsonResponse(pr);
       if (String(url).includes("/commits/")) return jsonResponse({ state: "success" });
@@ -179,7 +198,7 @@ test("shipTask returns 409 when CI is failing", async () => {
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url) => {
       if (String(url).includes("/pulls/7")) return jsonResponse(pr);
       if (String(url).includes("/commits/abc123def456/status")) {
@@ -209,7 +228,7 @@ test("shipTask returns 409 when review is required (405 from GitHub)", async () 
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url, options) => {
       if (String(url).includes("/pulls/7") && !String(url).includes("/merge")) {
         return jsonResponse(pr);
@@ -244,7 +263,7 @@ test("shipTask returns 409 when PR has merge conflicts", async () => {
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url) => {
       if (String(url).includes("/pulls/7")) return jsonResponse(pr);
       return jsonResponse({});
@@ -271,7 +290,7 @@ test("shipTask returns 403 when user has insufficient permission", async () => {
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url, options) => {
       if (String(url).includes("/pulls/7") && !String(url).includes("/merge")) {
         return jsonResponse(pr);
@@ -312,7 +331,7 @@ test("shipTask delegates to the fallback lifecycle store when no task source exi
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: new Map(),
+    getTask: () => null,
     fetch: async () => jsonResponse({}),
     delegate,
   });
@@ -324,7 +343,7 @@ test("shipTask delegates to the fallback lifecycle store when no task source exi
 test("shipTask requires Idempotency-Key header", async () => {
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async () => jsonResponse({}),
   });
 
@@ -341,7 +360,7 @@ test("shipTask requires Idempotency-Key header", async () => {
 test("shipTask requires prNumber when not in task source", async () => {
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources({ prNumber: undefined }),
+    getTask: () => makeTask({ prNumber: undefined }),
     fetch: async () => jsonResponse({}),
   });
 

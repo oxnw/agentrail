@@ -45,7 +45,6 @@ test("GitHubRollbackAdapter resolves source from persisted task state", () => {
     },
   });
   const adapter = new GitHubRollbackAdapter({
-    taskSources: new Map(),
     githubToken: "test-token",
     getTask: () => task,
   });
@@ -57,4 +56,3 @@ test("GitHubRollbackAdapter resolves source from persisted task state", () => {
   assert.equal(source?.baseBranch, "develop");
   assert.equal(source?.pullNumber, 10);
 });
-

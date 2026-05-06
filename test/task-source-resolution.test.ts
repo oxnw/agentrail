@@ -33,38 +33,16 @@ function makeTask(partial: Partial<TaskRecord> & { id: string }): TaskRecord {
 }
 
 test("resolveTaskSource returns null when nothing is available", () => {
-  const source = resolveTaskSource("tsk_unknown", { taskSources: {}, getTask: () => null });
+  const source = resolveTaskSource("tsk_unknown", { getTask: () => null });
   assert.equal(source, null);
 });
 
-test("resolveTaskSource falls back to static task sources when no persisted state exists", () => {
-  const taskSources = new Map([
-    ["tsk_static", { provider: "github", owner: "acme", repo: "webapp", branch: "main" }],
-  ]);
-  const source = resolveTaskSource("tsk_static", { taskSources, getTask: () => null });
-  assert.deepEqual(source, { provider: "github", owner: "acme", repo: "webapp", branch: "main" });
-});
-
-test("resolveTaskSource tolerates task detail-shaped lookups when static source exists", () => {
-  const taskSources = new Map([
-    ["tsk_static", { provider: "github", owner: "acme", repo: "webapp", branch: "main" }],
-  ]);
-  const source = resolveTaskSource("tsk_static", {
-    taskSources,
-    getTask: () => ({ data: { id: "tsk_static" } } as any),
-  });
-  assert.deepEqual(source, { provider: "github", owner: "acme", repo: "webapp", branch: "main" });
-});
-
-test("resolveTaskSource prefers persisted task source over static", () => {
-  const taskSources = new Map([
-    ["tsk_1", { provider: "github", owner: "acme", repo: "webapp", branch: "main" }],
-  ]);
+test("resolveTaskSource returns persisted task source", () => {
   const task = makeTask({
     id: "tsk_1",
     source: { provider: "github", owner: "acme", repo: "webapp", branch: "feat/new" },
   });
-  const source = resolveTaskSource("tsk_1", { taskSources, getTask: () => task });
+  const source = resolveTaskSource("tsk_1", { getTask: () => task });
   assert.deepEqual(source, { provider: "github", owner: "acme", repo: "webapp", branch: "feat/new" });
 });
 
@@ -89,7 +67,7 @@ test("resolveTaskSource falls back branch/baseBranch/headSha from latest submiss
     ],
     latestSubmissionId: "sub_1",
   });
-  const source = resolveTaskSource("tsk_1", { taskSources: {}, getTask: () => task });
+  const source = resolveTaskSource("tsk_1", { getTask: () => task });
   assert.equal(source?.branch, "feat/submit");
   assert.equal(source?.baseBranch, "main");
   assert.equal(source?.headSha, "abc123");
@@ -118,7 +96,7 @@ test("resolveTaskSource returns null for submission-only task metadata", () => {
     latestSubmissionId: "sub_1",
   });
 
-  const source = resolveTaskSource("tsk_1", { taskSources: {}, getTask: () => task });
+  const source = resolveTaskSource("tsk_1", { getTask: () => task });
 
   assert.equal(source, null);
 });
@@ -140,7 +118,7 @@ test("resolveTaskSource prefers persisted source branch over submission branch",
     ],
     latestSubmissionId: "sub_1",
   });
-  const source = resolveTaskSource("tsk_1", { taskSources: {}, getTask: () => task });
+  const source = resolveTaskSource("tsk_1", { getTask: () => task });
   assert.equal(source?.branch, "persisted-branch");
 });
 
@@ -161,21 +139,12 @@ test("resolveTaskSource resolves pullNumber from submission when missing in pers
     ],
     latestSubmissionId: "sub_1",
   });
-  const source = resolveTaskSource("tsk_1", { taskSources: {}, getTask: () => task });
+  const source = resolveTaskSource("tsk_1", { getTask: () => task });
   assert.equal(source?.pullNumber, 99);
 });
 
-test("resolveTaskSource works for explicitly configured/demo tasks", () => {
-  const taskSources = new Map([
-    ["tsk_demo", { provider: "github", owner: "demo", repo: "app", pullNumber: 1, branch: "demo-branch" }],
-  ]);
-  const task = makeTask({ id: "tsk_demo" });
-  const source = resolveTaskSource("tsk_demo", { taskSources, getTask: () => task });
-  assert.deepEqual(source, { provider: "github", owner: "demo", repo: "app", pullNumber: 1, branch: "demo-branch" });
-});
-
 test("resolveTaskSource handles malformed/missing task state gracefully", () => {
-  const source = resolveTaskSource("tsk_missing", { taskSources: {}, getTask: () => null });
+  const source = resolveTaskSource("tsk_missing", { getTask: () => null });
   assert.equal(source, null);
 });
 
@@ -216,7 +185,6 @@ test("GitHubActionsCiAdapter resolves CI source from persisted task state", asyn
   };
 
   const adapter = new GitHubActionsCiAdapter({
-    taskSources: new Map(),
     getTask: () => task,
     githubToken: "test-token",
     fetch: mockFetch as any,
@@ -262,7 +230,6 @@ test("GitHubReviewFeedbackAdapter resolves pullNumber from persisted task submis
   };
 
   const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: new Map(),
     getTask: () => task,
     githubToken: "test-token",
     fetch: mockFetch as any,

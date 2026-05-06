@@ -18,13 +18,11 @@ export class RollbackSourceError extends Error {
 }
 
 export class GitHubRollbackAdapter {
-  declare taskSources: any;
   declare githubToken: string | undefined;
   declare fetch: typeof globalThis.fetch;
   declare apiBaseUrl: string;
   declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
-    taskSources = {},
     getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
@@ -34,7 +32,6 @@ export class GitHubRollbackAdapter {
       throw new TypeError("GitHubRollbackAdapter requires a fetch implementation.");
     }
 
-    this.taskSources = taskSources;
     this.getTask = getTask;
     this.githubToken = githubToken;
     this.fetch = fetch;
@@ -164,7 +161,6 @@ export class GitHubRollbackAdapter {
 
   lookupTaskSource(taskId) {
     return resolveTaskSource(taskId, {
-      taskSources: this.taskSources,
       getTask: this.getTask,
     });
   }

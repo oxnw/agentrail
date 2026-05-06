@@ -76,7 +76,7 @@ function renderSetupReadme(config: SetupConfig): string {
     "",
     "## Next Steps",
     "",
-    "1. Start the local API with `npm start` after you have configured the required environment variables and task sources.",
+    "1. Start the local API with `npm start` after you have configured the required environment variables.",
     "2. Fill `.agentrail/agent.env` from the example after you mint the agent key and choose the final `AGENTRAIL_AGENT_ID`; future `agentrail agent create/connect` work will automate this step.",
     "3. Export an operator/setup key as `AGENTRAIL_SETUP_API_KEY` and run `agentrail doctor`; setup is only complete when `/tasks/mine?status=in_progress&limit=1` returns assigned work for that agent.",
     `4. If you are enabling live providers, copy the \`${config.providers.github.tokenEnv}\`, \`${config.providers.circleci.tokenEnv}\`, and \`${config.providers.circleci.webhookSecretEnv}\` placeholders into \`.agentrail/agent.env\` after registration.`,

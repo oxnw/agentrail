@@ -978,7 +978,7 @@ paths:
                     status: failed
       responses:
         '202':
-          description: Webhook accepted and matched against known task sources
+          description: Webhook accepted and matched against persisted task source metadata
           content:
             application/json:
               schema:

@@ -53,8 +53,8 @@ rely on today:
 | Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented on the default server path. | **Legacy:** Placeholder demo keys are no longer valid on the core runtime. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
 | Local/self-hosted setup | **Current:** `agentrail init` writes local `.agentrail` scaffolding, and `agentrail doctor` verifies health, auth, profile/routing state, and `/tasks/mine` visibility. The middle auth/routing/setup bootstrap still happens through the public HTTP contracts. | **Legacy:** The removed demo runtime used a built-in fixture task instead of explicit task-store configuration. | **Planned:** The setup CLI follows `agentrail init` -> `agentrail server start` -> `agentrail agent create/connect`, writes local `.agentrail` config/env output, creates the agent identity/profile/key/routing state, and verifies `/tasks/mine`. |
 | Live task store | **Current:** The server reads durable task records from `AGENTRAIL_TASK_STORE_PATH`, can persist routing audit records through `AGENTRAIL_ROUTING_AUDIT_STORE_PATH`, and never falls back to hidden fixture data. | **Legacy:** The removed demo used an in-memory deterministic lifecycle store. | **Planned:** The control plane persists assigned tasks, routing decisions, lifecycle state, and event cursors in managed storage. |
-| Submit | **Current:** `mode: "adapter_managed"` lets the GitHub submit adapter create or reuse provider PRs from configured task sources. | **Legacy:** Artifact-style placeholder PR examples remain documentation-only; they are not a runtime mode. | **Planned:** Submit is always mediated by provider adapters, with idempotent create-or-reuse behavior and compact response state. |
-| CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries for configured task sources. | **Legacy:** The removed demo simulated CI and review transitions locally. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
+| Submit | **Current:** `mode: "adapter_managed"` lets the GitHub submit adapter create or reuse provider PRs from persisted `task.source` metadata. | **Legacy:** Artifact-style placeholder PR examples remain documentation-only; they are not a runtime mode. | **Planned:** Submit is always mediated by provider adapters, with idempotent create-or-reuse behavior and compact response state. |
+| CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries from persisted `task.source` metadata. | **Legacy:** The removed demo simulated CI and review transitions locally. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
 | Ship | **Current:** Ship and rollback routes are implemented behind adapter interfaces with idempotency keys and common state/error handling. | **Legacy:** The removed demo returned a deterministic queued ship result. | **Planned:** Managed control-plane deployments coordinate merge, deploy, rollback, and audit with least-privilege provider permissions. |
 
 ## First-Time Routing Bootstrap
@@ -121,7 +121,7 @@ into the normal lifecycle SDK used by coding agents.
 
 The OSS repository now exposes this as the primary submit contract:
 `mode: "adapter_managed"` lets `GitHubSubmitAdapter` create or reuse PRs from
-configured task sources, and the response can include `prUrl`, `prNumber`, and
+persisted `task.source` metadata, and the response can include `prUrl`, `prNumber`, and
 whether the PR was created or reused.
 
 Local deterministic examples may still show placeholder PR artifacts so the
@@ -151,16 +151,14 @@ cd agentrail
 npm install
 cp .env.example .env
 cp examples/self-hosted-task-store.json .agentrail.tasks.json
-cp examples/self-hosted-task-sources.json .agentrail.task-sources.json
 ```
 
-Edit the copied JSON files to match your repository, issue, branch, and agent
-id, then start the server:
+Edit the copied task-store JSON to match your repository, issue, branch, and
+agent id, then start the server:
 
 ```bash
 export GITHUB_TOKEN=ghp_your_token
 export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
-export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
 npm start
 ```
 
@@ -460,31 +458,22 @@ Recommended scopes:
 ## Live GitHub and CI Adapters
 
 The local demo is deterministic only in explicit demo mode. To connect task
-lifecycle calls to live providers, configure task sources and provider tokens
-before starting the default server.
+lifecycle calls to live providers, configure provider tokens before starting
+the default server. Live adapters read persisted `task.source` metadata from
+the task record; if an older task is missing required source fields, repair it
+through the operator API or `agentrail task source repair`.
 
 ```bash
 export GITHUB_TOKEN=ghp_...
 export CIRCLECI_TOKEN=...
 export CIRCLECI_WEBHOOK_SECRET=...
-export AGENTRAIL_TASK_SOURCES='{
-  "tsk_live_example": {
-    "ciProvider": "circleci",
-    "owner": "oxnw",
-    "repo": "agentrail",
-    "projectSlug": "gh/oxnw/agentrail",
-    "branch": "main",
-    "headSha": "abc123",
-    "submissionId": "sub_live_001"
-  }
-}'
 npm start
 ```
 
 Provider behavior:
 
 - `GITHUB_TOKEN` enables GitHub PR submission and GitHub Actions CI status.
-- `CIRCLECI_TOKEN` enables CircleCI status for task sources with
+- `CIRCLECI_TOKEN` enables CircleCI status for tasks with
   `ciProvider: "circleci"`.
 - `CIRCLECI_WEBHOOK_SECRET` verifies inbound CircleCI webhook requests at
   `POST /providers/circleci/webhooks`.
@@ -513,7 +502,7 @@ events.
 | `409 conflict` on submit or ship | The idempotency key was reused with a different body, or the task is not in a valid state | Use a new key for a new attempt, or follow `availableActions`. |
 | `503` with `x-agentrail-fallback: true` | Fallback mode is enabled | Set `AGENTRAIL_FALLBACK_MODE=false` and restart. |
 | Empty `tasks.data` | No task matches the status filter | Try `status=todo`, remove the filter, or check the task assignment source. |
-| CI stays pending | No live CI adapter is configured for the task | Set `GITHUB_TOKEN` or `CIRCLECI_TOKEN` and verify `AGENTRAIL_TASK_SOURCES`. |
+| CI stays pending | No live CI adapter is configured for the task, or the task is missing persisted source metadata | Set `GITHUB_TOKEN` or `CIRCLECI_TOKEN`, then inspect or repair `task.source`. |
 
 ## Related Documentation
 
@@ -523,6 +512,5 @@ events.
 - [Local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md)
 - [OpenAPI contract](./api/task-lifecycle.openapi.yaml)
 - [Self-hosted task store example](../examples/self-hosted-task-store.json)
-- [Self-hosted task sources example](../examples/self-hosted-task-sources.json)
 - [Claude Code and Codex lifecycle example](../examples/issue-to-pr-lifecycle.md)
 - [Railway production runbook](./deployment/railway-production.md)

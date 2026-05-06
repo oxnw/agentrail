@@ -15,6 +15,33 @@ import {
   jobCompletedWebhook
 } from "./fixtures/circleci-fixtures.js";
 
+function makeTask(source) {
+  return {
+    id: circleCiTaskId,
+    identifier: "AGEA-101",
+    title: "Persist CircleCI metadata",
+    description: "",
+    status: "in_review",
+    priority: "high",
+    assignee: { id: "agt_test", name: "Test Agent" },
+    acceptanceCriteria: [],
+    links: { issue: "https://example.com/issues/101" },
+    context: { project: "oxnw/agentrail", goal: "test" },
+    updatedAt: "2026-05-05T12:00:00Z",
+    availableActions: ["view_ci_status"],
+    submissions: [],
+    latestSubmissionId: null,
+    ciStatus: null,
+    reviewOutcome: null,
+    shipOperation: null,
+    rollbackOperation: null,
+    dueAt: null,
+    createdAt: "2026-05-05T12:00:00Z",
+    version: 1,
+    source,
+  };
+}
+
 async function listen(server) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -207,9 +234,8 @@ test("POST /providers/circleci/webhooks accepts a signed CircleCI event and prim
   const adapter = new CircleCiStatusAdapter({
     circleciToken: "circleci_test_token",
     webhookSecret: "super-secret",
-    taskSources: {
-      [circleCiTaskId]: circleCiTaskSource
-    },
+    getTask: () => makeTask(circleCiTaskSource),
+    listTasks: () => [makeTask(circleCiTaskSource)],
     fetch: async (url) => {
       if (String(url).endsWith("/project/gh/oxnw/agentrail/101/tests")) {
         return jsonResponse({

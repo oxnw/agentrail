@@ -6,22 +6,47 @@ import { GitHubActionsCiAdapter } from "../src/github-actions-ci-adapter.ts";
 
 const taskId = "tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V";
 
+function makeTask(source) {
+  return {
+    id: taskId,
+    identifier: "AGEA-101",
+    title: "Persist provider metadata",
+    description: "",
+    status: "in_review",
+    priority: "high",
+    assignee: { id: "agt_test", name: "Test Agent" },
+    acceptanceCriteria: [],
+    links: { issue: "https://example.com/issues/101" },
+    context: { project: "oxnw/agentrail", goal: "test" },
+    updatedAt: "2026-05-05T12:00:00Z",
+    availableActions: ["ship", "view_ci_status"],
+    submissions: [],
+    latestSubmissionId: null,
+    ciStatus: null,
+    reviewOutcome: null,
+    shipOperation: null,
+    rollbackOperation: null,
+    dueAt: null,
+    createdAt: "2026-05-05T12:00:00Z",
+    version: 1,
+    source: {
+      provider: "github",
+      ...source,
+    },
+  };
+}
+
 test("GitHubActionsCiAdapter summarizes multiple workflow files and failed test details", async () => {
   const fetchCalls = [];
   const adapter = new GitHubActionsCiAdapter({
     githubToken: "ghs_test_token",
-    taskSources: new Map([
-      [
-        taskId,
-        {
-          owner: "oxnw",
-          repo: "agentrail",
-          branch: "feature/ci-status",
-          headSha: "abc123",
-          submissionId: "sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2"
-        }
-      ]
-    ]),
+    getTask: () => makeTask({
+      owner: "oxnw",
+      repo: "agentrail",
+      branch: "feature/ci-status",
+      headSha: "abc123",
+      submissionId: "sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2",
+    }),
     fetch: async (url, options) => {
       fetchCalls.push({ url: String(url), options });
 
@@ -191,15 +216,13 @@ test("GitHubActionsCiAdapter summarizes multiple workflow files and failed test 
 
 test("GitHubActionsCiAdapter keeps green responses compact", async () => {
   const adapter = new GitHubActionsCiAdapter({
-    taskSources: {
-      [taskId]: {
-        owner: "oxnw",
-        repo: "agentrail",
-        branch: "main",
-        headSha: "def456",
-        submissionId: "sub_green"
-      }
-    },
+    getTask: () => makeTask({
+      owner: "oxnw",
+      repo: "agentrail",
+      branch: "main",
+      headSha: "def456",
+      submissionId: "sub_green",
+    }),
     fetch: async (url) => {
       if (String(url).includes("/actions/runs?")) {
         return jsonResponse({
@@ -251,7 +274,6 @@ test("GitHubActionsCiAdapter keeps green responses compact", async () => {
 
 test("GitHubActionsCiAdapter resolves CI source from persisted task state", async () => {
   const adapter = new GitHubActionsCiAdapter({
-    taskSources: {},
     getTask: () => ({
       id: taskId,
       identifier: "AGEA-101",

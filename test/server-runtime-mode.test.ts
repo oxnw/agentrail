@@ -16,15 +16,6 @@ test("server mode does not expose a seeded lifecycle fixture by default", async 
       ...process.env,
       AGENTRAIL_HOST: "127.0.0.1",
       AGENTRAIL_PORT: String(port),
-      AGENTRAIL_TASK_SOURCES: JSON.stringify({
-        tsk_LIVEONLY01: {
-          provider: "github",
-          owner: "oxnw",
-          repo: "agentrail",
-          issueNumber: 96,
-          defaultBranch: "main"
-        }
-      }),
       GITHUB_TOKEN: "ghp_testtoken",
       CIRCLECI_TOKEN: "",
       CIRCLECI_WEBHOOK_SECRET: ""
@@ -86,15 +77,6 @@ test("server mode exposes routing control plane routes", async (t) => {
       ...process.env,
       AGENTRAIL_HOST: "127.0.0.1",
       AGENTRAIL_PORT: String(port),
-      AGENTRAIL_TASK_SOURCES: JSON.stringify({
-        tsk_ROUTINGRUNTIME01: {
-          provider: "github",
-          owner: "oxnw",
-          repo: "agentrail",
-          issueNumber: 99,
-          defaultBranch: "main"
-        }
-      }),
       GITHUB_TOKEN: "ghp_testtoken",
       CIRCLECI_TOKEN: "",
       CIRCLECI_WEBHOOK_SECRET: ""
@@ -246,15 +228,6 @@ test("server mode serves configured durable task store records", async (t) => {
       AGENTRAIL_HOST: "127.0.0.1",
       AGENTRAIL_PORT: String(port),
       AGENTRAIL_TASK_STORE_PATH: storagePath,
-      AGENTRAIL_TASK_SOURCES: JSON.stringify({
-        [storedTask.id]: {
-          provider: "github",
-          owner: "oxnw",
-          repo: "agentrail",
-          issueNumber: 97,
-          defaultBranch: "main",
-        },
-      }),
       GITHUB_TOKEN: "ghp_testtoken",
       AGENTRAIL_MODE: "server",
       CIRCLECI_TOKEN: "",

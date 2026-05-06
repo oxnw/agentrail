@@ -18,13 +18,38 @@ import {
   workflowCompletedWebhook
 } from "./fixtures/circleci-fixtures.js";
 
+function makeTask(source) {
+  return {
+    id: circleCiTaskId,
+    identifier: "AGEA-101",
+    title: "Persist CircleCI metadata",
+    description: "",
+    status: "in_review",
+    priority: "high",
+    assignee: { id: "agt_test", name: "Test Agent" },
+    acceptanceCriteria: [],
+    links: { issue: "https://example.com/issues/101" },
+    context: { project: "oxnw/agentrail", goal: "test" },
+    updatedAt: "2026-05-05T12:00:00Z",
+    availableActions: ["view_ci_status"],
+    submissions: [],
+    latestSubmissionId: null,
+    ciStatus: null,
+    reviewOutcome: null,
+    shipOperation: null,
+    rollbackOperation: null,
+    dueAt: null,
+    createdAt: "2026-05-05T12:00:00Z",
+    version: 1,
+    source,
+  };
+}
+
 test("CircleCiStatusAdapter summarizes workflows, failed tests, and flaky hints from CircleCI", async () => {
   const fetchCalls = [];
   const adapter = new CircleCiStatusAdapter({
     circleciToken: "circleci_test_token",
-    taskSources: {
-      [circleCiTaskId]: circleCiTaskSource
-    },
+    getTask: () => makeTask(circleCiTaskSource),
     fetch: async (url, options) => {
       fetchCalls.push({ url: String(url), options });
 
@@ -117,7 +142,8 @@ test("CircleCiStatusAdapter reuses webhook snapshots instead of polling pipeline
   const adapter = new CircleCiStatusAdapter({
     circleciToken: "circleci_test_token",
     webhookSecret: "super-secret",
-    taskSources: new Map([[circleCiTaskId, circleCiTaskSource]]),
+    getTask: () => makeTask(circleCiTaskSource),
+    listTasks: () => [makeTask(circleCiTaskSource)],
     fetch: async (url) => {
       fetchCalls.push(String(url));
 

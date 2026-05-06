@@ -7,6 +7,33 @@ import {
   ReviewFeedbackSourceError
 } from "../src/github-review-feedback-adapter.ts";
 
+function makeTask(source = {}, submissions = []) {
+  return {
+    id: "tsk_abc",
+    identifier: "AGEA-101",
+    title: "Persist provider metadata",
+    description: "",
+    status: "in_review",
+    priority: "high",
+    assignee: { id: "agt_test", name: "Test Agent" },
+    acceptanceCriteria: [],
+    links: { issue: "https://example.com/issues/101" },
+    context: { project: "acme/web", goal: "test" },
+    updatedAt: "2026-05-05T12:00:00Z",
+    availableActions: ["ship", "view_review_feedback"],
+    submissions,
+    latestSubmissionId: submissions[0]?.id ?? null,
+    ciStatus: null,
+    reviewOutcome: null,
+    shipOperation: null,
+    rollbackOperation: null,
+    dueAt: null,
+    createdAt: "2026-05-05T12:00:00Z",
+    version: 2,
+    source: source ? { provider: "github", ...source } : null,
+  };
+}
+
 function mockFetch(routes) {
   return async (url) => {
     for (const [pattern, handler] of Object.entries(routes)) {
@@ -25,7 +52,7 @@ function jsonResponse(body) {
 
 test("getTaskReviewFeedback returns null for unknown task", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: {},
+    getTask: () => null,
     fetch: async () => ({ ok: true, json: async () => [] })
   });
 
@@ -35,9 +62,7 @@ test("getTaskReviewFeedback returns null for unknown task", async () => {
 
 test("getTaskReviewFeedback unifies reviews, review comments, and issue comments", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: {
-      tsk_abc: { owner: "acme", repo: "web", pullNumber: 42 }
-    },
+    getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 42 }),
     fetch: mockFetch({
       "pulls/42/reviews": jsonResponse([
         {
@@ -102,9 +127,7 @@ test("getTaskReviewFeedback unifies reviews, review comments, and issue comments
 
 test("getTaskReviewFeedback returns pending decision when no reviews exist", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: {
-      tsk_abc: { owner: "acme", repo: "web", pullNumber: 42 }
-    },
+    getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 42 }),
     fetch: mockFetch({
       "pulls/42/reviews": jsonResponse([]),
       "pulls/42/comments": jsonResponse([]),
@@ -121,9 +144,7 @@ test("getTaskReviewFeedback returns pending decision when no reviews exist", asy
 
 test("getTaskReviewFeedback throws ReviewFeedbackSourceError on GitHub 403", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: {
-      tsk_abc: { owner: "acme", repo: "web", pullNumber: 42 }
-    },
+    getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 42 }),
     fetch: async () => ({
       ok: false,
       status: 403,
@@ -144,9 +165,7 @@ test("getTaskReviewFeedback throws ReviewFeedbackSourceError on GitHub 403", asy
 
 test("getTaskReviewFeedback validates task source requires pullNumber", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: {
-      tsk_abc: { owner: "acme", repo: "web" }
-    },
+    getTask: () => makeTask({ owner: "acme", repo: "web" }),
     fetch: async () => ({ ok: true, json: async () => [] })
   });
 
@@ -163,7 +182,6 @@ test("getTaskReviewFeedback validates task source requires pullNumber", async ()
 
 test("getTaskReviewFeedback resolves pullNumber from persisted task submissions", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: {},
     getTask: () => ({
       id: "tsk_abc",
       identifier: "AGEA-101",
@@ -221,9 +239,7 @@ test("getTaskReviewFeedback resolves pullNumber from persisted task submissions"
 
 test("getTaskReviewFeedback extracts suggestion blocks from review comments", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
-    taskSources: {
-      tsk_abc: { owner: "acme", repo: "web", pullNumber: 7 }
-    },
+    getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 7 }),
     fetch: mockFetch({
       "pulls/7/reviews": jsonResponse([]),
       "pulls/7/comments": jsonResponse([

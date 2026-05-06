@@ -6,7 +6,6 @@ const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 const IDEMPOTENCY_TAG = "<!-- agentrail-idempotency-key:";
 
 export class GitHubSubmitAdapter {
-  declare taskSources: any;
   declare githubToken: string | undefined;
   declare fetch: typeof globalThis.fetch;
   declare apiBaseUrl: string;
@@ -14,7 +13,6 @@ export class GitHubSubmitAdapter {
   declare idempotencyRecords: Map<string, any>;
   declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
-    taskSources = {},
     getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
@@ -25,7 +23,6 @@ export class GitHubSubmitAdapter {
       throw new TypeError("GitHubSubmitAdapter requires a fetch implementation.");
     }
 
-    this.taskSources = taskSources;
     this.getTask = getTask;
     this.githubToken = githubToken;
     this.fetch = fetch;
@@ -36,14 +33,13 @@ export class GitHubSubmitAdapter {
 
   async submitTask(taskId, payload, idempotencyKey) {
     const source = resolveTaskSource(taskId, {
-      taskSources: this.taskSources,
       getTask: this.getTask,
     });
     if (!source) {
       if (this.delegate) {
         return this.delegate.submitTask(taskId, payload, idempotencyKey);
       }
-      throw new TaskLifecycleError(404, "not_found", "No task source configured for this task.", {
+      throw new TaskLifecycleError(404, "not_found", "No persisted task source metadata found for this task.", {
         availableActions: ["list_my_tasks"],
       });
     }
@@ -160,14 +156,13 @@ export class GitHubSubmitAdapter {
 
   async shipTask(taskId, payload, idempotencyKey) {
     const source = resolveTaskSource(taskId, {
-      taskSources: this.taskSources,
       getTask: this.getTask,
     });
     if (!source) {
       if (this.delegate && typeof this.delegate.shipTask === "function") {
         return this.delegate.shipTask(taskId, payload, idempotencyKey);
       }
-      throw new TaskLifecycleError(404, "not_found", "No task source configured for this task.", {
+      throw new TaskLifecycleError(404, "not_found", "No persisted task source metadata found for this task.", {
         availableActions: ["list_my_tasks"],
       });
     }

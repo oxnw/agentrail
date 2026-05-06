@@ -70,4 +70,5 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.match(readme, /AgentRail expects `GITHUB_TOKEN`/i);
   assert.match(readme, /does not prompt for live provider tokens because init is designed to stay non-secret/i);
   assert.match(readme, /mode-0600 boundary for agent and provider credentials/i);
+  assert.doesNotMatch(readme, /task sources/i);
 });
