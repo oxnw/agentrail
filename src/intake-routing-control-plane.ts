@@ -60,6 +60,7 @@ export interface AgentProfile {
   maxConcurrentTasks: number;
   source: "agent_created" | "operator_admin" | "skill_assignment_sync" | "config_file_import";
   sourceRef: string;
+  changeReason: string;
   updatedBy: string;
   updatedAt: string;
 }
@@ -345,7 +346,8 @@ export class RoutingControlPlane {
 
   getCurrentRuleSet(): RoutingRuleSet | null {
     if (this.routingRuleStore) {
-      return this.routingRuleStore.getCurrentRuleSet();
+      const ruleSet = this.routingRuleStore.getCurrentRuleSet();
+      return ruleSet ? clone(ruleSet) : null;
     }
     return this.ruleSets.length > 0 ? clone(this.ruleSets[this.ruleSets.length - 1]!) : null;
   }
@@ -353,7 +355,7 @@ export class RoutingControlPlane {
   replaceRuleSet(payload: RoutingRuleSetReplaceRequest, createdBy: string, idempotencyKey?: string): RoutingRuleSet {
     this.validateRuleSetPayload(payload);
     if (this.routingRuleStore) {
-      return this.routingRuleStore.replaceRuleSet(payload, createdBy, idempotencyKey);
+      return clone(this.routingRuleStore.replaceRuleSet(payload, createdBy, idempotencyKey));
     }
 
     const fingerprint = sha256(payload);
@@ -405,7 +407,8 @@ export class RoutingControlPlane {
 
   getAgentProfile(agentId: string): AgentProfile | null {
     if (this.agentProfileStore) {
-      return this.agentProfileStore.getAgentProfile(agentId);
+      const profile = this.agentProfileStore.getAgentProfile(agentId);
+      return profile ? clone(profile) : null;
     }
     return this.profiles.has(agentId) ? clone(this.profiles.get(agentId)!) : null;
   }
@@ -413,7 +416,7 @@ export class RoutingControlPlane {
   replaceAgentProfile(agentId: string, payload: AgentProfileReplaceRequest, updatedBy: string, idempotencyKey?: string): AgentProfile {
     this.validateAgentProfilePayload(agentId, payload);
     if (this.agentProfileStore) {
-      return this.agentProfileStore.replaceAgentProfile(agentId, payload, updatedBy, idempotencyKey);
+      return clone(this.agentProfileStore.replaceAgentProfile(agentId, payload, updatedBy, idempotencyKey));
     }
 
     const fingerprint = sha256({ agentId, payload });
@@ -443,6 +446,7 @@ export class RoutingControlPlane {
       maxConcurrentTasks: payload.maxConcurrentTasks,
       source: "operator_admin",
       sourceRef: payload.sourceRef,
+      changeReason: payload.changeReason,
       updatedBy,
       updatedAt: this.now().toISOString(),
     };
@@ -537,14 +541,16 @@ export class RoutingControlPlane {
 
   getRoutingAudit(decisionId: string): RoutingAuditRecord | null {
     if (this.routingAuditStore) {
-      return this.routingAuditStore.getRoutingAudit(decisionId);
+      const audit = this.routingAuditStore.getRoutingAudit(decisionId);
+      return audit ? clone(audit) : null;
     }
     return this.audits.has(decisionId) ? clone(this.audits.get(decisionId)!) : null;
   }
 
   private getRoutingIdempotencyEntry<T>(key: string): IdempotencyEntry<T> | null {
     if (this.routingAuditStore) {
-      return this.routingAuditStore.getIdempotencyEntry<T>(key);
+      const entry = this.routingAuditStore.getIdempotencyEntry<T>(key);
+      return entry ? clone(entry) : null;
     }
     const entry = this.idempotency.get(key) ?? null;
     return entry ? clone(entry as IdempotencyEntry<T>) : null;
@@ -926,7 +932,7 @@ export class RoutingControlPlane {
 
   private listAgentProfiles(): AgentProfile[] {
     if (this.agentProfileStore) {
-      return this.agentProfileStore.listProfiles();
+      return this.agentProfileStore.listProfiles().map(clone);
     }
     return [...this.profiles.values()].map(clone);
   }
