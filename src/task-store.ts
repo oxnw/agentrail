@@ -172,6 +172,7 @@ function isPersistedState(value: unknown): value is PersistedState {
 function isLegacyTaskRecord(value: unknown): value is TaskRecord {
   if (!isObject(value)) return false;
   if (typeof value.id !== "string" || typeof value.identifier !== "string" || typeof value.title !== "string") return false;
+  if (typeof value.description !== "string") return false;
   if (typeof value.status !== "string" || typeof value.priority !== "string") return false;
   if (typeof value.updatedAt !== "string" || typeof value.createdAt !== "string" || typeof value.version !== "number") return false;
   if (!Array.isArray(value.availableActions) || !Array.isArray(value.acceptanceCriteria) || !Array.isArray(value.submissions)) return false;

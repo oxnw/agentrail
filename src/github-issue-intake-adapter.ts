@@ -26,6 +26,15 @@ export interface GitHubIssueIntakeAdapterConfig {
   now?: () => Date;
 }
 
+interface GitHubRepositoryRef {
+  owner: string;
+  repo: string;
+}
+
+function hasField<Key extends PropertyKey>(value: object, key: Key): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 export class GitHubIssueIntakeAdapter {
   private taskQueue: AgentTaskQueue;
   private now: () => Date;
@@ -42,8 +51,76 @@ export class GitHubIssueIntakeAdapter {
       });
     }
 
+    const repository = this.resolveRepository(payload);
+    const identifier = this.buildIdentifier(repository, payload.issueNumber);
+
+    if (idempotencyKey) {
+      const cached = this.taskQueue.getIdempotencyEntry(idempotencyKey);
+      if (cached) {
+        return cached.response as GitHubIssueIntakeResult;
+      }
+    }
+
+    const existing = this.taskQueue.findTaskByIdentifier(identifier);
+
+    if (existing) {
+      const hasBody = hasField(payload, "body");
+      const hasLabels = hasField(payload, "labels");
+      const hasState = hasField(payload, "state");
+      const hasAssignees = hasField(payload, "assignees");
+      const description = hasBody ? (payload.body ?? "") : existing.description;
+      const acceptanceCriteria = hasBody ? this.extractAcceptanceCriteria(payload.body ?? "") : existing.acceptanceCriteria;
+      const labels = hasLabels ? (payload.labels ?? []) : (existing.source?.labels ?? []);
+      const assigneeLogins = hasAssignees
+        ? (payload.assignees ?? []).map(a => a.login)
+        : (existing.source?.assignees ?? []);
+
+      const updated = this.taskQueue.updateTask(existing.id, {
+        title: payload.issueTitle ?? existing.title,
+        description,
+        status: hasState ? this.mapStatus(payload.state) : existing.status,
+        priority: hasLabels ? this.mapPriority(payload.labels ?? []) : existing.priority,
+        assignee: hasAssignees ? this.mapAssignee(payload.assignees ?? []) : existing.assignee,
+        acceptanceCriteria,
+        links: { issue: payload.issueUrl },
+        context: {
+          project: `${repository.owner}/${repository.repo}`,
+          goal: `GitHub issue intake: #${payload.issueNumber}`,
+        },
+        source: {
+          ...existing.source,
+          provider: "github",
+          owner: repository.owner,
+          repo: repository.repo,
+          issueNumber: payload.issueNumber,
+          labels,
+          assignees: assigneeLogins,
+          deliveryId: idempotencyKey ?? existing.source?.deliveryId,
+          receivedAt: this.now().toISOString(),
+        },
+      });
+
+      if (!updated) {
+        throw new TaskLifecycleError(500, "internal_error", "Failed to update existing task.", { availableActions: ["retry"] });
+      }
+
+      const result: GitHubIssueIntakeResult = {
+        taskId: updated.id,
+        identifier: updated.identifier,
+        status: updated.status,
+        availableActions: updated.availableActions,
+        createdAt: updated.createdAt,
+      };
+
+      if (idempotencyKey) {
+        this.taskQueue.setIdempotencyEntry(idempotencyKey, { fingerprint: identifier, response: result });
+      }
+
+      return result;
+    }
+
     const taskRecord = this.taskQueue.createTask({
-      identifier: this.buildIdentifier(payload),
+      identifier,
       title: payload.issueTitle ?? `Issue #${payload.issueNumber}`,
       description: payload.body ?? "",
       status: this.mapStatus(payload.state),
@@ -53,7 +130,7 @@ export class GitHubIssueIntakeAdapter {
         issue: payload.issueUrl,
       },
       context: {
-        project: payload.repository ? `${payload.repository.owner}/${payload.repository.repo}` : null,
+        project: `${repository.owner}/${repository.repo}`,
         goal: `GitHub issue intake: #${payload.issueNumber}`,
       },
       acceptanceCriteria: this.extractAcceptanceCriteria(payload.body ?? ""),
@@ -67,33 +144,62 @@ export class GitHubIssueIntakeAdapter {
       rollbackOperation: null,
       dueAt: null,
       version: 1,
+      source: {
+        provider: "github",
+        owner: repository.owner,
+        repo: repository.repo,
+        issueNumber: payload.issueNumber,
+        labels: payload.labels ?? [],
+        assignees: (payload.assignees ?? []).map(a => a.login),
+        deliveryId: idempotencyKey,
+        receivedAt: this.now().toISOString(),
+      },
     });
 
-    return {
+    const result: GitHubIssueIntakeResult = {
       taskId: taskRecord.id,
       identifier: taskRecord.identifier,
       status: taskRecord.status,
       availableActions: taskRecord.availableActions,
       createdAt: taskRecord.createdAt,
     };
+
+    if (idempotencyKey) {
+      this.taskQueue.setIdempotencyEntry(idempotencyKey, { fingerprint: identifier, response: result });
+    }
+
+    return result;
   }
 
   /** Build a deterministic identifier from the issue URL, e.g. "github:oxnw/agentrail:issues/10". */
-  private buildIdentifier(payload: GitHubIssueIntakePayload): string {
-    if (payload.repository) {
-      return `github:${payload.repository.owner}/${payload.repository.repo}:issues/${payload.issueNumber}`;
+  private buildIdentifier(repository: GitHubRepositoryRef, issueNumber: number): string {
+    return `github:${repository.owner}/${repository.repo}:issues/${issueNumber}`;
+  }
+
+  private resolveRepository(payload: GitHubIssueIntakePayload): GitHubRepositoryRef {
+    if (payload.repository?.owner && payload.repository.repo) {
+      return payload.repository;
     }
+
     try {
       const url = new URL(payload.issueUrl);
-      const parts = url.pathname.split("/");
-      const [_, owner, repo] = parts;
+      const parts = url.pathname.split("/").filter(Boolean);
+      const [owner, repo] = parts[0] === "repos"
+        ? [parts[1], parts[2]]
+        : [parts[0], parts[1]];
       if (owner && repo) {
-        return `github:${owner}/${repo}:issues/${payload.issueNumber}`;
+        return { owner, repo };
       }
     } catch {
       // fall through
     }
-    return `github:issues/${payload.issueNumber}`;
+
+    throw new TaskLifecycleError(
+      400,
+      "validation_error",
+      "`repository` is required when `issueUrl` cannot be parsed into owner/repo context.",
+      { availableActions: ["retry"] },
+    );
   }
 
   private mapStatus(state?: string | null): "todo" | "in_progress" | "blocked" | "done" | "cancelled" {
