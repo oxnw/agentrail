@@ -9,6 +9,7 @@ import { CiStatusSourceError } from "./github-actions-ci-adapter.ts";
 import type { RoutingControlPlane } from "./intake-routing-control-plane.ts";
 import { ReviewFeedbackSourceError } from "./github-review-feedback-adapter.ts";
 import { RollbackSourceError } from "./github-rollback-adapter.ts";
+import { createSetupVerificationTask } from "./setup-verification-task.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 import { CursorExpiredError, matchesFilters, TaskEventStore } from "./task-event-store.ts";
 import {
@@ -473,6 +474,31 @@ async function routeRequest({
       response,
       routingControlPlane,
       decisionId: routingAuditMatch[1]
+    });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/operator/setup/verification-task") {
+    obs.operation = "create_setup_verification_task";
+    obs.provider = "setup_verification";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:admin",
+      operation: "create_setup_verification_task"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleCreateSetupVerificationTask({
+      request,
+      response,
+      routingControlPlane,
+      taskLifecycleStore,
+      now
     });
     return;
   }
@@ -1199,6 +1225,46 @@ function handleGetRoutingAudit({
     availableActions: ["view_rule_set"],
     meta: responseMeta()
   });
+}
+
+async function handleCreateSetupVerificationTask({
+  request,
+  response,
+  routingControlPlane,
+  taskLifecycleStore,
+  now
+}: {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+  taskLifecycleStore: unknown;
+  now: () => Date;
+}) {
+  if (!ensureRoutingControlPlane({ response, routingControlPlane })) {
+    return;
+  }
+
+  try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const payload = await readJsonBody(request);
+    const body = createSetupVerificationTask({
+      payload: payload as Parameters<typeof createSetupVerificationTask>[0]["payload"],
+      routingControlPlane,
+      taskLifecycleStore,
+      idempotencyKey,
+      now
+    });
+    writeJson(response, 201, {
+      ...body,
+      meta: responseMeta()
+    });
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+    throw error;
+  }
 }
 
 interface SubmitTaskOptions {

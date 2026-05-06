@@ -178,6 +178,20 @@ interface IdempotencyEntry<T> {
 export interface RoutingControlPlaneOptions {
   now?: () => Date;
   taskQueue: AgentTaskQueue;
+  agentProfileStore?: {
+    getAgentProfile(agentId: string): AgentProfile | null;
+    listProfiles(): AgentProfile[];
+    replaceAgentProfile(
+      agentId: string,
+      payload: AgentProfileReplaceRequest,
+      updatedBy: string,
+      idempotencyKey?: string
+    ): AgentProfile;
+  };
+  routingRuleStore?: {
+    getCurrentRuleSet(): RoutingRuleSet | null;
+    replaceRuleSet(payload: RoutingRuleSetReplaceRequest, createdBy: string, idempotencyKey?: string): RoutingRuleSet;
+  };
 }
 
 function createId(prefix: string): string {
@@ -303,14 +317,18 @@ function isUrl(value: string): boolean {
 export class RoutingControlPlane {
   private readonly now: () => Date;
   private readonly taskQueue: AgentTaskQueue;
+  private readonly agentProfileStore: RoutingControlPlaneOptions["agentProfileStore"];
+  private readonly routingRuleStore: RoutingControlPlaneOptions["routingRuleStore"];
   private readonly profiles: Map<string, AgentProfile>;
   private readonly audits: Map<string, RoutingAuditRecord>;
   private readonly idempotency: Map<string, IdempotencyEntry<unknown>>;
   private ruleSets: RoutingRuleSet[];
 
-  constructor({ now = () => new Date(), taskQueue }: RoutingControlPlaneOptions) {
+  constructor({ now = () => new Date(), taskQueue, agentProfileStore, routingRuleStore }: RoutingControlPlaneOptions) {
     this.now = now;
     this.taskQueue = taskQueue;
+    this.agentProfileStore = agentProfileStore;
+    this.routingRuleStore = routingRuleStore;
     this.profiles = new Map();
     this.audits = new Map();
     this.idempotency = new Map();
@@ -318,11 +336,18 @@ export class RoutingControlPlane {
   }
 
   getCurrentRuleSet(): RoutingRuleSet | null {
+    if (this.routingRuleStore) {
+      return this.routingRuleStore.getCurrentRuleSet();
+    }
     return this.ruleSets.length > 0 ? clone(this.ruleSets[this.ruleSets.length - 1]!) : null;
   }
 
   replaceRuleSet(payload: RoutingRuleSetReplaceRequest, createdBy: string, idempotencyKey?: string): RoutingRuleSet {
     this.validateRuleSetPayload(payload);
+    if (this.routingRuleStore) {
+      return this.routingRuleStore.replaceRuleSet(payload, createdBy, idempotencyKey);
+    }
+
     const fingerprint = sha256(payload);
 
     if (idempotencyKey) {
@@ -371,11 +396,18 @@ export class RoutingControlPlane {
   }
 
   getAgentProfile(agentId: string): AgentProfile | null {
+    if (this.agentProfileStore) {
+      return this.agentProfileStore.getAgentProfile(agentId);
+    }
     return this.profiles.has(agentId) ? clone(this.profiles.get(agentId)!) : null;
   }
 
   replaceAgentProfile(agentId: string, payload: AgentProfileReplaceRequest, updatedBy: string, idempotencyKey?: string): AgentProfile {
     this.validateAgentProfilePayload(agentId, payload);
+    if (this.agentProfileStore) {
+      return this.agentProfileStore.replaceAgentProfile(agentId, payload, updatedBy, idempotencyKey);
+    }
+
     const fingerprint = sha256({ agentId, payload });
 
     if (idempotencyKey) {
@@ -628,7 +660,7 @@ export class RoutingControlPlane {
       if (!rule.enabled) continue;
       if (!this.ruleMatchesSnapshot(rule, snapshot)) continue;
       if (rule.target.type === "agent") {
-        const profile = this.profiles.get(rule.target.id);
+        const profile = this.getAgentProfile(rule.target.id);
         if (!profile || !this.isAgentEligibleForSnapshot(profile, repo, snapshot.providerIssueId)) {
           continue;
         }
@@ -681,7 +713,7 @@ export class RoutingControlPlane {
     const repo = repoKey(snapshot);
     const matches = new Map<string, string>();
 
-    for (const profile of this.profiles.values()) {
+    for (const profile of this.listAgentProfiles()) {
       if (!this.isAgentEligibleForSnapshot(profile, repo, snapshot.providerIssueId)) continue;
       for (const mapping of profile.providerIdentityMappings) {
         if (lower(mapping.provider) !== lower(snapshot.provider)) continue;
@@ -754,7 +786,7 @@ export class RoutingControlPlane {
     const triageQueueId = decision.assignment.triageQueueId;
     const routeAvailableActions = assigneeAgentId ? ["start"] : [];
     const displayName = assigneeAgentId
-      ? this.profiles.get(assigneeAgentId)?.displayName ?? assigneeAgentId
+      ? this.getAgentProfile(assigneeAgentId)?.displayName ?? assigneeAgentId
       : `Triage ${triageQueueId}`;
     const commonFields = {
       title: snapshot.title,
@@ -859,6 +891,13 @@ export class RoutingControlPlane {
   private extractIssueNumber(providerIssueId: string): number | undefined {
     const match = providerIssueId.match(/(?:issues\/|issue:)(\d+)$/i);
     return match ? Number.parseInt(match[1]!, 10) : undefined;
+  }
+
+  private listAgentProfiles(): AgentProfile[] {
+    if (this.agentProfileStore) {
+      return this.agentProfileStore.listProfiles();
+    }
+    return [...this.profiles.values()].map(clone);
   }
 
   private validateSnapshot(snapshot: ProviderIssueSnapshot) {

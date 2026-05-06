@@ -27,6 +27,8 @@ tags:
     description: Provider issue ingestion surfaces used by adapters and sync jobs.
   - name: Routing
     description: Rule set management and route evaluation for operators.
+  - name: Setup
+    description: Trusted setup helpers that prepare deterministic smoke tasks for new agents.
   - name: Agent Profiles
     description: Operator-managed routable agent metadata used by the routing engine.
   - name: Routing Audit
@@ -386,6 +388,63 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/InsufficientScope'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /operator/setup/verification-task:
+    post:
+      tags: [Setup]
+      operationId: createSetupVerificationTask
+      summary: Create or refresh a deterministic setup verification smoke task
+      description: |
+        Creates one deterministic setup smoke task per selected `agentId`.
+        The task is assigned directly to that agent and stays in
+        `in_progress` so the setup runner can prove `GET /tasks/mine` works.
+        Safe to retry with the same `Idempotency-Key` and identical request
+        body; reruns without a matching idempotency replay reuse the same task
+        identifier for that agent instead of creating duplicates.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupVerificationTaskRequest'
+            examples:
+              create:
+                value:
+                  agentId: agt_setup
+                  sourceRef: agentrail-cli:init
+      responses:
+        '201':
+          description: Setup verification task created or refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupVerificationTaskResponse'
+              examples:
+                created:
+                  value:
+                    data:
+                      taskId: tsk_01JZSETUP0000000000000001
+                      taskIdentifier: LOCAL-SETUP-AGT-SETUP
+                      agentId: agt_setup
+                      sourceRef: agentrail-cli:init
+                      status: in_progress
+                      availableActions: [submit]
+                      createdAt: '2026-05-05T12:30:00Z'
+                      updatedAt: '2026-05-05T12:30:00Z'
+                    availableActions: [submit]
+                    meta:
+                      requestId: req_01JZSETUP0000000000000001
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
   /operator/routing/evaluations:
@@ -865,6 +924,60 @@ components:
       properties:
         data:
           $ref: '#/components/schemas/AgentProfile'
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    SetupVerificationTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [agentId]
+      properties:
+        agentId:
+          type: string
+          description: Stable AgentRail `AgentIdentity.id` that should receive the setup smoke task.
+        sourceRef:
+          type: string
+          description: Optional operator or CLI trace reference, for example `agentrail-cli:init`.
+    SetupVerificationTask:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - taskIdentifier
+        - agentId
+        - sourceRef
+        - status
+        - availableActions
+        - createdAt
+        - updatedAt
+      properties:
+        taskId:
+          type: string
+        taskIdentifier:
+          type: string
+        agentId:
+          type: string
+        sourceRef:
+          type: string
+        status:
+          type: string
+          enum: [todo, in_progress, in_review, blocked, done, cancelled]
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SetupVerificationTaskResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/SetupVerificationTask'
         availableActions:
           $ref: '#/components/schemas/AvailableActions'
         meta:
