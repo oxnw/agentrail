@@ -29,15 +29,23 @@ describe("GitHubIssueIntakeAdapter", () => {
 
     const stored = queue.getRawTask(result.taskId);
     assert.ok(stored);
-    assert.strictEqual(stored.title, "Fix idempotent ship retry handling");
-    assert.strictEqual(stored.status, "todo");
-    assert.strictEqual(stored.priority, "high");
-    assert.deepStrictEqual(stored.assignee, { id: "dev-1", name: "dev-1" });
-    assert.strictEqual(stored.links.issue, "https://github.com/oxnw/agentrail/issues/10");
-    assert.deepStrictEqual(stored.acceptanceCriteria, [
+    assert.strictEqual(stored!.title, "Fix idempotent ship retry handling");
+    assert.strictEqual(stored!.status, "todo");
+    assert.strictEqual(stored!.priority, "high");
+    assert.deepStrictEqual(stored!.assignee, { id: "dev-1", name: "dev-1" });
+    assert.strictEqual(stored!.links.issue, "https://github.com/oxnw/agentrail/issues/10");
+    assert.deepStrictEqual(stored!.acceptanceCriteria, [
       "POST /tasks/{id}/ship is safe to retry.",
       "Different payload reuse returns 409 conflict.",
     ]);
+    assert.strictEqual(stored!.source!.provider, "github");
+    assert.strictEqual(stored!.source!.owner, "oxnw");
+    assert.strictEqual(stored!.source!.repo, "agentrail");
+    assert.strictEqual(stored!.source!.issueNumber, 10);
+    assert.deepStrictEqual(stored!.source!.labels, ["bug", "high-priority"]);
+    assert.deepStrictEqual(stored!.source!.assignees, ["dev-1"]);
+    assert.strictEqual(stored!.source!.deliveryId, "idemp_01");
+    assert.ok(stored!.source!.receivedAt);
   });
 
   it("defaults assignee when none provided", async () => {
@@ -101,5 +109,167 @@ describe("GitHubIssueIntakeAdapter", () => {
       const stored = queue.getRawTask(result.taskId);
       assert.strictEqual(stored!.priority, expected, `priority for labels ${JSON.stringify(labels)}`);
     }
+  });
+
+  it("returns cached result on duplicate replay with same idempotency key", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const first = await adapter.ingest({
+      issueNumber: 20,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/20",
+      issueTitle: "Duplicate test",
+      labels: ["bug"],
+    }, "idemp_dup");
+
+    const second = await adapter.ingest({
+      issueNumber: 20,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/20",
+      issueTitle: "Duplicate test updated",
+      labels: ["feature"],
+    }, "idemp_dup");
+
+    // Cached from first request (idempotency key hit)
+    assert.strictEqual(second.taskId, first.taskId);
+    assert.strictEqual(second.status, first.status);
+
+    // Verify underlying task was NOT updated
+    const stored = queue.getRawTask(first.taskId);
+    assert.strictEqual(stored!.title, "Duplicate test");
+    assert.deepStrictEqual(stored!.source!.labels, ["bug"]);
+  });
+
+  it("updates existing task on repeat webhook with different idempotency key", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const first = await adapter.ingest({
+      issueNumber: 21,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/21",
+      issueTitle: "Original title",
+      labels: ["bug"],
+      state: "open",
+      assignees: [{ login: "alice" }],
+    }, "idemp_first");
+
+    const second = await adapter.ingest({
+      issueNumber: 21,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/21",
+      issueTitle: "Updated title",
+      labels: ["enhancement", "high-priority"],
+      state: "closed",
+      assignees: [{ login: "bob" }],
+    }, "idemp_second");
+
+    // Same task updated
+    assert.strictEqual(second.taskId, first.taskId);
+    assert.strictEqual(second.status, "done");
+
+    const stored = queue.getRawTask(first.taskId);
+    assert.strictEqual(stored!.title, "Updated title");
+    assert.strictEqual(stored!.status, "done");
+    assert.strictEqual(stored!.priority, "high");
+    assert.deepStrictEqual(stored!.assignee, { id: "bob", name: "bob" });
+    assert.deepStrictEqual(stored!.source!.labels, ["enhancement", "high-priority"]);
+  });
+
+  it("preserves existing task fields when sparse webhook updates omit optional payload fields", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const first = await adapter.ingest({
+      issueNumber: 22,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/22",
+      issueTitle: "Original title",
+      body: "Keep the current task details.\n\n## Acceptance Criteria\n- [ ] Preserve existing task state on sparse updates.",
+      labels: ["critical"],
+      state: "closed",
+      repository: { owner: "oxnw", repo: "agentrail" },
+      assignees: [{ login: "alice" }],
+    }, "idemp_sparse_first");
+
+    await adapter.ingest({
+      issueNumber: 22,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/22",
+      issueTitle: "Edited title only",
+    }, "idemp_sparse_second");
+
+    const stored = queue.getRawTask(first.taskId);
+    assert.strictEqual(stored!.title, "Edited title only");
+    assert.strictEqual(stored!.description, "Keep the current task details.\n\n## Acceptance Criteria\n- [ ] Preserve existing task state on sparse updates.");
+    assert.strictEqual(stored!.status, "done");
+    assert.strictEqual(stored!.priority, "critical");
+    assert.deepStrictEqual(stored!.assignee, { id: "alice", name: "alice" });
+    assert.deepStrictEqual(stored!.acceptanceCriteria, [
+      "Preserve existing task state on sparse updates.",
+    ]);
+    assert.strictEqual(stored!.context.project, "oxnw/agentrail");
+    assert.deepStrictEqual(stored!.source!.labels, ["critical"]);
+    assert.deepStrictEqual(stored!.source!.assignees, ["alice"]);
+  });
+
+  it("handles malformed payload gracefully", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    await assert.rejects(
+      adapter.ingest({ issueNumber: "not-a-number" as unknown as number, issueUrl: "x", issueTitle: "bad" }),
+      (err: any) => err.statusCode === 400
+    );
+
+    await assert.rejects(
+      adapter.ingest({ issueNumber: null as unknown as number, issueUrl: "x", issueTitle: "bad" }),
+      (err: any) => err.statusCode === 400
+    );
+  });
+
+  it("builds identifier from issueUrl when repository is missing", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const result = await adapter.ingest({
+      issueNumber: 30,
+      issueUrl: "https://github.com/acme/widgets/issues/30",
+      issueTitle: "Missing repo mapping",
+    });
+
+    assert.strictEqual(result.identifier, "github:acme/widgets:issues/30");
+
+    const stored = queue.getRawTask(result.taskId);
+    assert.strictEqual(stored!.context.project, "acme/widgets");
+    assert.strictEqual(stored!.source!.owner, "acme");
+    assert.strictEqual(stored!.source!.repo, "widgets");
+  });
+
+  it("derives owner and repo from GitHub REST API issue urls when repository is missing", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const result = await adapter.ingest({
+      issueNumber: 30,
+      issueUrl: "https://api.github.com/repos/acme/widgets/issues/30",
+      issueTitle: "Missing repo mapping via API URL",
+    });
+
+    assert.strictEqual(result.identifier, "github:acme/widgets:issues/30");
+
+    const stored = queue.getRawTask(result.taskId);
+    assert.strictEqual(stored!.context.project, "acme/widgets");
+    assert.strictEqual(stored!.source!.owner, "acme");
+    assert.strictEqual(stored!.source!.repo, "widgets");
+  });
+
+  it("rejects payloads that omit repository context and provide an unparseable issue url", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    await assert.rejects(
+      adapter.ingest({
+        issueNumber: 99,
+        issueUrl: "not-a-url",
+        issueTitle: "Fallback",
+      }),
+      (err: any) => err.statusCode === 400
+    );
   });
 });
