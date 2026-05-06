@@ -320,7 +320,6 @@ See [Cloud boundary](./docs/cloud.md).
 - [Five-minute quick start](./docs/quick-start.md)
 - [Agent recipes for Claude Code, Codex, and Cursor](./docs/agent-recipes.md)
 - [Cloud boundary](./docs/cloud.md)
-- [MVP completeness scorecard](./docs/mvp-completeness-scorecard.md)
 - [OpenAPI contract](./docs/api/task-lifecycle.openapi.yaml)
 - [Intake routing architecture](./docs/architecture/intake-routing-engine.md)
 - [Intake routing operator OpenAPI](./docs/api/intake-routing-admin.openapi.yaml)
