@@ -77,10 +77,11 @@ function renderSetupReadme(config: SetupConfig): string {
     "## Next Steps",
     "",
     "1. Start the local API with `npm start` after you have configured the required environment variables and task sources.",
-    "2. Complete agent registration with `agentrail agent create` once the server-backed phase is implemented.",
-    "3. If you are enabling live providers, copy the `GITHUB_TOKEN`, `CIRCLECI_TOKEN`, and `CIRCLECI_WEBHOOK_SECRET` placeholders into `.agentrail/agent.env` after registration.",
-    "4. `agentrail init` does not prompt for live provider tokens because init is designed to stay non-secret and safe to rerun; `.agentrail/agent.env` is the later mode-0600 boundary for agent and provider credentials.",
-    `5. For automation or CI, you can still reproduce this setup non-interactively with: \`${buildInitCommand(config)}\`.`,
+    "2. Fill `.agentrail/agent.env` from the example after you mint the agent key and choose the final `AGENTRAIL_AGENT_ID`; future `agentrail agent create/connect` work will automate this step.",
+    "3. Export an operator/setup key as `AGENTRAIL_SETUP_API_KEY` and run `agentrail doctor`; setup is only complete when `/tasks/mine?status=in_progress&limit=1` returns assigned work for that agent.",
+    "4. If you are enabling live providers, copy the `GITHUB_TOKEN`, `CIRCLECI_TOKEN`, and `CIRCLECI_WEBHOOK_SECRET` placeholders into `.agentrail/agent.env` after registration.",
+    "5. `agentrail init` does not prompt for live provider tokens because init is designed to stay non-secret and safe to rerun; `.agentrail/agent.env` is the later mode-0600 boundary for agent and provider credentials.",
+    `6. For automation or CI, you can still reproduce this setup non-interactively with: \`${buildInitCommand(config)}\`.`,
     "",
   ].join("\n");
 }

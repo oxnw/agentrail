@@ -17,6 +17,10 @@ If you want to bootstrap a local self-hosted setup quickly, start with the
 instructions for Claude Code, Codex, or Cursor, use
 [agent recipes](./agent-recipes.md).
 
+The current onboarding path exists to close the routing bootstrap described in
+[AGEA-95](/AGEA/issues/AGEA-95) and the integration-doc clarity gap called out
+in [AGEA-93](/AGEA/issues/AGEA-93).
+
 ## What Runs Where
 
 Keep these processes separate:
@@ -47,7 +51,7 @@ rely on today:
 | Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the OSS server does not yet run a live provider intake worker. | **Legacy:** The removed demo used a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
 | Routing | **Current:** Routing rules, dry-run evaluation, assignment, and audit are specified as operator/admin contracts. | **Legacy:** The removed demo skipped routing by starting with a pre-assigned task. | **Planned:** The control plane evaluates deterministic rules, stores `routingReason`, wakes the selected agent, and exposes audit history. |
 | Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented on the default server path. | **Legacy:** Placeholder demo keys are no longer valid on the core runtime. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
-| Local/self-hosted setup | **Current:** Setup is manual: copy `.env.example`, seed task-store and task-source files, start `npm start`, and bootstrap an API key. No `agentrail` setup CLI is implemented yet. | **Legacy:** The removed demo runtime used a built-in fixture task instead of explicit task-store configuration. | **Planned:** The setup CLI follows `agentrail init` -> `agentrail server start` -> `agentrail agent create/connect`, writes local `.agentrail` config/env output, creates the agent identity/profile/key/routing state, and verifies `/tasks/mine`. |
+| Local/self-hosted setup | **Current:** `agentrail init` writes local `.agentrail` scaffolding, and `agentrail doctor` verifies health, auth, profile/routing state, and `/tasks/mine` visibility. The middle auth/routing/setup bootstrap still happens through the public HTTP contracts. | **Legacy:** The removed demo runtime used a built-in fixture task instead of explicit task-store configuration. | **Planned:** The setup CLI follows `agentrail init` -> `agentrail server start` -> `agentrail agent create/connect`, writes local `.agentrail` config/env output, creates the agent identity/profile/key/routing state, and verifies `/tasks/mine`. |
 | Live task store | **Current:** The server reads durable task records from `AGENTRAIL_TASK_STORE_PATH` and never falls back to hidden fixture data. | **Legacy:** The removed demo used an in-memory deterministic lifecycle store. | **Planned:** The control plane persists assigned tasks, routing decisions, lifecycle state, and event cursors in managed storage. |
 | Submit | **Current:** `mode: "adapter_managed"` lets the GitHub submit adapter create or reuse provider PRs from configured task sources. | **Legacy:** Artifact-style placeholder PR examples remain documentation-only; they are not a runtime mode. | **Planned:** Submit is always mediated by provider adapters, with idempotent create-or-reuse behavior and compact response state. |
 | CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries for configured task sources. | **Legacy:** The removed demo simulated CI and review transitions locally. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
@@ -69,12 +73,14 @@ Current OSS/server model:
 - After that, AgentRail seeds or ingests one setup verification task through
   the normal assignment path so the new agent can prove it can read its task.
 
-Planned CLI model:
+Current CLI-assisted model:
 
-- `agentrail init` / `agentrail agent create-connect` gathers the repo,
-  capability tags, and intended agent identity during setup.
-- The CLI then creates the `AgentProfile`, writes the first routing rule set,
-  and runs the setup verification task automatically.
+- `agentrail init` gathers repo/base URL defaults and writes the local setup
+  files without secrets.
+- The operator then creates the `AgentProfile`, routing rule set, and setup
+  verification task through the public setup contracts.
+- `agentrail doctor` uses the generated agent key plus an operator/setup key to
+  verify that the bootstrap actually produced visible assigned work.
 
 Why it works this way:
 
@@ -127,7 +133,17 @@ on a human pasting a PR URL into AgentRail.
 ### Track A: Local Self-Hosted Bootstrap
 
 Use this when you want to run the real server locally with explicit task-store
-and task-source configuration.
+and task-source configuration. The default path is:
+
+1. Run `agentrail init`.
+2. Start the server with the current task-store/task-source runtime.
+3. Bootstrap the operator key, agent key, profile, routing rule set, and setup
+   verification task through the public endpoints.
+4. Finish with `agentrail doctor`.
+
+The copy-paste version of that flow lives in the
+[five-minute quick start](./quick-start.md). The raw lifecycle curls later in
+this guide are reference material after doctor passes.
 
 ```bash
 git clone https://github.com/oxnw/agentrail.git
@@ -167,11 +183,6 @@ curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
 Cloud boundary note: Track A proves the local lifecycle contract. It does not
 include managed provider connectors, team access control, audited fleet routing,
 dashboards, support, compliance, backups, or hosted reliability.
-
-Planned setup note: the future local/self-hosted setup CLI contract is
-documented in
-[local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md).
-Until that CLI exists, use the manual commands in this guide.
 
 ### Track B: Claude Code / Codex / Cursor Uses AgentRail
 

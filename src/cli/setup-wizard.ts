@@ -132,6 +132,7 @@ export async function runSetupWizard({
       body: [
         "Add tokens to .agentrail/agent.env file in this repository",
         "Template at .agentrail/agent.env.example",
+        "Setup is only ready after agent registration and a passing `agentrail doctor` run.",
         "",
         "Happy building!",
       ].join("\n"),

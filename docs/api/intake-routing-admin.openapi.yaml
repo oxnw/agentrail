@@ -399,6 +399,9 @@ paths:
         Creates one deterministic setup smoke task per selected `agentId`.
         The task is assigned directly to that agent and stays in
         `in_progress` so the setup runner can prove `GET /tasks/mine` works.
+        The CLI pairs this endpoint with `agentrail doctor`; setup is not
+        complete until the generated agent key can read the task from
+        `GET /tasks/mine?status=in_progress&limit=1`.
         Safe to retry with the same `Idempotency-Key` and identical request
         body; reruns without a matching idempotency replay reuse the same task
         identifier for that agent instead of creating duplicates.

@@ -47,6 +47,13 @@ The local API starts on `http://127.0.0.1:3000` by default. Docker Compose
 persists task event stream replay data in the `agentrail-event-data` volume.
 This is self-managed OSS, not a Cloud-equivalent managed team control plane.
 
+Default local onboarding is now CLI-assisted: run `agentrail init`, bring up
+the current server runtime, seed auth/routing/setup state through the public
+contracts, and finish with `agentrail doctor`. The full walkthrough lives in
+[docs/quick-start.md](docs/quick-start.md) and ties the routing bootstrap back
+to [AGEA-95](/AGEA/issues/AGEA-95) and the integration-doc cleanup back to
+[AGEA-93](/AGEA/issues/AGEA-93).
+
 Node setup:
 
 ```bash
@@ -73,13 +80,17 @@ If you prefer persistent local configuration, put the same values in `.env`
 instead of exporting them in your shell. Shell exports override `.env` for the
 current session.
 
-Current local setup is manual. The planned self-hosted setup CLI contract is
-documented in
-[docs/architecture/local-self-hosted-setup-cli-contract.md](docs/architecture/local-self-hosted-setup-cli-contract.md):
-`agentrail init` writes local config, `agentrail server start` starts the
-configured server, and `agentrail agent create/connect` creates the
-AgentIdentity, scoped key, AgentProfile, and starter routing state needed
-for an LLM agent to call `/tasks/mine`.
+Current shipped CLI surface:
+
+- `agentrail init` writes the local `.agentrail` config and env scaffolding.
+- `agentrail doctor` verifies health, auth, profile/routing readiness, and
+  `/tasks/mine` visibility.
+- The server-backed `agentrail agent create/connect` wrapper is still planned,
+  so the middle auth/routing/setup bootstrap currently stays explicit and
+  testable through the public HTTP contracts.
+
+See the detailed setup contract in
+[docs/architecture/local-self-hosted-setup-cli-contract.md](docs/architecture/local-self-hosted-setup-cli-contract.md).
 
 Bootstrap the first admin API key:
 
@@ -123,7 +134,10 @@ docker build -t agentrail .
 docker run --rm -p 3000:3000 agentrail
 ```
 
-## Local API Examples
+## Advanced Manual Lifecycle Calls
+
+Use the raw lifecycle calls below as reference material after `agentrail doctor`
+passes. They are no longer the primary local onboarding path.
 
 List the current agent's task:
 
