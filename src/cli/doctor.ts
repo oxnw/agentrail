@@ -217,9 +217,9 @@ async function resolveDoctorInputs({
   }
 
   return {
-    baseUrl: baseUrl.replace(/\/+$/, ""),
-    apiKey,
-    agentId,
+    baseUrl: baseUrl!.replace(/\/+$/, ""),
+    apiKey: apiKey!,
+    agentId: agentId!,
     expectedRepo,
     setupApiKey,
   };
@@ -442,6 +442,12 @@ async function findVisibleSetupTask(inputs: DoctorInputs): Promise<SetupTaskVisi
     for (const task of tasks) {
       if (!task.id) continue;
       scannedCount += 1;
+
+      if (task.identifier && task.identifier !== expectedIdentifier) {
+        visibleTaskIdentifier = visibleTaskIdentifier ?? task.identifier;
+        continue;
+      }
+
       const detail = await getJson<TaskDetailResponse>({
         baseUrl: inputs.baseUrl,
         route: `/tasks/${task.id}`,
@@ -490,43 +496,67 @@ function normalizeAgentId(agentId: string): string {
 }
 
 function renderRepairCommand(inputs: DoctorInputs): string {
+  const payload = JSON.stringify({
+    agentId: inputs.agentId,
+    sourceRef: "agentrail-doctor",
+  });
+  const idempotencyAgentToken = encodeURIComponent(inputs.agentId);
   return [
-    `curl -s -X POST "${inputs.baseUrl}/operator/setup/verification-task" \\`,
+    `curl -s -X POST ${shellSingleQuote(`${inputs.baseUrl}/operator/setup/verification-task`)} \\`,
     '  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \\',
     '  -H "content-type: application/json" \\',
-    `  -H "idempotency-key: setup-verification:${inputs.agentId}:v1" \\`,
-    `  -d '{"agentId":"${inputs.agentId}","sourceRef":"agentrail-doctor"}'`,
+    `  -H ${shellSingleQuote(`idempotency-key: setup-verification:${idempotencyAgentToken}:v1`)} \\`,
+    `  -d ${shellSingleQuote(payload)}`,
   ].join("\n");
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 async function getJson<T>({
   baseUrl,
   route,
   bearerToken,
+  timeoutMs = 30_000,
 }: {
   baseUrl: string;
   route: string;
   bearerToken?: string;
+  timeoutMs?: number;
 }): Promise<JsonResponse<T>> {
   const url = new URL(route.replace(/^\//, ""), `${baseUrl}/`);
-  const response = await fetch(url, {
-    headers: {
-      accept: "application/json",
-      ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
-    },
-  });
-  const text = await response.text();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return {
-      status: response.status,
-      json: JSON.parse(text) as T,
-    };
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
+      },
+      signal: controller.signal,
+    });
+    const text = await response.text();
+
+    try {
+      return {
+        status: response.status,
+        json: JSON.parse(text) as T,
+      };
+    } catch {
+      return {
+        status: response.status,
+        json: null,
+      };
+    }
   } catch {
     return {
-      status: response.status,
+      status: 0,
       json: null,
     };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -549,7 +579,6 @@ async function readAgentEnvFiles({
   const candidates = [
     explicitEnvFile ? path.resolve(cwd, explicitEnvFile) : null,
     path.join(cwd, ".agentrail", "agent.env"),
-    path.join(cwd, ".agentrail", "agent.env.example"),
   ].filter((value): value is string => Boolean(value));
 
   for (const filePath of candidates) {

@@ -160,20 +160,23 @@ function buildRuntime({
         submitAdapter.submitTask(taskId, payload, idempotencyKey),
     },
   });
+  const routingAuditStore = new RoutingAuditStore({
+    storagePath: routingAuditStorePath,
+  });
+  const agentProfileStore = new AgentProfileStore({
+    now,
+    storagePath: agentProfileStorePath,
+  });
+  const routingRuleStore = new RoutingRuleStore({
+    now,
+    storagePath: routingRuleStorePath,
+  });
   const routingControlPlane = new RoutingControlPlane({
     now,
     taskQueue: agentQueue,
-    routingAuditStore: new RoutingAuditStore({
-      storagePath: routingAuditStorePath,
-    }),
-    agentProfileStore: new AgentProfileStore({
-      now,
-      storagePath: agentProfileStorePath,
-    }),
-    routingRuleStore: new RoutingRuleStore({
-      now,
-      storagePath: routingRuleStorePath,
-    }),
+    routingAuditStore,
+    agentProfileStore,
+    routingRuleStore,
   });
 
   return {

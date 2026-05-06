@@ -7,6 +7,7 @@ import test from "node:test";
 import { runCli } from "../src/cli/index.ts";
 import {
   createSetupDoctorHarness,
+  type SetupDoctorHarness,
   writeDoctorRepo,
 } from "./helpers/setup-doctor-fixture.ts";
 
@@ -15,15 +16,16 @@ test("agentrail doctor fails when setup state exists but no assigned onboarding 
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
-  const harness = await createSetupDoctorHarness();
-
-  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
+  let harness: SetupDoctorHarness | null = null;
 
   t.after(async () => {
-    process.env.AGENTRAIL_SETUP_API_KEY = previousSetupApiKey;
+    restoreSetupApiKey(previousSetupApiKey);
     await rm(repoRoot, { recursive: true, force: true });
-    await new Promise((resolve) => harness.server.close(resolve));
+    await harness?.close();
   });
+
+  harness = await createSetupDoctorHarness();
+  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
 
   await writeDoctorRepo({
     repoRoot,
@@ -53,15 +55,16 @@ test("agentrail doctor does not pass on an unrelated assigned in-progress task",
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
-  const harness = await createSetupDoctorHarness();
-
-  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
+  let harness: SetupDoctorHarness | null = null;
 
   t.after(async () => {
-    process.env.AGENTRAIL_SETUP_API_KEY = previousSetupApiKey;
+    restoreSetupApiKey(previousSetupApiKey);
     await rm(repoRoot, { recursive: true, force: true });
-    await new Promise((resolve) => harness.server.close(resolve));
+    await harness?.close();
   });
+
+  harness = await createSetupDoctorHarness();
+  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
 
   harness.taskQueue.createTask({
     identifier: "github:oxnw/agentrail:issues/unrelated",
@@ -111,4 +114,12 @@ function createMemoryWriter() {
       return buffer;
     },
   };
+}
+
+function restoreSetupApiKey(previousSetupApiKey: string | undefined): void {
+  if (previousSetupApiKey === undefined) {
+    delete process.env.AGENTRAIL_SETUP_API_KEY;
+    return;
+  }
+  process.env.AGENTRAIL_SETUP_API_KEY = previousSetupApiKey;
 }
