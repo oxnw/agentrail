@@ -13,6 +13,7 @@ import { AgentTaskQueue } from "./agent-task-queue.ts";
 import { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
 import { AgentProfileStore } from "./agent-profile-store.ts";
 import { RoutingControlPlane } from "./intake-routing-control-plane.ts";
+import { RoutingAuditStore } from "./routing-audit-store.ts";
 import { RoutingRuleStore } from "./routing-rule-store.ts";
 
 loadDotEnv();
@@ -140,6 +141,7 @@ function buildRuntime({
   const taskStorePath = process.env.AGENTRAIL_TASK_STORE_PATH || undefined;
   const agentProfileStorePath = process.env.AGENTRAIL_AGENT_PROFILES_STORE_PATH || undefined;
   const routingRuleStorePath = process.env.AGENTRAIL_ROUTING_RULES_STORE_PATH || undefined;
+  const routingAuditStorePath = process.env.AGENTRAIL_ROUTING_AUDIT_STORE_PATH || undefined;
   let agentQueue: AgentTaskQueue;
   const submitAdapter = new GitHubSubmitAdapter({
     taskSources,
@@ -161,6 +163,9 @@ function buildRuntime({
   const routingControlPlane = new RoutingControlPlane({
     now,
     taskQueue: agentQueue,
+    routingAuditStore: new RoutingAuditStore({
+      storagePath: routingAuditStorePath,
+    }),
     agentProfileStore: new AgentProfileStore({
       now,
       storagePath: agentProfileStorePath,

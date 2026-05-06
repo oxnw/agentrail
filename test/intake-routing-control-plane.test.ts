@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
 
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
 import {
@@ -8,6 +11,7 @@ import {
   type ProviderIssueSnapshot,
   type RoutingRule,
 } from "../src/intake-routing-control-plane.ts";
+import { RoutingAuditStore } from "../src/routing-audit-store.ts";
 import { TaskLifecycleError } from "../src/task-lifecycle-errors.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
@@ -654,6 +658,106 @@ test("RoutingControlPlane records dry-run evaluations in audit without task acti
   assert.deepEqual(decision.availableActions, ["view_audit"]);
   assert.ok(audit);
   assert.equal(audit?.decision.id, decision.id);
+});
+
+test("RoutingControlPlane persists evaluation audits and replay records across instances", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-routing-audit-"));
+  const storagePath = path.join(tempDir, "routing-audit.json");
+
+  try {
+    const eventStore = new TaskEventStore({ now });
+    const taskQueue = new AgentTaskQueue({ now, eventStore });
+    const routing = new RoutingControlPlane({
+      now,
+      taskQueue,
+      routingAuditStore: new RoutingAuditStore({ storagePath }),
+    });
+    seedProfile(routing, "agt_cto");
+    seedRuleSet(routing, [
+      {
+        id: "rule_architecture_to_cto",
+        name: "Architecture and API ownership",
+        enabled: true,
+        priority: 10,
+        conditions: { labelsAny: ["architecture"] },
+        target: { type: "agent", id: "agt_cto" },
+        confidence: 0.99,
+        explanation: "Architecture work maps to CTO.",
+      },
+    ]);
+
+    const request = { snapshot: makeSnapshot() };
+    const decision = await routing.evaluate(request, "eval_persisted");
+
+    const restartedRouting = new RoutingControlPlane({
+      now,
+      taskQueue: new AgentTaskQueue({ now, eventStore: new TaskEventStore({ now }) }),
+      routingAuditStore: new RoutingAuditStore({ storagePath }),
+    });
+
+    const audit = restartedRouting.getRoutingAudit(decision.id);
+    assert.equal(audit?.decision.id, decision.id);
+    assert.equal(audit?.ruleSet.version, 1);
+
+    const replay = await restartedRouting.evaluate(request, "eval_persisted");
+    assert.deepEqual(replay, decision);
+    await assert.rejects(
+      restartedRouting.evaluate({ snapshot: makeSnapshot({ sourceVersion: "2026-05-05T12:00:00Z:delivery-02" }) }, "eval_persisted"),
+      (error: any) => error?.statusCode === 409
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("RoutingControlPlane persists provider intake replay records across instances", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-routing-audit-"));
+  const storagePath = path.join(tempDir, "routing-audit.json");
+
+  try {
+    const eventStore = new TaskEventStore({ now });
+    const taskQueue = new AgentTaskQueue({ now, eventStore });
+    const routing = new RoutingControlPlane({
+      now,
+      taskQueue,
+      routingAuditStore: new RoutingAuditStore({ storagePath }),
+    });
+    seedProfile(routing, "agt_cto");
+    seedRuleSet(routing, [
+      {
+        id: "rule_architecture_to_cto",
+        name: "Architecture and API ownership",
+        enabled: true,
+        priority: 10,
+        conditions: { labelsAny: ["architecture"] },
+        target: { type: "agent", id: "agt_cto" },
+        confidence: 0.99,
+        explanation: "Architecture work maps to CTO.",
+      },
+    ]);
+
+    const snapshot = makeSnapshot();
+    const decision = await routing.ingestProviderIssue(snapshot, "intake_persisted");
+
+    const restartedRouting = new RoutingControlPlane({
+      now,
+      taskQueue: new AgentTaskQueue({ now, eventStore: new TaskEventStore({ now }) }),
+      routingAuditStore: new RoutingAuditStore({ storagePath }),
+    });
+
+    const audit = restartedRouting.getRoutingAudit(decision.id);
+    assert.equal(audit?.decision.id, decision.id);
+    assert.equal(audit?.decision.taskId, decision.taskId);
+
+    const replay = await restartedRouting.ingestProviderIssue(snapshot, "intake_persisted");
+    assert.deepEqual(replay, decision);
+    await assert.rejects(
+      restartedRouting.ingestProviderIssue(makeSnapshot({ sourceVersion: "2026-05-05T12:00:00Z:delivery-02" }), "intake_persisted"),
+      (error: any) => error?.statusCode === 409
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("RoutingControlPlane rejects missing required snapshot fields with validation error", async () => {
