@@ -30,6 +30,10 @@ function makePayload(overrides = {}) {
 
 test("AgentProfileStore persists profiles to file and loads on restart", async (t) => {
   const storagePath = tmpPath();
+  t.after(() => {
+    fs.rmSync(storagePath, { force: true });
+  });
+
   const store1 = new AgentProfileStore({ now, storagePath });
   store1.replaceAgentProfile("agt_cto", makePayload(), "agt_operator", "idemp-1");
 
@@ -39,8 +43,6 @@ test("AgentProfileStore persists profiles to file and loads on restart", async (
   assert.equal(profile?.displayName, "CTO");
   assert.equal(profile?.source, "operator_admin");
   assert.equal(profile?.updatedBy, "agt_operator");
-
-  fs.unlinkSync(storagePath);
 });
 
 test("AgentProfileStore returns null for unknown agent", () => {
@@ -83,14 +85,22 @@ test("AgentProfileStore validates payload is an object", () => {
 test("AgentProfileStore replaces existing profile and updates metadata", () => {
   const store = new AgentProfileStore({ now });
   const p1 = store.replaceAgentProfile("agt_cto", makePayload(), "agt_operator");
+  assert.equal(p1.displayName, "CTO");
+  assert.equal(p1.updatedBy, "agt_operator");
+  assert.equal(p1.source, "operator_admin");
+
   const p2 = store.replaceAgentProfile("agt_cto", makePayload({ displayName: "CTO2", changeReason: "rename" }), "agt_other");
   assert.equal(p2.displayName, "CTO2");
   assert.equal(p2.updatedBy, "agt_other");
   assert.equal(p2.source, "operator_admin");
 });
 
-test("AgentProfileStore persists through multiple mutations", () => {
+test("AgentProfileStore persists through multiple mutations", (t) => {
   const storagePath = tmpPath();
+  t.after(() => {
+    fs.rmSync(storagePath, { force: true });
+  });
+
   const store1 = new AgentProfileStore({ now, storagePath });
   store1.replaceAgentProfile("agt_a", makePayload({ displayName: "A" }), "op", "i1");
   store1.replaceAgentProfile("agt_b", makePayload({ displayName: "B" }), "op", "i2");
@@ -98,6 +108,4 @@ test("AgentProfileStore persists through multiple mutations", () => {
   const store2 = new AgentProfileStore({ now, storagePath });
   assert.equal(store2.getAgentProfile("agt_a")?.displayName, "A");
   assert.equal(store2.getAgentProfile("agt_b")?.displayName, "B");
-
-  fs.unlinkSync(storagePath);
 });

@@ -130,6 +130,7 @@ describe("GitHubIssueIntakeAdapter", () => {
 
     // Verify underlying task was NOT updated
     const stored = queue.getRawTask(first.taskId);
+    assert.ok(stored, "Task should exist");
     assert.strictEqual(stored!.title, "Duplicate test");
     assert.deepStrictEqual(stored!.source!.labels, ["bug"]);
   });
@@ -206,6 +207,7 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(second.status, "done");
 
     const stored = queue.getRawTask(first.taskId);
+    assert.ok(stored, "Task should exist");
     assert.strictEqual(stored!.title, "Updated title");
     assert.strictEqual(stored!.status, "done");
     assert.strictEqual(stored!.priority, "high");
@@ -236,6 +238,7 @@ describe("GitHubIssueIntakeAdapter", () => {
     }, "idemp_sparse_second");
 
     const stored = queue.getRawTask(first.taskId);
+    assert.ok(stored, "Task should exist");
     assert.strictEqual(stored!.title, "Edited title only");
     assert.strictEqual(stored!.description, "Keep the current task details.\n\n## Acceptance Criteria\n- [ ] Preserve existing task state on sparse updates.");
     assert.strictEqual(stored!.status, "done");

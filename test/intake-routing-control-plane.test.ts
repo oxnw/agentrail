@@ -87,6 +87,17 @@ function seedRuleSet(routing: RoutingControlPlane, rules: RoutingRule[]) {
   }, "agt_router");
 }
 
+async function withTempAuditStore<T>(fn: (storagePath: string) => Promise<T>): Promise<T> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-routing-audit-"));
+  const storagePath = path.join(tempDir, "routing-audit.json");
+
+  try {
+    return await fn(storagePath);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 test("RoutingControlPlane deterministically assigns and persists routing metadata", async () => {
   const { routing, taskQueue } = createControlPlane();
   seedProfile(routing, "agt_cto");
@@ -661,10 +672,7 @@ test("RoutingControlPlane records dry-run evaluations in audit without task acti
 });
 
 test("RoutingControlPlane persists evaluation audits and replay records across instances", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-routing-audit-"));
-  const storagePath = path.join(tempDir, "routing-audit.json");
-
-  try {
+  await withTempAuditStore(async (storagePath) => {
     const eventStore = new TaskEventStore({ now });
     const taskQueue = new AgentTaskQueue({ now, eventStore });
     const routing = new RoutingControlPlane({
@@ -705,16 +713,11 @@ test("RoutingControlPlane persists evaluation audits and replay records across i
       restartedRouting.evaluate({ snapshot: makeSnapshot({ sourceVersion: "2026-05-05T12:00:00Z:delivery-02" }) }, "eval_persisted"),
       (error: any) => error?.statusCode === 409
     );
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+  });
 });
 
 test("RoutingControlPlane persists provider intake replay records across instances", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-routing-audit-"));
-  const storagePath = path.join(tempDir, "routing-audit.json");
-
-  try {
+  await withTempAuditStore(async (storagePath) => {
     const eventStore = new TaskEventStore({ now });
     const taskQueue = new AgentTaskQueue({ now, eventStore });
     const routing = new RoutingControlPlane({
@@ -755,9 +758,7 @@ test("RoutingControlPlane persists provider intake replay records across instanc
       restartedRouting.ingestProviderIssue(makeSnapshot({ sourceVersion: "2026-05-05T12:00:00Z:delivery-02" }), "intake_persisted"),
       (error: any) => error?.statusCode === 409
     );
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+  });
 });
 
 test("RoutingControlPlane rejects missing required snapshot fields with validation error", async () => {

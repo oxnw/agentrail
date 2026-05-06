@@ -37,15 +37,41 @@ function hasField<Key extends PropertyKey>(value: object, key: Key): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function stableStringify(value: unknown): string {
+function stableStringify(value: unknown, seen = new WeakSet<object>()): string {
+  if (value === undefined) return "undefined";
+  if (value instanceof Date) return JSON.stringify(value.toISOString());
+  if (value instanceof Map) {
+    if (seen.has(value)) return JSON.stringify("[Circular]");
+    seen.add(value);
+    const entries = [...value.entries()]
+      .map(([key, entryValue]) => [stableStringify(key, seen), stableStringify(entryValue, seen)] as const)
+      .sort(([left], [right]) => left.localeCompare(right));
+    seen.delete(value);
+    return `{"$map":[${entries.map(([key, entryValue]) => `[${key},${entryValue}]`).join(",")}]}`;
+  }
+  if (value instanceof Set) {
+    if (seen.has(value)) return JSON.stringify("[Circular]");
+    seen.add(value);
+    const entries = [...value.values()].map(entry => stableStringify(entry, seen)).sort();
+    seen.delete(value);
+    return `{"$set":[${entries.join(",")}]}`;
+  }
   if (Array.isArray(value)) {
-    return `[${value.map(item => stableStringify(item)).join(",")}]`;
+    if (seen.has(value)) return JSON.stringify("[Circular]");
+    seen.add(value);
+    const serialized = `[${value.map(item => stableStringify(item, seen)).join(",")}]`;
+    seen.delete(value);
+    return serialized;
   }
   if (value && typeof value === "object") {
-    return `{${Object.keys(value as Record<string, unknown>)
+    if (seen.has(value)) return JSON.stringify("[Circular]");
+    seen.add(value);
+    const serialized = `{${Object.keys(value as Record<string, unknown>)
       .sort()
-      .map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`)
+      .map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key], seen)}`)
       .join(",")}}`;
+    seen.delete(value);
+    return serialized;
   }
   return JSON.stringify(value) ?? "undefined";
 }
