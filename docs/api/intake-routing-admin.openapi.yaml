@@ -309,6 +309,7 @@ paths:
                       maxConcurrentTasks: 3
                       source: operator_admin
                       sourceRef: AGEA-95
+                      changeReason: Seed CTO routing profile for architecture/API work.
                       updatedBy: agt_ceo
                       updatedAt: '2026-05-05T15:40:00Z'
                     availableActions: [update, view_audit]
@@ -377,6 +378,7 @@ paths:
                       maxConcurrentTasks: 3
                       source: operator_admin
                       sourceRef: AGEA-95
+                      changeReason: Seed CTO routing profile for architecture/API work.
                       updatedBy: agt_ceo
                       updatedAt: '2026-05-05T15:41:00Z'
                     availableActions: [evaluate, view_audit]
@@ -434,7 +436,6 @@ paths:
                       agentId: agt_setup
                       sourceRef: agentrail-cli:init
                       status: in_progress
-                      availableActions: [submit]
                       createdAt: '2026-05-05T12:30:00Z'
                       updatedAt: '2026-05-05T12:30:00Z'
                     availableActions: [submit]
@@ -873,6 +874,7 @@ components:
         - maxConcurrentTasks
         - source
         - sourceRef
+        - changeReason
         - updatedBy
         - updatedAt
       properties:
@@ -915,6 +917,10 @@ components:
           enum: [agent_created, operator_admin, skill_assignment_sync, config_file_import]
         sourceRef:
           type: string
+        changeReason:
+          type: string
+          maxLength: 500
+          description: Operator or CLI trace reason for the latest profile change.
         updatedBy:
           type: string
         updatedAt:
@@ -951,7 +957,6 @@ components:
         - agentId
         - sourceRef
         - status
-        - availableActions
         - createdAt
         - updatedAt
       properties:
@@ -963,11 +968,10 @@ components:
           type: string
         sourceRef:
           type: string
+          description: Operator or CLI trace reference; defaults to `operator_setup_verification` when omitted from the request.
         status:
           type: string
           enum: [todo, in_progress, in_review, blocked, done, cancelled]
-        availableActions:
-          $ref: '#/components/schemas/AvailableActions'
         createdAt:
           type: string
           format: date-time

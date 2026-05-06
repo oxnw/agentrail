@@ -14,6 +14,7 @@ import { createSetupConfig, type DetectedRepoContext } from "../../src/cli/setup
 import { writeSetupFiles } from "../../src/cli/setup-files.ts";
 
 const now = () => new Date("2026-05-06T00:00:00Z");
+const DEFAULT_TEST_REPO_SLUG = "oxnw/agentrail";
 
 export interface SetupDoctorHarness {
   server: ReturnType<typeof createServer>;
@@ -23,6 +24,7 @@ export interface SetupDoctorHarness {
   agentId: string;
   repoAllowlist: string[];
   taskQueue: AgentTaskQueue;
+  close: () => Promise<void>;
 }
 
 export async function createSetupDoctorHarness({
@@ -76,9 +78,10 @@ export async function createSetupDoctorHarness({
       agentId,
       repoAllowlist,
       taskQueue,
+      close: () => closeServer(server),
     };
   } catch (error) {
-    await new Promise((resolve) => server.close(resolve));
+    await closeServer(server);
     throw error;
   }
 }
@@ -125,7 +128,7 @@ export async function writeDoctorRepo({
 }): Promise<void> {
   const detectedRepo: DetectedRepoContext = {
     repoPath: repoRoot,
-    remoteSlug: repoAllowlist[0] ?? repoRoot,
+    remoteSlug: repoAllowlist[0] ?? DEFAULT_TEST_REPO_SLUG,
     defaultBranch: "main",
     gitIgnoreHasAgentrail: true,
   };
@@ -158,6 +161,10 @@ export async function writeDoctorRepo({
     ].join("\n"),
     { mode: 0o600 },
   );
+}
+
+function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
 }
 
 async function listen(server: ReturnType<typeof createServer>): Promise<string> {

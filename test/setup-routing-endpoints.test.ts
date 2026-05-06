@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -14,10 +13,12 @@ import { RoutingControlPlane } from "../src/intake-routing-control-plane.ts";
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
-async function listen(server) {
+async function listen(server: ReturnType<typeof createServer>) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
-  const { address, port } = server.address();
+  const serverAddress = server.address();
+  assert.ok(serverAddress && typeof serverAddress !== "string");
+  const { address, port } = serverAddress;
   return `http://${address}:${port}`;
 }
 
@@ -160,6 +161,7 @@ test("PUT /operator/routing/agent-profiles/{agentId} rejects worker without rout
     assert.equal(res.status, 403);
     const json = await res.json();
     assert.equal(json.error.code, "insufficient_scope");
+    assert.equal(json.error.details.requiredScope, "routing:admin");
   } finally {
     server.close();
   }
@@ -323,8 +325,12 @@ test("routing profile and rule-set endpoints reload persisted state after restar
   }
 });
 
-test("RoutingRuleStore persists and reloads rule sets across restarts", async () => {
+test("RoutingRuleStore persists and reloads rule sets across restarts", async (t) => {
   const storagePath = tmpPath("rules");
+  t.after(() => {
+    fs.rmSync(storagePath, { force: true });
+  });
+
   const store1 = new RoutingRuleStore({ now, storagePath });
   const created = store1.replaceRuleSet(
     {
@@ -360,12 +366,14 @@ test("RoutingRuleStore persists and reloads rule sets across restarts", async ()
   assert.ok(current);
   assert.equal(current?.id, created.id);
   assert.equal(current?.rules[0].id, "rule_1");
-
-  fs.unlinkSync(storagePath);
 });
 
-test("AgentProfileStore persists and reloads profiles across restarts", async () => {
+test("AgentProfileStore persists and reloads profiles across restarts", async (t) => {
   const storagePath = tmpPath("profiles");
+  t.after(() => {
+    fs.rmSync(storagePath, { force: true });
+  });
+
   const store1 = new AgentProfileStore({ now, storagePath });
   const created = store1.replaceAgentProfile(
     "agt_test",
@@ -390,8 +398,6 @@ test("AgentProfileStore persists and reloads profiles across restarts", async ()
   const loaded = store2.getAgentProfile("agt_test");
   assert.ok(loaded);
   assert.equal(loaded?.displayName, "Test");
-
-  fs.unlinkSync(storagePath);
 });
 
 test("PUT /operator/routing/rule-sets/current is idempotent", async () => {
@@ -521,7 +527,7 @@ test("POST /operator/setup/verification-task creates a deterministic setup smoke
     const body1 = await res1.json();
     assert.equal(body1.data.agentId, "agt_setup");
     assert.equal(body1.data.status, "in_progress");
-    assert.deepEqual(body1.data.availableActions, ["submit"]);
+    assert.deepEqual(body1.availableActions, ["submit"]);
 
     const stored = taskQueue.getRawTask(body1.data.taskId);
     assert.ok(stored);

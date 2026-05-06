@@ -15,7 +15,6 @@ export interface SetupVerificationTaskData {
   agentId: string;
   sourceRef: string;
   status: TaskRecord["status"];
-  availableActions: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -65,7 +64,7 @@ function asSetupTaskStore(taskLifecycleStore: unknown): SetupVerificationTaskSto
     typeof (taskLifecycleStore as SetupVerificationTaskStore).getIdempotencyEntry !== "function" ||
     typeof (taskLifecycleStore as SetupVerificationTaskStore).setIdempotencyEntry !== "function"
   ) {
-    throw new TaskLifecycleError(404, "not_found", "Setup verification task store is not configured.", {
+    throw new TaskLifecycleError(500, "internal_error", "Setup verification task store is not configured.", {
       availableActions: ["contact_support"],
     });
   }
@@ -92,7 +91,7 @@ function buildIdentifier(agentId: string): string {
 }
 
 function buildResponse(task: TaskRecord, sourceRef: string): SetupVerificationTaskResponseBody {
-  const agentId = task.assigneeAgentId ?? task.assignee.id;
+  const agentId = task.assigneeAgentId ?? task.assignee?.id ?? "";
   return {
     data: {
       taskId: task.id,
@@ -100,7 +99,6 @@ function buildResponse(task: TaskRecord, sourceRef: string): SetupVerificationTa
       agentId,
       sourceRef,
       status: task.status,
-      availableActions: structuredClone(task.availableActions),
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
     },
