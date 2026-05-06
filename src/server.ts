@@ -11,7 +11,9 @@ import { MultiCiStatusAdapter } from "./multi-ci-status-adapter.ts";
 import { TaskEventStore } from "./task-event-store.ts";
 import { AgentTaskQueue } from "./agent-task-queue.ts";
 import { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
+import { AgentProfileStore } from "./agent-profile-store.ts";
 import { RoutingControlPlane } from "./intake-routing-control-plane.ts";
+import { RoutingRuleStore } from "./routing-rule-store.ts";
 
 loadDotEnv();
 
@@ -136,6 +138,8 @@ function buildRuntime({
   }
 
   const taskStorePath = process.env.AGENTRAIL_TASK_STORE_PATH || undefined;
+  const agentProfileStorePath = process.env.AGENTRAIL_AGENT_PROFILES_STORE_PATH || undefined;
+  const routingRuleStorePath = process.env.AGENTRAIL_ROUTING_RULES_STORE_PATH || undefined;
   let agentQueue: AgentTaskQueue;
   const submitAdapter = new GitHubSubmitAdapter({
     taskSources,
@@ -154,7 +158,18 @@ function buildRuntime({
         submitAdapter.submitTask(taskId, payload, idempotencyKey),
     },
   });
-  const routingControlPlane = new RoutingControlPlane({ now, taskQueue: agentQueue });
+  const routingControlPlane = new RoutingControlPlane({
+    now,
+    taskQueue: agentQueue,
+    agentProfileStore: new AgentProfileStore({
+      now,
+      storagePath: agentProfileStorePath,
+    }),
+    routingRuleStore: new RoutingRuleStore({
+      now,
+      storagePath: routingRuleStorePath,
+    }),
+  });
 
   return {
     taskLifecycleStore: agentQueue,
