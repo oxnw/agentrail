@@ -1,4 +1,6 @@
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
+import { resolveTaskSource } from "./task-source-resolution.ts";
+import type { TaskRecord } from "./task-store.ts";
 
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 
@@ -20,8 +22,10 @@ export class GitHubRollbackAdapter {
   declare githubToken: string | undefined;
   declare fetch: typeof globalThis.fetch;
   declare apiBaseUrl: string;
+  declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
     taskSources = {},
+    getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
     apiBaseUrl = DEFAULT_GITHUB_API_BASE_URL
@@ -31,6 +35,7 @@ export class GitHubRollbackAdapter {
     }
 
     this.taskSources = taskSources;
+    this.getTask = getTask;
     this.githubToken = githubToken;
     this.fetch = fetch;
     this.apiBaseUrl = apiBaseUrl.replace(/\/$/, "");
@@ -158,10 +163,10 @@ export class GitHubRollbackAdapter {
   }
 
   lookupTaskSource(taskId) {
-    if (this.taskSources instanceof Map) {
-      return this.taskSources.get(taskId) ?? null;
-    }
-    return this.taskSources?.[taskId] ?? null;
+    return resolveTaskSource(taskId, {
+      taskSources: this.taskSources,
+      getTask: this.getTask,
+    });
   }
 
   validateSource(source) {

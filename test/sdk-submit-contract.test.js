@@ -42,3 +42,52 @@ test("OpenAPI TaskSubmitRequest supports adapter-managed submit and keeps artifa
   assert.match(schema, /pullRequest:/);
   assert.match(schema, /artifacts:/);
 });
+
+test("OpenAPI task detail and submit response declare emitted routing and branch fields", () => {
+  const spec = readFileSync(new URL("../docs/api/task-lifecycle.openapi.yaml", import.meta.url), "utf8");
+
+  const detailStart = spec.indexOf("    TaskDetail:");
+  const detailEnd = spec.indexOf("    TaskDetailResponse:", detailStart);
+  assert.notEqual(detailStart, -1, "TaskDetail schema should exist");
+  assert.notEqual(detailEnd, -1, "TaskDetailResponse schema should follow TaskDetail");
+  const taskDetailSchema = spec.slice(detailStart, detailEnd);
+
+  for (const field of [
+    "submissionId",
+    "prUrl",
+    "prNumber",
+    "branch",
+    "baseBranch",
+    "headSha",
+    "assigneeAgentId",
+    "triageQueueId",
+    "assignmentSource",
+    "routingDecisionId",
+    "routingReason",
+    "routingConfidence",
+  ]) {
+    assert.match(taskDetailSchema, new RegExp(`\\n\\s+${field}:`), `TaskDetail should declare ${field}`);
+  }
+
+  const submitStart = spec.indexOf("    TaskSubmissionResponse:");
+  const submitEnd = spec.indexOf("    TaskCiStatusResponse:", submitStart);
+  assert.notEqual(submitStart, -1, "TaskSubmissionResponse schema should exist");
+  assert.notEqual(submitEnd, -1, "TaskCiStatusResponse schema should follow TaskSubmissionResponse");
+  const submitResponseSchema = spec.slice(submitStart, submitEnd);
+
+  for (const field of ["head", "base", "headSha"]) {
+    assert.match(submitResponseSchema, new RegExp(`\\n\\s+${field}:`), `TaskSubmissionResponse should declare ${field}`);
+  }
+});
+
+test("OpenAPI and SDK auth scope contracts expose routing scopes", () => {
+  const spec = readFileSync(new URL("../docs/api/task-lifecycle.openapi.yaml", import.meta.url), "utf8");
+  const typescript = readFileSync(new URL("../sdk/typescript/src/types.ts", import.meta.url), "utf8");
+  const python = readFileSync(new URL("../sdk/python/src/agentrail/models.py", import.meta.url), "utf8");
+
+  for (const scope of ["routing:admin", "routing:read", "routing:evaluate"]) {
+    assert.match(spec, new RegExp(`- ${scope}`), `OpenAPI AgentAuthScope should include ${scope}`);
+    assert.match(typescript, new RegExp(`\\| "${scope}"`), `TypeScript AgentAuthScope should include ${scope}`);
+    assert.match(python, new RegExp(`= "${scope}"`), `Python AgentAuthScope should include ${scope}`);
+  }
+});

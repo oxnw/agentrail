@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentAuthStore } from "./agent-auth-store.ts";
 import { AgentAuthError } from "./agent-auth-store.ts";
 import { CiStatusSourceError } from "./github-actions-ci-adapter.ts";
+import type { RoutingControlPlane } from "./intake-routing-control-plane.ts";
 import { ReviewFeedbackSourceError } from "./github-review-feedback-adapter.ts";
 import { RollbackSourceError } from "./github-rollback-adapter.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
@@ -32,6 +33,7 @@ export interface CreateServerOptions {
   reviewFeedbackAdapter?: { getTaskReviewFeedback?(taskId: string): Promise<unknown> | unknown } | null;
   rollbackAdapter?: { rollbackTask?(taskId: string, payload: unknown, idempotencyKey: string): Promise<unknown> } | null;
   intakeAdapter?: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
+  routingControlPlane?: RoutingControlPlane | null;
   authStore?: AgentAuthStore | null;
   taskLifecycleStore?: unknown;
   waitlistStore?: WaitlistStore | null;
@@ -55,6 +57,7 @@ export function createServer({
   reviewFeedbackAdapter = null,
   rollbackAdapter = null,
   intakeAdapter = null,
+  routingControlPlane = null,
   authStore = null,
   taskLifecycleStore = null,
   waitlistStore = null,
@@ -84,6 +87,7 @@ export function createServer({
       reviewFeedbackAdapter,
       rollbackAdapter,
       intakeAdapter,
+      routingControlPlane,
       authStore,
       taskLifecycleStore,
       waitlistStore: resolvedWaitlistStore,
@@ -133,6 +137,7 @@ async function routeRequest({
   reviewFeedbackAdapter,
   rollbackAdapter,
   intakeAdapter = null,
+  routingControlPlane = null,
   authStore,
   taskLifecycleStore,
   waitlistStore,
@@ -302,6 +307,172 @@ async function routeRequest({
       response,
       authStore,
       keyId: usageMatch[1]
+    });
+    return;
+  }
+
+  if (request.method === "GET" && pathname === "/operator/routing/rule-sets/current") {
+    obs.operation = "get_current_routing_rule_set";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:read",
+      operation: "get_current_routing_rule_set"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    handleGetCurrentRoutingRuleSet({ response, routingControlPlane });
+    return;
+  }
+
+  if (request.method === "PUT" && pathname === "/operator/routing/rule-sets/current") {
+    obs.operation = "replace_current_routing_rule_set";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:admin",
+      operation: "replace_current_routing_rule_set"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleReplaceCurrentRoutingRuleSet({
+      request,
+      response,
+      routingControlPlane,
+      actorId: principal?.agent?.id ?? principal?.keyId ?? "system"
+    });
+    return;
+  }
+
+  const getAgentProfileMatch =
+    request.method === "GET"
+      ? pathname.match(/^\/operator\/routing\/agent-profiles\/(agt_[A-Za-z0-9_]+)$/)
+      : null;
+  if (getAgentProfileMatch) {
+    obs.operation = "get_routing_agent_profile";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:read",
+      operation: "get_routing_agent_profile"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    handleGetRoutingAgentProfile({
+      response,
+      routingControlPlane,
+      agentId: getAgentProfileMatch[1]
+    });
+    return;
+  }
+
+  const putAgentProfileMatch =
+    request.method === "PUT"
+      ? pathname.match(/^\/operator\/routing\/agent-profiles\/(agt_[A-Za-z0-9_]+)$/)
+      : null;
+  if (putAgentProfileMatch) {
+    obs.operation = "replace_routing_agent_profile";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:admin",
+      operation: "replace_routing_agent_profile"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleReplaceRoutingAgentProfile({
+      request,
+      response,
+      routingControlPlane,
+      agentId: putAgentProfileMatch[1],
+      actorId: principal?.agent?.id ?? principal?.keyId ?? "system"
+    });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/operator/routing/evaluations") {
+    obs.operation = "evaluate_routing";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:evaluate",
+      operation: "evaluate_routing"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleEvaluateRouting({
+      request,
+      response,
+      routingControlPlane
+    });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/operator/intake/provider-issues") {
+    obs.operation = "ingest_provider_issue";
+    obs.provider = "routing_control_plane";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:admin",
+      operation: "ingest_provider_issue"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleIngestProviderIssue({
+      request,
+      response,
+      routingControlPlane
+    });
+    return;
+  }
+
+  const routingAuditMatch =
+    request.method === "GET"
+      ? pathname.match(/^\/operator\/routing\/audit\/(rdec_[A-Za-z0-9]+)$/)
+      : null;
+  if (routingAuditMatch) {
+    obs.operation = "get_routing_audit";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:read",
+      operation: "get_routing_audit"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    handleGetRoutingAudit({
+      response,
+      routingControlPlane,
+      decisionId: routingAuditMatch[1]
     });
     return;
   }
@@ -769,6 +940,265 @@ function handleGetAgentApiKeyUsage({ response, authStore, keyId }: GetUsageOptio
 
     throw error;
   }
+}
+
+function responseMeta() {
+  return {
+    requestId: `req_${Date.now().toString(36)}`
+  };
+}
+
+function ensureRoutingControlPlane({
+  response,
+  routingControlPlane
+}: {
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+}) {
+  if (routingControlPlane) {
+    return true;
+  }
+
+  writeError(response, 404, "not_found", "Routing control plane is not configured.", {
+    availableActions: ["contact_support"]
+  });
+  return false;
+}
+
+function handleGetCurrentRoutingRuleSet({
+  response,
+  routingControlPlane
+}: {
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+}) {
+  if (!ensureRoutingControlPlane({ response, routingControlPlane })) {
+    return;
+  }
+
+  const data = routingControlPlane.getCurrentRuleSet();
+  if (!data) {
+    writeError(response, 404, "not_found", "No active routing rule set is configured.", {
+      availableActions: ["create_rule_set"]
+    });
+    return;
+  }
+
+  writeJson(response, 200, {
+    data,
+    availableActions: ["update", "evaluate"],
+    meta: responseMeta()
+  });
+}
+
+async function handleReplaceCurrentRoutingRuleSet({
+  request,
+  response,
+  routingControlPlane,
+  actorId
+}: {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+  actorId: string;
+}) {
+  if (!ensureRoutingControlPlane({ response, routingControlPlane })) {
+    return;
+  }
+
+  try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const payload = await readJsonBody(request);
+    const data = routingControlPlane.replaceRuleSet(
+      payload as Parameters<RoutingControlPlane["replaceRuleSet"]>[0],
+      actorId,
+      idempotencyKey
+    );
+    writeJson(response, 201, {
+      data,
+      availableActions: ["update", "evaluate"],
+      meta: responseMeta()
+    });
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+    throw error;
+  }
+}
+
+function requireIdempotencyKey(value: string | string[] | undefined): string {
+  if (typeof value !== "string" || value.length < 8 || value.length > 128) {
+    throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+      availableActions: ["retry"]
+    });
+  }
+  return value;
+}
+
+function handleGetRoutingAgentProfile({
+  response,
+  routingControlPlane,
+  agentId
+}: {
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+  agentId: string;
+}) {
+  if (!ensureRoutingControlPlane({ response, routingControlPlane })) {
+    return;
+  }
+
+  const data = routingControlPlane.getAgentProfile(agentId);
+  if (!data) {
+    writeError(response, 404, "not_found", "Routing agent profile not found.", {
+      availableActions: ["create_profile"]
+    });
+    return;
+  }
+
+  writeJson(response, 200, {
+    data,
+    availableActions: ["update"],
+    meta: responseMeta()
+  });
+}
+
+async function handleReplaceRoutingAgentProfile({
+  request,
+  response,
+  routingControlPlane,
+  agentId,
+  actorId
+}: {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+  agentId: string;
+  actorId: string;
+}) {
+  if (!ensureRoutingControlPlane({ response, routingControlPlane })) {
+    return;
+  }
+
+  try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const payload = await readJsonBody(request);
+    const data = routingControlPlane.replaceAgentProfile(
+      agentId,
+      payload as Parameters<RoutingControlPlane["replaceAgentProfile"]>[1],
+      actorId,
+      idempotencyKey
+    );
+    writeJson(response, 200, {
+      data,
+      availableActions: ["update"],
+      meta: responseMeta()
+    });
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function handleEvaluateRouting({
+  request,
+  response,
+  routingControlPlane
+}: {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+}) {
+  if (!ensureRoutingControlPlane({ response, routingControlPlane })) {
+    return;
+  }
+
+  try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const payload = await readJsonBody(request);
+    const data = await routingControlPlane.evaluate(
+      payload as Parameters<RoutingControlPlane["evaluate"]>[0],
+      idempotencyKey
+    );
+    writeJson(response, 200, {
+      data,
+      availableActions: data.availableActions,
+      meta: responseMeta()
+    });
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function handleIngestProviderIssue({
+  request,
+  response,
+  routingControlPlane
+}: {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+}) {
+  if (!ensureRoutingControlPlane({ response, routingControlPlane })) {
+    return;
+  }
+
+  try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const payload = await readJsonBody(request);
+    const data = await routingControlPlane.ingestProviderIssue(
+      payload as Parameters<RoutingControlPlane["ingestProviderIssue"]>[0],
+      idempotencyKey
+    );
+    writeJson(response, 202, {
+      data,
+      availableActions: data.availableActions,
+      meta: responseMeta()
+    });
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+    throw error;
+  }
+}
+
+function handleGetRoutingAudit({
+  response,
+  routingControlPlane,
+  decisionId
+}: {
+  response: http.ServerResponse;
+  routingControlPlane: RoutingControlPlane | null | undefined;
+  decisionId: string;
+}) {
+  if (!ensureRoutingControlPlane({ response, routingControlPlane })) {
+    return;
+  }
+
+  const data = routingControlPlane.getRoutingAudit(decisionId);
+  if (!data) {
+    writeError(response, 404, "not_found", "Routing audit record not found.", {
+      availableActions: ["view_rule_set"]
+    });
+    return;
+  }
+
+  writeJson(response, 200, {
+    data,
+    availableActions: ["view_rule_set"],
+    meta: responseMeta()
+  });
 }
 
 interface SubmitTaskOptions {

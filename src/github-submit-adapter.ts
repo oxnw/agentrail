@@ -1,4 +1,6 @@
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
+import { resolveTaskSource } from "./task-source-resolution.ts";
+import type { TaskRecord } from "./task-store.ts";
 
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 const IDEMPOTENCY_TAG = "<!-- agentrail-idempotency-key:";
@@ -10,8 +12,10 @@ export class GitHubSubmitAdapter {
   declare apiBaseUrl: string;
   declare delegate: any;
   declare idempotencyRecords: Map<string, any>;
+  declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
     taskSources = {},
+    getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
     apiBaseUrl = DEFAULT_GITHUB_API_BASE_URL,
@@ -22,6 +26,7 @@ export class GitHubSubmitAdapter {
     }
 
     this.taskSources = taskSources;
+    this.getTask = getTask;
     this.githubToken = githubToken;
     this.fetch = fetch;
     this.apiBaseUrl = apiBaseUrl.replace(/\/$/, "");
@@ -30,7 +35,10 @@ export class GitHubSubmitAdapter {
   }
 
   async submitTask(taskId, payload, idempotencyKey) {
-    const source = lookupTaskSource(this.taskSources, taskId);
+    const source = resolveTaskSource(taskId, {
+      taskSources: this.taskSources,
+      getTask: this.getTask,
+    });
     if (!source) {
       if (this.delegate) {
         return this.delegate.submitTask(taskId, payload, idempotencyKey);
@@ -86,8 +94,8 @@ export class GitHubSubmitAdapter {
 
     const pr = await this.createPR(source, { title, body, head, base, draft: pullRequest.draft ?? payload.draft ?? false });
 
-    if (pullRequest.reviewers?.length > 0 || payload.reviewers?.length > 0 || source.reviewers?.length > 0) {
-      const reviewers = pullRequest.reviewers ?? payload.reviewers ?? source.reviewers;
+    const reviewers = firstArray(pullRequest.reviewers, payload.reviewers, source.reviewers);
+    if (reviewers.length > 0) {
       await this.requestReviewers(source, pr.number, reviewers).catch(() => {});
     }
 
@@ -151,7 +159,10 @@ export class GitHubSubmitAdapter {
   }
 
   async shipTask(taskId, payload, idempotencyKey) {
-    const source = lookupTaskSource(this.taskSources, taskId);
+    const source = resolveTaskSource(taskId, {
+      taskSources: this.taskSources,
+      getTask: this.getTask,
+    });
     if (!source) {
       if (this.delegate && typeof this.delegate.shipTask === "function") {
         return this.delegate.shipTask(taskId, payload, idempotencyKey);
@@ -364,13 +375,6 @@ export class GitHubSubmitAdapter {
   }
 }
 
-function lookupTaskSource(taskSources, taskId) {
-  if (taskSources instanceof Map) {
-    return taskSources.get(taskId) ?? null;
-  }
-  return taskSources?.[taskId] ?? null;
-}
-
 function validateSource(source) {
   for (const field of ["owner", "repo"]) {
     if (typeof source[field] !== "string" || source[field].length === 0) {
@@ -387,6 +391,15 @@ function validateIdempotencyKey(key) {
       availableActions: ["retry"],
     });
   }
+}
+
+function firstArray(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+  return [];
 }
 
 function extractIdempotencyKey(body) {

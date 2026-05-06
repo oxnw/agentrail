@@ -20,6 +20,7 @@ export interface TaskLifecycleDelegate {
 
 function toTaskDetail(task: TaskRecord) {
   const latestSubmission = getLatestTaskSubmission(task);
+  const hasStoredAssigneeAgentId = Object.prototype.hasOwnProperty.call(task, "assigneeAgentId");
 
   return {
     id: task.id,
@@ -36,10 +37,11 @@ function toTaskDetail(task: TaskRecord) {
     submissionId: task.latestSubmissionId,
     prUrl: latestSubmission?.prUrl ?? task.source?.prUrl ?? null,
     prNumber: latestSubmission?.prNumber ?? task.source?.pullNumber ?? null,
-    branch: task.source?.branch ?? null,
-    baseBranch: task.source?.baseBranch ?? null,
+    branch: latestSubmission?.branch ?? task.source?.branch ?? null,
+    baseBranch: latestSubmission?.baseBranch ?? task.source?.baseBranch ?? null,
+    headSha: latestSubmission?.headSha ?? task.source?.headSha ?? null,
     availableActions: task.availableActions,
-    assigneeAgentId: task.assigneeAgentId ?? task.assignee.id,
+    assigneeAgentId: hasStoredAssigneeAgentId ? task.assigneeAgentId ?? null : task.assignee.id,
     triageQueueId: task.triageQueueId ?? null,
     assignmentSource: task.assignmentSource ?? null,
     routingDecisionId: task.routingDecisionId ?? null,
