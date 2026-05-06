@@ -178,6 +178,12 @@ interface IdempotencyEntry<T> {
 export interface RoutingControlPlaneOptions {
   now?: () => Date;
   taskQueue: AgentTaskQueue;
+  routingAuditStore?: {
+    getRoutingAudit(decisionId: string): RoutingAuditRecord | null;
+    recordAudit(audit: RoutingAuditRecord): void;
+    getIdempotencyEntry<T = unknown>(key: string): IdempotencyEntry<T> | null;
+    setIdempotencyEntry<T = unknown>(key: string, entry: IdempotencyEntry<T>): void;
+  };
   agentProfileStore?: {
     getAgentProfile(agentId: string): AgentProfile | null;
     listProfiles(): AgentProfile[];
@@ -317,6 +323,7 @@ function isUrl(value: string): boolean {
 export class RoutingControlPlane {
   private readonly now: () => Date;
   private readonly taskQueue: AgentTaskQueue;
+  private readonly routingAuditStore: RoutingControlPlaneOptions["routingAuditStore"];
   private readonly agentProfileStore: RoutingControlPlaneOptions["agentProfileStore"];
   private readonly routingRuleStore: RoutingControlPlaneOptions["routingRuleStore"];
   private readonly profiles: Map<string, AgentProfile>;
@@ -324,9 +331,10 @@ export class RoutingControlPlane {
   private readonly idempotency: Map<string, IdempotencyEntry<unknown>>;
   private ruleSets: RoutingRuleSet[];
 
-  constructor({ now = () => new Date(), taskQueue, agentProfileStore, routingRuleStore }: RoutingControlPlaneOptions) {
+  constructor({ now = () => new Date(), taskQueue, routingAuditStore, agentProfileStore, routingRuleStore }: RoutingControlPlaneOptions) {
     this.now = now;
     this.taskQueue = taskQueue;
+    this.routingAuditStore = routingAuditStore;
     this.agentProfileStore = agentProfileStore;
     this.routingRuleStore = routingRuleStore;
     this.profiles = new Map();
@@ -464,7 +472,7 @@ export class RoutingControlPlane {
     });
 
     if (idempotencyKey) {
-      const entry = this.idempotency.get(`evaluation:${idempotencyKey}`);
+      const entry = this.getRoutingIdempotencyEntry<RoutingDecision>(`evaluation:${idempotencyKey}`);
       if (entry) {
         if (entry.fingerprint !== fingerprint) {
           throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different routing evaluation payload.", {
@@ -483,7 +491,7 @@ export class RoutingControlPlane {
     this.recordAudit(decision, inputDigest, ruleSet);
 
     if (idempotencyKey) {
-      this.idempotency.set(`evaluation:${idempotencyKey}`, {
+      this.setRoutingIdempotencyEntry(`evaluation:${idempotencyKey}`, {
         fingerprint,
         response: clone(decision),
       });
@@ -497,7 +505,7 @@ export class RoutingControlPlane {
     const fingerprint = sha256(snapshot);
 
     if (idempotencyKey) {
-      const entry = this.idempotency.get(`intake:${idempotencyKey}`);
+      const entry = this.getRoutingIdempotencyEntry<RoutingDecision>(`intake:${idempotencyKey}`);
       if (entry) {
         if (entry.fingerprint !== fingerprint) {
           throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different provider issue snapshot.", {
@@ -518,7 +526,7 @@ export class RoutingControlPlane {
     this.recordAudit(decision, inputDigest, ruleSet);
 
     if (idempotencyKey) {
-      this.idempotency.set(`intake:${idempotencyKey}`, {
+      this.setRoutingIdempotencyEntry(`intake:${idempotencyKey}`, {
         fingerprint,
         response: clone(decision),
       });
@@ -528,7 +536,26 @@ export class RoutingControlPlane {
   }
 
   getRoutingAudit(decisionId: string): RoutingAuditRecord | null {
+    if (this.routingAuditStore) {
+      return this.routingAuditStore.getRoutingAudit(decisionId);
+    }
     return this.audits.has(decisionId) ? clone(this.audits.get(decisionId)!) : null;
+  }
+
+  private getRoutingIdempotencyEntry<T>(key: string): IdempotencyEntry<T> | null {
+    if (this.routingAuditStore) {
+      return this.routingAuditStore.getIdempotencyEntry<T>(key);
+    }
+    const entry = this.idempotency.get(key) ?? null;
+    return entry ? clone(entry as IdempotencyEntry<T>) : null;
+  }
+
+  private setRoutingIdempotencyEntry<T>(key: string, entry: IdempotencyEntry<T>): void {
+    if (this.routingAuditStore) {
+      this.routingAuditStore.setIdempotencyEntry(key, clone(entry));
+      return;
+    }
+    this.idempotency.set(key, clone(entry as IdempotencyEntry<unknown>));
   }
 
   private recordAudit(decision: RoutingDecision, inputDigest: string, ruleSet: RoutingRuleSet) {
@@ -541,6 +568,10 @@ export class RoutingControlPlane {
       },
       createdAt: this.now().toISOString(),
     };
+    if (this.routingAuditStore) {
+      this.routingAuditStore.recordAudit(audit);
+      return;
+    }
     this.audits.set(decision.id, audit);
   }
 
