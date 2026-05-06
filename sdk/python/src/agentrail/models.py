@@ -16,6 +16,9 @@ class AgentAuthScope(str, Enum):
     AUTH_ADMIN = "auth:admin"
     CI_READ = "ci:read"
     EVENTS_READ = "events:read"
+    ROUTING_ADMIN = "routing:admin"
+    ROUTING_EVALUATE = "routing:evaluate"
+    ROUTING_READ = "routing:read"
     REVIEWS_READ = "reviews:read"
     SHIP_WRITE = "ship:write"
     TASKS_READ = "tasks:read"
@@ -100,6 +103,13 @@ class TaskSubmissionAction(str, Enum):
     CREATED = "created"
     EXISTING = "existing"
     ACCEPTED = "accepted"
+
+
+class TaskAssignmentSource(str, Enum):
+    DETERMINISTIC_RULE = "deterministic_rule"
+    CLASSIFIER = "classifier"
+    MANUAL_TRIAGE = "manual_triage"
+    PROVIDER_ASSIGNEE_MAPPING = "provider_assignee_mapping"
 
 
 class ShipMode(str, Enum):
@@ -303,6 +313,34 @@ class TaskContext(BaseModel):
     goal: str
 
 
+class TaskRoutingTarget(BaseModel):
+    type: Literal["agent", "triage_queue"]
+    id: str
+
+
+class TaskRoutingClassifierResult(BaseModel):
+    provider: str
+    confidence: float
+    suggested_target: TaskRoutingTarget = Field(alias="suggestedTarget")
+
+    model_config = {"populate_by_name": True}
+
+
+class TaskRoutingMatchedRule(BaseModel):
+    id: str
+    name: str
+    confidence: float
+
+
+class TaskRoutingReason(BaseModel):
+    summary: str
+    matched_rules: list[TaskRoutingMatchedRule] = Field(alias="matchedRules")
+    classifier: TaskRoutingClassifierResult | None
+    conflict_reasons: list[str] = Field(alias="conflictReasons")
+
+    model_config = {"populate_by_name": True}
+
+
 class TaskDetail(BaseModel):
     id: str
     identifier: str
@@ -320,6 +358,13 @@ class TaskDetail(BaseModel):
     pr_number: int | None = Field(default=None, alias="prNumber")
     branch: str | None = None
     base_branch: str | None = Field(default=None, alias="baseBranch")
+    head_sha: str | None = Field(default=None, alias="headSha")
+    assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId")
+    triage_queue_id: str | None = Field(default=None, alias="triageQueueId")
+    assignment_source: TaskAssignmentSource | None = Field(default=None, alias="assignmentSource")
+    routing_decision_id: str | None = Field(default=None, alias="routingDecisionId")
+    routing_reason: TaskRoutingReason | None = Field(default=None, alias="routingReason")
+    routing_confidence: float | None = Field(default=None, alias="routingConfidence")
     available_actions: list[str] = Field(alias="availableActions")
 
     model_config = {"populate_by_name": True}
@@ -406,6 +451,7 @@ class TaskSubmissionData(BaseModel):
     pr_number: int | None = Field(default=None, alias="prNumber")
     head: str | None = None
     base: str | None = None
+    head_sha: str | None = Field(default=None, alias="headSha")
     action: TaskSubmissionAction | None = None
     idempotency_key: str | None = Field(default=None, alias="idempotencyKey")
     accepted_at: datetime = Field(alias="acceptedAt")

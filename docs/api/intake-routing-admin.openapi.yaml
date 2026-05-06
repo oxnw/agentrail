@@ -437,35 +437,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/RoutingDecisionResponse'
               examples:
-                triage_low_confidence:
+                dry_run_no_route:
                   value:
                     data:
                       id: rdec_01JZROUTE0000000000000200
                       taskId: null
                       taskIdentifier: null
-                      outcome: triage
+                      outcome: no_route
                       target:
                         type: triage_queue
                         id: triage_engineering
                       assignment:
                         assigneeAgentId: null
                         triageQueueId: triage_engineering
-                        assignmentSource: classifier
+                        assignmentSource: manual_triage
                         routingDecisionId: rdec_01JZROUTE0000000000000200
                         assignedAt: null
-                      confidence: 0.61
+                      confidence: 0
                       routingReason:
-                        summary: Deterministic rules did not cover dashboard/frontend ownership; classifier confidence 0.61 is below threshold 0.82.
+                        summary: No deterministic route matched; classifier fallback is not implemented, so the task was sent to triage triage_engineering.
                         matchedRules: []
-                        classifier:
-                          provider: internal-router
-                          confidence: 0.61
-                          suggestedTarget:
-                            type: agent
-                            id: agt_frontend
-                        conflictReasons: [classifier_confidence_below_threshold]
-                      availableActions: [send_to_triage, edit_rules]
-                    availableActions: [send_to_triage, edit_rules]
+                        classifier: null
+                        conflictReasons: [no_matching_rule]
+                      availableActions: [view_audit]
+                    availableActions: [view_audit]
                     meta:
                       requestId: req_01JZROUTE0000000000000201
         '400':

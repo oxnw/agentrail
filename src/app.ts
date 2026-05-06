@@ -1007,11 +1007,12 @@ async function handleReplaceCurrentRoutingRuleSet({
   }
 
   try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
     const payload = await readJsonBody(request);
     const data = routingControlPlane.replaceRuleSet(
       payload as Parameters<RoutingControlPlane["replaceRuleSet"]>[0],
       actorId,
-      request.headers["idempotency-key"] as string | undefined
+      idempotencyKey
     );
     writeJson(response, 201, {
       data,
@@ -1025,6 +1026,15 @@ async function handleReplaceCurrentRoutingRuleSet({
     }
     throw error;
   }
+}
+
+function requireIdempotencyKey(value: string | string[] | undefined): string {
+  if (typeof value !== "string" || value.length < 8 || value.length > 128) {
+    throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+      availableActions: ["retry"]
+    });
+  }
+  return value;
 }
 
 function handleGetRoutingAgentProfile({
@@ -1073,11 +1083,13 @@ async function handleReplaceRoutingAgentProfile({
   }
 
   try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
     const payload = await readJsonBody(request);
     const data = routingControlPlane.replaceAgentProfile(
       agentId,
       payload as Parameters<RoutingControlPlane["replaceAgentProfile"]>[1],
-      actorId
+      actorId,
+      idempotencyKey
     );
     writeJson(response, 200, {
       data,
@@ -1107,8 +1119,12 @@ async function handleEvaluateRouting({
   }
 
   try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
     const payload = await readJsonBody(request);
-    const data = await routingControlPlane.evaluate(payload as Parameters<RoutingControlPlane["evaluate"]>[0]);
+    const data = await routingControlPlane.evaluate(
+      payload as Parameters<RoutingControlPlane["evaluate"]>[0],
+      idempotencyKey
+    );
     writeJson(response, 200, {
       data,
       availableActions: data.availableActions,
@@ -1137,10 +1153,11 @@ async function handleIngestProviderIssue({
   }
 
   try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
     const payload = await readJsonBody(request);
     const data = await routingControlPlane.ingestProviderIssue(
       payload as Parameters<RoutingControlPlane["ingestProviderIssue"]>[0],
-      request.headers["idempotency-key"] as string | undefined
+      idempotencyKey
     );
     writeJson(response, 202, {
       data,

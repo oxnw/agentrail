@@ -150,6 +150,7 @@ test("AgentTaskQueue.getTask exposes latest submit metadata in task detail", asy
         repo: "webapp",
         branch: "feat/persist-submit",
         baseBranch: "main",
+        headSha: "abc123",
       } as TaskRecord["source"],
     }),
   );
@@ -163,7 +164,45 @@ test("AgentTaskQueue.getTask exposes latest submit metadata in task detail", asy
   assert.equal((detail.data as any).prNumber, 456);
   assert.equal((detail.data as any).branch, "feat/persist-submit");
   assert.equal((detail.data as any).baseBranch, "main");
+  assert.equal((detail.data as any).headSha, "abc123");
   assert.deepEqual(detail.data.availableActions, ["ship", "view_ci_status", "view_review_feedback"]);
+});
+
+test("AgentTaskQueue.getTask reads branch fields from latest submission when source is absent", async () => {
+  const now = new Date("2026-05-05T12:00:00Z");
+  const queue = new AgentTaskQueue({
+    now: () => now,
+    delegate: mockDelegate({
+      data: {
+        submissionId: "ghpr_789",
+        taskId: "TASK_ID",
+        status: "in_review",
+        prUrl: "https://github.com/acme/webapp/pull/789",
+        prNumber: 789,
+        head: "agentrail/task-789",
+        base: "main",
+        headSha: "def456",
+        action: "created",
+        acceptedAt: now.toISOString(),
+        availableActions: ["view_review_feedback", "view_ci_status"],
+      },
+      availableActions: ["view_review_feedback"],
+    }),
+  });
+
+  const task = queue.createTask(
+    makeTask({
+      identifier: "AGEA-102",
+      title: "Expose PR branch metadata without source",
+    }),
+  );
+
+  await queue.submitTask(task.id, { summary: "Ship it" }, "idem-102-detail");
+
+  const detail = queue.getTask(task.id);
+  assert.equal((detail.data as any).branch, "agentrail/task-789");
+  assert.equal((detail.data as any).baseBranch, "main");
+  assert.equal((detail.data as any).headSha, "def456");
 });
 
 test("AgentTaskQueue rejects submit without idempotency key", async () => {

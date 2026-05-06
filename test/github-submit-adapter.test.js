@@ -97,6 +97,55 @@ test("creates a real GitHub PR via POST /repos/{owner}/{repo}/pulls", async () =
   assert.ok(commentCall, "should post issue comment recording PR URL");
 });
 
+test("resolves submit source from persisted routed task when not configured in task sources", async () => {
+  const fetchCalls = [];
+  const pr = makePR();
+
+  const adapter = new GitHubSubmitAdapter({
+    githubToken: "ghs_test",
+    taskSources: new Map(),
+    getTask: (requestedTaskId) => {
+      assert.equal(requestedTaskId, taskId);
+      return {
+        id: taskId,
+        source: {
+          owner: "acme",
+          repo: "webapp",
+          branch: "feat/routed-task",
+          baseBranch: "main",
+          issueNumber: 42,
+        },
+        submissions: [],
+        latestSubmissionId: null,
+      };
+    },
+    fetch: async (url, options) => {
+      fetchCalls.push({ url: String(url), method: options?.method ?? "GET" });
+
+      if (String(url).includes("/pulls") && options?.method === "POST" && !String(url).includes("requested_reviewers")) {
+        return jsonResponse(pr);
+      }
+      if (String(url).includes("/comments") && options?.method === "POST") {
+        return jsonResponse({ id: 100 });
+      }
+      if (String(url).includes("/pulls?")) {
+        return jsonResponse([]);
+      }
+      return jsonResponse({});
+    },
+  });
+
+  const result = await adapter.submitTask(
+    taskId,
+    { summary: "Submitted routed task" },
+    "idem-routed-submit",
+  );
+
+  assert.equal(result.data.action, "created");
+  assert.equal(result.data.prNumber, 7);
+  assert.ok(fetchCalls.some((call) => call.method === "POST" && call.url.endsWith("/pulls")));
+});
+
 test("returns existing PR without creating a duplicate (idempotent replay)", async () => {
   const pr = makePR();
   let createCallCount = 0;

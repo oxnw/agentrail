@@ -18,7 +18,7 @@ function lookupConfiguredTaskSource(taskSources: TaskSourceInput, taskId: string
 }
 
 export function getLatestTaskSubmission(task: TaskRecord | null): TaskSubmission | null {
-  if (!task || task.submissions.length === 0) {
+  if (!task || !Array.isArray(task.submissions) || task.submissions.length === 0) {
     return null;
   }
 
@@ -41,7 +41,7 @@ export function resolveTaskSource(
   const persistedSource = isObject(task?.source) ? task.source : null;
   const latestSubmission = getLatestTaskSubmission(task);
 
-  if (!configuredSource && !persistedSource && !latestSubmission) {
+  if (!configuredSource && !persistedSource) {
     return null;
   }
 

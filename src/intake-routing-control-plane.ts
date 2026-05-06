@@ -223,6 +223,83 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === "string");
+}
+
+const ROUTING_CONDITION_FIELDS = [
+  "repositories",
+  "labelsAny",
+  "providerAssigneesAny",
+  "projects",
+  "issueTypes",
+  "priorities",
+  "ownershipTagsAny",
+  "capabilityTagsAll",
+] as const;
+
+const ROUTING_CONDITION_FIELD_SET = new Set<string>(ROUTING_CONDITION_FIELDS);
+const ROUTING_PROVIDERS = new Set(["github", "linear", "jira", "gitlab"]);
+const ROUTING_REPOSITORY_PROVIDERS = new Set(["github", "gitlab"]);
+const ROUTING_ISSUE_TYPES = new Set(["bug", "feature", "architecture", "design", "documentation", "maintenance", "unknown"]);
+const ROUTING_PRIORITIES = new Set(["low", "medium", "high", "critical"]);
+const SNAPSHOT_FIELDS = new Set([
+  "provider",
+  "providerIssueId",
+  "sourceVersion",
+  "repository",
+  "title",
+  "bodyDigest",
+  "labels",
+  "providerAssignees",
+  "project",
+  "issueType",
+  "priority",
+  "ownershipTags",
+  "capabilityTags",
+  "links",
+]);
+const REPOSITORY_FIELDS = new Set(["provider", "owner", "name", "defaultBranch"]);
+const LINKS_FIELDS = new Set(["providerIssue"]);
+const RULE_SET_FIELDS = new Set(["sourceRef", "changeReason", "rules", "classifier"]);
+const CLASSIFIER_FIELDS = new Set(["enabled", "provider", "confidenceThreshold", "maxCandidates", "fallbackTriageQueueId"]);
+const ROUTING_RULE_FIELDS = new Set(["id", "name", "enabled", "priority", "conditions", "target", "confidence", "explanation"]);
+const ROUTING_TARGET_FIELDS = new Set(["type", "id"]);
+const AGENT_PROFILE_FIELDS = new Set([
+  "displayName",
+  "role",
+  "status",
+  "capabilityTags",
+  "ownershipTags",
+  "repoAllowlist",
+  "providerIdentityMappings",
+  "maxConcurrentTasks",
+  "sourceRef",
+  "changeReason",
+]);
+const PROVIDER_IDENTITY_MAPPING_FIELDS = new Set(["provider", "subject"]);
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: Set<string>): boolean {
+  return Object.keys(value).every(key => allowed.has(key));
+}
+
+function isUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class RoutingControlPlane {
   private readonly now: () => Date;
   private readonly taskQueue: AgentTaskQueue;
@@ -297,8 +374,23 @@ export class RoutingControlPlane {
     return this.profiles.has(agentId) ? clone(this.profiles.get(agentId)!) : null;
   }
 
-  replaceAgentProfile(agentId: string, payload: AgentProfileReplaceRequest, updatedBy: string): AgentProfile {
+  replaceAgentProfile(agentId: string, payload: AgentProfileReplaceRequest, updatedBy: string, idempotencyKey?: string): AgentProfile {
     this.validateAgentProfilePayload(agentId, payload);
+    const fingerprint = sha256({ agentId, payload });
+
+    if (idempotencyKey) {
+      const entry = this.idempotency.get(`agent-profile:${idempotencyKey}`);
+      if (entry) {
+        if (entry.fingerprint !== fingerprint) {
+          throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different routing agent profile payload.", {
+            idempotencyKey,
+            availableActions: ["retry"],
+          });
+        }
+        return clone(entry.response as AgentProfile);
+      }
+    }
+
     const profile: AgentProfile = {
       agentId,
       displayName: payload.displayName,
@@ -315,12 +407,56 @@ export class RoutingControlPlane {
       updatedAt: this.now().toISOString(),
     };
     this.profiles.set(agentId, profile);
+
+    if (idempotencyKey) {
+      this.idempotency.set(`agent-profile:${idempotencyKey}`, {
+        fingerprint,
+        response: clone(profile),
+      });
+    }
+
     return clone(profile);
   }
 
-  async evaluate({ ruleSetVersion, snapshot }: RoutingEvaluationRequest): Promise<RoutingDecision> {
+  async evaluate(request: RoutingEvaluationRequest, idempotencyKey?: string): Promise<RoutingDecision> {
+    if (!isRecord(request)) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing evaluation payload must be an object.", {
+        availableActions: ["retry"],
+      });
+    }
+    const { ruleSetVersion, snapshot } = request as RoutingEvaluationRequest;
+    this.validateSnapshot(snapshot);
+    const fingerprint = sha256({
+      ruleSetVersion: ruleSetVersion ?? null,
+      snapshot,
+    });
+
+    if (idempotencyKey) {
+      const entry = this.idempotency.get(`evaluation:${idempotencyKey}`);
+      if (entry) {
+        if (entry.fingerprint !== fingerprint) {
+          throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different routing evaluation payload.", {
+            idempotencyKey,
+            availableActions: ["retry"],
+          });
+        }
+        return clone(entry.response as RoutingDecision);
+      }
+    }
+
     const ruleSet = this.resolveCurrentRuleSet(ruleSetVersion);
-    const { decision } = this.routeSnapshot(snapshot, ruleSet);
+    const { decision, inputDigest } = this.routeSnapshot(snapshot, ruleSet);
+    decision.assignment.assignedAt = null;
+    decision.availableActions = ["view_audit"];
+    this.recordAudit(decision, inputDigest, ruleSet);
+
+    if (idempotencyKey) {
+      this.idempotency.set(`evaluation:${idempotencyKey}`, {
+        fingerprint,
+        response: clone(decision),
+      });
+    }
+
     return clone(decision);
   }
 
@@ -347,16 +483,7 @@ export class RoutingControlPlane {
     decision.taskId = task.id;
     decision.taskIdentifier = task.identifier;
 
-    const audit: RoutingAuditRecord = {
-      decision: clone(decision),
-      inputDigest,
-      ruleSet: {
-        id: ruleSet.id,
-        version: ruleSet.version,
-      },
-      createdAt: this.now().toISOString(),
-    };
-    this.audits.set(decision.id, audit);
+    this.recordAudit(decision, inputDigest, ruleSet);
 
     if (idempotencyKey) {
       this.idempotency.set(`intake:${idempotencyKey}`, {
@@ -370,6 +497,19 @@ export class RoutingControlPlane {
 
   getRoutingAudit(decisionId: string): RoutingAuditRecord | null {
     return this.audits.has(decisionId) ? clone(this.audits.get(decisionId)!) : null;
+  }
+
+  private recordAudit(decision: RoutingDecision, inputDigest: string, ruleSet: RoutingRuleSet) {
+    const audit: RoutingAuditRecord = {
+      decision: clone(decision),
+      inputDigest,
+      ruleSet: {
+        id: ruleSet.id,
+        version: ruleSet.version,
+      },
+      createdAt: this.now().toISOString(),
+    };
+    this.audits.set(decision.id, audit);
   }
 
   private resolveCurrentRuleSet(expectedVersion: number | null | undefined): RoutingRuleSet {
@@ -461,7 +601,7 @@ export class RoutingControlPlane {
       };
     }
 
-    const assignmentSource: TaskAssignmentSource = ruleSet.classifier.enabled ? "classifier" : "manual_triage";
+    const assignmentSource: TaskAssignmentSource = "manual_triage";
     const summary = ruleSet.classifier.enabled
       ? `No deterministic route matched; classifier fallback is not implemented, so the task was sent to triage ${ruleSet.classifier.fallbackTriageQueueId}.`
       : `No deterministic route matched; the task was sent to triage ${ruleSet.classifier.fallbackTriageQueueId}.`;
@@ -489,10 +629,7 @@ export class RoutingControlPlane {
       if (!this.ruleMatchesSnapshot(rule, snapshot)) continue;
       if (rule.target.type === "agent") {
         const profile = this.profiles.get(rule.target.id);
-        if (!profile || profile.status !== "active") {
-          continue;
-        }
-        if (profile.repoAllowlist.length > 0 && !profile.repoAllowlist.some(candidate => lower(candidate) === lower(repo))) {
+        if (!profile || !this.isAgentEligibleForSnapshot(profile, repo, snapshot.providerIssueId)) {
           continue;
         }
       }
@@ -545,10 +682,7 @@ export class RoutingControlPlane {
     const matches = new Map<string, string>();
 
     for (const profile of this.profiles.values()) {
-      if (profile.status !== "active") continue;
-      if (profile.repoAllowlist.length > 0 && !profile.repoAllowlist.some(candidate => lower(candidate) === lower(repo))) {
-        continue;
-      }
+      if (!this.isAgentEligibleForSnapshot(profile, repo, snapshot.providerIssueId)) continue;
       for (const mapping of profile.providerIdentityMappings) {
         if (lower(mapping.provider) !== lower(snapshot.provider)) continue;
         const matchedSubject = snapshot.providerAssignees.find(subject => lower(subject) === lower(mapping.subject));
@@ -618,13 +752,13 @@ export class RoutingControlPlane {
     const existing = this.taskQueue.findTaskByIdentifier(snapshot.providerIssueId);
     const assigneeAgentId = decision.assignment.assigneeAgentId;
     const triageQueueId = decision.assignment.triageQueueId;
+    const routeAvailableActions = assigneeAgentId ? ["start"] : [];
     const displayName = assigneeAgentId
       ? this.profiles.get(assigneeAgentId)?.displayName ?? assigneeAgentId
       : `Triage ${triageQueueId}`;
     const commonFields = {
       title: snapshot.title,
       description: `Provider snapshot ${snapshot.providerIssueId}\nBody digest: ${snapshot.bodyDigest}`,
-      status: "todo" as const,
       priority: snapshot.priority,
       assignee: { id: assigneeAgentId ?? triageQueueId ?? "triage", name: displayName },
       assigneeAgentId,
@@ -638,11 +772,11 @@ export class RoutingControlPlane {
         project: snapshot.project ?? repoKey(snapshot),
         goal: `Provider issue intake: ${snapshot.providerIssueId}`,
       },
-      availableActions: assigneeAgentId ? ["start"] : [],
       source: {
-        provider: snapshot.provider,
+        provider: snapshot.repository.provider,
         owner: snapshot.repository.owner,
         repo: snapshot.repository.name,
+        baseBranch: snapshot.repository.defaultBranch,
         issueNumber: this.extractIssueNumber(snapshot.providerIssueId),
         labels: clone(snapshot.labels),
         assignees: clone(snapshot.providerAssignees),
@@ -652,7 +786,10 @@ export class RoutingControlPlane {
     };
 
     if (existing) {
-      const updated = this.taskQueue.updateTask(existing.id, commonFields);
+      const updated = this.taskQueue.updateTask(existing.id, {
+        ...commonFields,
+        ...(existing.status === "todo" ? { availableActions: routeAvailableActions } : {}),
+      });
       if (!updated) {
         throw new TaskLifecycleError(500, "internal_error", "Failed to update routed task assignment.", {
           availableActions: ["retry"],
@@ -673,8 +810,50 @@ export class RoutingControlPlane {
       rollbackOperation: null,
       dueAt: null,
       version: 1,
+      status: "todo",
+      availableActions: routeAvailableActions,
       ...commonFields,
     });
+  }
+
+  private isAgentEligibleForSnapshot(profile: AgentProfile, repo: string, providerIssueId: string): boolean {
+    if (profile.status !== "active") {
+      return false;
+    }
+    if (!Array.isArray(profile.repoAllowlist) || !Array.isArray(profile.providerIdentityMappings)) {
+      return false;
+    }
+    if (profile.repoAllowlist.length > 0 && !profile.repoAllowlist.some(candidate => lower(candidate) === lower(repo))) {
+      return false;
+    }
+    return this.hasAgentCapacity(profile, providerIssueId);
+  }
+
+  private hasAgentCapacity(profile: AgentProfile, providerIssueId: string): boolean {
+    if (!Number.isInteger(profile.maxConcurrentTasks) || profile.maxConcurrentTasks <= 0) {
+      return false;
+    }
+
+    const existing = this.taskQueue.findTaskByIdentifier(providerIssueId);
+    let activeAssignedCount = 0;
+    for (const status of ["todo", "in_progress", "in_review", "blocked"]) {
+      let cursor: string | null = null;
+      do {
+        const assignedTasks = this.taskQueue.listMyTasks({
+          assigneeAgentId: profile.agentId,
+          status,
+          limit: 100,
+          cursor,
+        });
+        activeAssignedCount += assignedTasks.data.filter(task => task.id !== existing?.id).length;
+        if (activeAssignedCount >= profile.maxConcurrentTasks) {
+          return false;
+        }
+        cursor = assignedTasks.page.nextCursor;
+      } while (cursor);
+    }
+
+    return true;
   }
 
   private extractIssueNumber(providerIssueId: string): number | undefined {
@@ -683,21 +862,105 @@ export class RoutingControlPlane {
   }
 
   private validateSnapshot(snapshot: ProviderIssueSnapshot) {
-    if (!snapshot || typeof snapshot !== "object") {
+    if (!isRecord(snapshot)) {
       throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot must be an object.", {
         availableActions: ["retry"],
       });
     }
-    if (!snapshot.providerIssueId || !snapshot.title || !snapshot.sourceVersion) {
+    if (!hasOnlyKeys(snapshot, SNAPSHOT_FIELDS)) {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot contains unsupported fields.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (
+      !isNonEmptyString(snapshot.provider) ||
+      !isNonEmptyString(snapshot.providerIssueId) ||
+      !isNonEmptyString(snapshot.sourceVersion) ||
+      !isNonEmptyString(snapshot.title) ||
+      snapshot.title.length > 240 ||
+      !isNonEmptyString(snapshot.bodyDigest) ||
+      !isNonEmptyString(snapshot.issueType) ||
+      !isNonEmptyString(snapshot.priority)
+    ) {
       throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot is missing required fields.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (!ROUTING_PROVIDERS.has(snapshot.provider)) {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot contains an unsupported provider.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (!ROUTING_ISSUE_TYPES.has(snapshot.issueType)) {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot contains an unsupported issueType.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (!ROUTING_PRIORITIES.has(snapshot.priority)) {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot contains an unsupported priority.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (
+      !isRecord(snapshot.repository) ||
+      !hasOnlyKeys(snapshot.repository, REPOSITORY_FIELDS) ||
+      !isNonEmptyString(snapshot.repository.provider) ||
+      !isNonEmptyString(snapshot.repository.owner) ||
+      !isNonEmptyString(snapshot.repository.name) ||
+      !isNonEmptyString(snapshot.repository.defaultBranch)
+    ) {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot is missing required repository fields.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (!ROUTING_REPOSITORY_PROVIDERS.has(snapshot.repository.provider)) {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot contains an unsupported repository provider.", {
+        availableActions: ["retry"],
+      });
+    }
+    const arrayLimits = {
+      labels: 50,
+      providerAssignees: 20,
+      ownershipTags: 20,
+      capabilityTags: 20,
+    } as const;
+    for (const field of Object.keys(arrayLimits) as Array<keyof typeof arrayLimits>) {
+      if (!isStringArray(snapshot[field]) || snapshot[field].length > arrayLimits[field]) {
+        throw new TaskLifecycleError(400, "validation_error", `Provider issue snapshot \`${field}\` must be an array of strings.`, {
+          availableActions: ["retry"],
+        });
+      }
+    }
+    if (snapshot.project !== undefined && snapshot.project !== null && typeof snapshot.project !== "string") {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot `project` must be a string or null.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (
+      !isRecord(snapshot.links) ||
+      !hasOnlyKeys(snapshot.links, LINKS_FIELDS) ||
+      !isNonEmptyString(snapshot.links.providerIssue) ||
+      !isUrl(snapshot.links.providerIssue)
+    ) {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot is missing required links.providerIssue.", {
         availableActions: ["retry"],
       });
     }
   }
 
   private validateRuleSetPayload(payload: RoutingRuleSetReplaceRequest) {
-    if (!payload || typeof payload !== "object") {
+    if (!isRecord(payload)) {
       throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must be an object.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (!hasOnlyKeys(payload, RULE_SET_FIELDS)) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload contains unsupported fields.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (!isNonEmptyString(payload.sourceRef) || !isNonEmptyString(payload.changeReason) || payload.changeReason.length > 500) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload is missing required source metadata.", {
         availableActions: ["retry"],
       });
     }
@@ -705,6 +968,115 @@ export class RoutingControlPlane {
       throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must contain at least one rule.", {
         availableActions: ["retry"],
       });
+    }
+    if (payload.rules.length > 200) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload cannot contain more than 200 rules.", {
+        availableActions: ["retry"],
+      });
+    }
+    payload.rules.forEach((rule, index) => this.validateRoutingRulePayload(rule, index));
+    if (
+      !isRecord(payload.classifier) ||
+      !hasOnlyKeys(payload.classifier, CLASSIFIER_FIELDS) ||
+      typeof payload.classifier.enabled !== "boolean" ||
+      !isNonEmptyString(payload.classifier.provider) ||
+      typeof payload.classifier.confidenceThreshold !== "number" ||
+      payload.classifier.confidenceThreshold < 0 ||
+      payload.classifier.confidenceThreshold > 1 ||
+      !Number.isInteger(payload.classifier.maxCandidates) ||
+      payload.classifier.maxCandidates < 1 ||
+      payload.classifier.maxCandidates > 10 ||
+      !isNonEmptyString(payload.classifier.fallbackTriageQueueId)
+    ) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must include a valid classifier config.", {
+        availableActions: ["retry"],
+      });
+    }
+  }
+
+  private validateRoutingRulePayload(rule: unknown, index: number) {
+    const invalid = (reason: string): never => {
+      throw new TaskLifecycleError(400, "validation_error", `Routing rule set payload contains an invalid rule at index ${index}: ${reason}.`, {
+        availableActions: ["retry"],
+      });
+    };
+
+    if (!isRecord(rule)) {
+      invalid("rule must be an object");
+    }
+    const candidate = rule as Record<string, unknown>;
+    if (!hasOnlyKeys(candidate, ROUTING_RULE_FIELDS)) {
+      invalid("rule contains unsupported fields");
+    }
+    if (!isNonEmptyString(candidate.id)) {
+      invalid("id is required");
+    }
+    if (!isNonEmptyString(candidate.name)) {
+      invalid("name is required");
+    }
+    if (typeof candidate.enabled !== "boolean") {
+      invalid("enabled must be a boolean");
+    }
+    if (!Number.isInteger(candidate.priority)) {
+      invalid("priority must be an integer");
+    }
+    if (!isRecord(candidate.conditions)) {
+      invalid("conditions must be an object");
+    }
+    const conditions = candidate.conditions as Record<string, unknown>;
+    this.validateRoutingConditions(conditions, invalid);
+    if (!isRecord(candidate.target)) {
+      invalid("target must be an object");
+    }
+    const target = candidate.target as Record<string, unknown>;
+    if (!hasOnlyKeys(target, ROUTING_TARGET_FIELDS)) {
+      invalid("target contains unsupported fields");
+    }
+    const targetType = target.type;
+    const targetId = target.id;
+    if (!["agent", "triage_queue"].includes(String(targetType))) {
+      invalid("target.type must be agent or triage_queue");
+    }
+    if (!isNonEmptyString(targetId)) {
+      invalid("target.id is required");
+    }
+    const targetIdString = targetId as string;
+    if (targetType === "agent" && !targetIdString.startsWith("agt_")) {
+      invalid("agent target.id must start with `agt_`");
+    }
+    if (
+      typeof candidate.confidence !== "number" ||
+      !Number.isFinite(candidate.confidence) ||
+      candidate.confidence < 0 ||
+      candidate.confidence > 1
+    ) {
+      invalid("confidence must be between 0 and 1");
+    }
+    if (!isNonEmptyString(candidate.explanation) || candidate.explanation.length > 300) {
+      invalid("explanation is required and must be 300 characters or less");
+    }
+  }
+
+  private validateRoutingConditions(conditions: Record<string, unknown>, invalid: (reason: string) => never) {
+    for (const key of Object.keys(conditions)) {
+      if (!ROUTING_CONDITION_FIELD_SET.has(key)) {
+        invalid(`conditions.${key} is not supported`);
+      }
+    }
+    for (const key of ROUTING_CONDITION_FIELDS) {
+      const value = conditions[key];
+      if (value === undefined) {
+        continue;
+      }
+      if (!isStringArray(value)) {
+        invalid(`conditions.${key} must be an array of strings`);
+      }
+    }
+    if (conditions.issueTypes !== undefined && !(conditions.issueTypes as string[]).every(issueType => ROUTING_ISSUE_TYPES.has(issueType))) {
+      invalid("conditions.issueTypes contains an unsupported issue type");
+    }
+    if (conditions.priorities !== undefined && !(conditions.priorities as string[]).every(priority => ROUTING_PRIORITIES.has(priority))) {
+      invalid("conditions.priorities contains an unsupported priority");
     }
   }
 
@@ -714,8 +1086,55 @@ export class RoutingControlPlane {
         availableActions: ["retry"],
       });
     }
-    if (!payload || typeof payload !== "object") {
+    if (!isRecord(payload)) {
       throw new TaskLifecycleError(400, "validation_error", "Routing agent profile payload must be an object.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (!hasOnlyKeys(payload, AGENT_PROFILE_FIELDS)) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing agent profile contains unsupported fields.", {
+        availableActions: ["retry"],
+      });
+    }
+    if (
+      !isNonEmptyString(payload.displayName) ||
+      !isNonEmptyString(payload.role) ||
+      !["active", "paused", "disabled"].includes(payload.status) ||
+      !Number.isInteger(payload.maxConcurrentTasks) ||
+      payload.maxConcurrentTasks < 0 ||
+      payload.maxConcurrentTasks > 50 ||
+      !isNonEmptyString(payload.sourceRef) ||
+      !isNonEmptyString(payload.changeReason) ||
+      payload.changeReason.length > 500
+    ) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing agent profile is missing required scalar fields.", {
+        availableActions: ["retry"],
+      });
+    }
+    const arrayLimits = {
+      capabilityTags: 50,
+      ownershipTags: 50,
+      repoAllowlist: 200,
+    } as const;
+    for (const field of Object.keys(arrayLimits) as Array<keyof typeof arrayLimits>) {
+      if (!isStringArray(payload[field]) || payload[field].length > arrayLimits[field]) {
+        throw new TaskLifecycleError(400, "validation_error", `Routing agent profile \`${field}\` must be an array of strings.`, {
+          availableActions: ["retry"],
+        });
+      }
+    }
+    if (
+      !Array.isArray(payload.providerIdentityMappings) ||
+      payload.providerIdentityMappings.length > 20 ||
+      !payload.providerIdentityMappings.every(mapping =>
+        isRecord(mapping) &&
+        hasOnlyKeys(mapping, PROVIDER_IDENTITY_MAPPING_FIELDS) &&
+        isNonEmptyString(mapping.provider) &&
+        ROUTING_PROVIDERS.has(mapping.provider) &&
+        isNonEmptyString(mapping.subject)
+      )
+    ) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing agent profile `providerIdentityMappings` must contain provider/subject mappings.", {
         availableActions: ["retry"],
       });
     }

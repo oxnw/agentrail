@@ -6,6 +6,9 @@ export type AgentAuthScope =
   | "auth:admin"
   | "ci:read"
   | "events:read"
+  | "routing:admin"
+  | "routing:evaluate"
+  | "routing:read"
   | "reviews:read"
   | "ship:write"
   | "tasks:read"
@@ -202,6 +205,30 @@ export interface TaskContext {
   goal: string;
 }
 
+export type TaskAssignmentSource =
+  | "deterministic_rule"
+  | "classifier"
+  | "manual_triage"
+  | "provider_assignee_mapping";
+
+export interface TaskRoutingTarget {
+  type: "agent" | "triage_queue";
+  id: string;
+}
+
+export interface TaskRoutingClassifierResult {
+  provider: string;
+  confidence: number;
+  suggestedTarget: TaskRoutingTarget;
+}
+
+export interface TaskRoutingReason {
+  summary: string;
+  matchedRules: Array<{ id: string; name: string; confidence: number }>;
+  classifier: TaskRoutingClassifierResult | null;
+  conflictReasons: string[];
+}
+
 export interface TaskDetail {
   id: string;
   identifier: string;
@@ -219,6 +246,13 @@ export interface TaskDetail {
   prNumber?: number | null;
   branch?: string | null;
   baseBranch?: string | null;
+  headSha?: string | null;
+  assigneeAgentId?: string | null;
+  triageQueueId?: string | null;
+  assignmentSource?: TaskAssignmentSource | null;
+  routingDecisionId?: string | null;
+  routingReason?: TaskRoutingReason | null;
+  routingConfidence?: number | null;
   availableActions: string[];
 }
 
@@ -284,6 +318,7 @@ export interface TaskSubmissionData {
   prNumber?: number;
   head?: string | null;
   base?: string | null;
+  headSha?: string | null;
   action?: TaskSubmissionAction;
   idempotencyKey?: string;
   acceptedAt: string;

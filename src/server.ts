@@ -11,6 +11,7 @@ import { MultiCiStatusAdapter } from "./multi-ci-status-adapter.ts";
 import { TaskEventStore } from "./task-event-store.ts";
 import { AgentTaskQueue } from "./agent-task-queue.ts";
 import { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
+import { RoutingControlPlane } from "./intake-routing-control-plane.ts";
 
 loadDotEnv();
 
@@ -50,6 +51,7 @@ try {
     reviewFeedbackAdapter: runtime.reviewFeedbackAdapter,
     rollbackAdapter: runtime.rollbackAdapter,
     intakeAdapter: runtime.intakeAdapter,
+    routingControlPlane: runtime.routingControlPlane,
     authStore,
     now,
     publicBaseUrl,
@@ -134,13 +136,15 @@ function buildRuntime({
   }
 
   const taskStorePath = process.env.AGENTRAIL_TASK_STORE_PATH || undefined;
+  let agentQueue: AgentTaskQueue;
   const submitAdapter = new GitHubSubmitAdapter({
     taskSources,
     githubToken,
     apiBaseUrl: publicBaseUrl,
+    getTask: (taskId: string) => agentQueue.getRawTask(taskId),
   });
 
-  const agentQueue = new AgentTaskQueue({
+  agentQueue = new AgentTaskQueue({
     now,
     storagePath: taskStorePath,
     eventStore,
@@ -150,6 +154,7 @@ function buildRuntime({
         submitAdapter.submitTask(taskId, payload, idempotencyKey),
     },
   });
+  const routingControlPlane = new RoutingControlPlane({ now, taskQueue: agentQueue });
 
   return {
     taskLifecycleStore: agentQueue,
@@ -166,9 +171,11 @@ function buildRuntime({
     }),
     rollbackAdapter: new GitHubRollbackAdapter({
       taskSources,
-      githubToken
+      githubToken,
+      getTask: (taskId) => agentQueue.getRawTask(taskId),
     }),
     intakeAdapter: new GitHubIssueIntakeAdapter({ taskQueue: agentQueue }),
+    routingControlPlane,
   };
 }
 

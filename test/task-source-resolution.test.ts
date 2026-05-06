@@ -45,6 +45,17 @@ test("resolveTaskSource falls back to static task sources when no persisted stat
   assert.deepEqual(source, { provider: "github", owner: "acme", repo: "webapp", branch: "main" });
 });
 
+test("resolveTaskSource tolerates task detail-shaped lookups when static source exists", () => {
+  const taskSources = new Map([
+    ["tsk_static", { provider: "github", owner: "acme", repo: "webapp", branch: "main" }],
+  ]);
+  const source = resolveTaskSource("tsk_static", {
+    taskSources,
+    getTask: () => ({ data: { id: "tsk_static" } } as any),
+  });
+  assert.deepEqual(source, { provider: "github", owner: "acme", repo: "webapp", branch: "main" });
+});
+
 test("resolveTaskSource prefers persisted task source over static", () => {
   const taskSources = new Map([
     ["tsk_1", { provider: "github", owner: "acme", repo: "webapp", branch: "main" }],
@@ -60,6 +71,7 @@ test("resolveTaskSource prefers persisted task source over static", () => {
 test("resolveTaskSource falls back branch/baseBranch/headSha from latest submission when missing in persisted source", () => {
   const task = makeTask({
     id: "tsk_1",
+    source: { provider: "github", owner: "acme", repo: "webapp" },
     submissions: [
       {
         id: "sub_1",
@@ -83,6 +95,32 @@ test("resolveTaskSource falls back branch/baseBranch/headSha from latest submiss
   assert.equal(source?.headSha, "abc123");
   assert.equal(source?.pullNumber, 42);
   assert.equal(source?.prUrl, "https://github.com/acme/webapp/pull/42");
+});
+
+test("resolveTaskSource returns null for submission-only task metadata", () => {
+  const task = makeTask({
+    id: "tsk_1",
+    submissions: [
+      {
+        id: "sub_1",
+        summary: "Initial PR",
+        artifacts: [],
+        checks: [],
+        notes: null,
+        submittedAt: "2026-05-05T12:00:00Z",
+        prNumber: 42,
+        prUrl: "https://github.com/acme/webapp/pull/42",
+        branch: "feat/submit",
+        baseBranch: "main",
+        headSha: "abc123",
+      },
+    ],
+    latestSubmissionId: "sub_1",
+  });
+
+  const source = resolveTaskSource("tsk_1", { taskSources: {}, getTask: () => task });
+
+  assert.equal(source, null);
 });
 
 test("resolveTaskSource prefers persisted source branch over submission branch", () => {

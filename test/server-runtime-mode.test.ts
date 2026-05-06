@@ -79,6 +79,101 @@ test("server mode does not expose a seeded lifecycle fixture by default", async 
   assert.doesNotMatch(body, new RegExp(DEMO_TASK_ID));
 });
 
+test("server mode exposes routing control plane routes", async (t) => {
+  const port = 36000 + Math.floor(Math.random() * 1000);
+  const server = spawn(process.execPath, ["src/server.ts"], {
+    env: {
+      ...process.env,
+      AGENTRAIL_HOST: "127.0.0.1",
+      AGENTRAIL_PORT: String(port),
+      AGENTRAIL_TASK_SOURCES: JSON.stringify({
+        tsk_ROUTINGRUNTIME01: {
+          provider: "github",
+          owner: "oxnw",
+          repo: "agentrail",
+          issueNumber: 99,
+          defaultBranch: "main"
+        }
+      }),
+      GITHUB_TOKEN: "ghp_testtoken",
+      CIRCLECI_TOKEN: "",
+      CIRCLECI_WEBHOOK_SECRET: ""
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  t.after(() => {
+    if (!server.killed) {
+      server.kill("SIGTERM");
+    }
+  });
+
+  const output = [];
+  server.stdout.setEncoding("utf8");
+  server.stderr.setEncoding("utf8");
+  server.stdout.on("data", (chunk) => output.push(chunk));
+  server.stderr.on("data", (chunk) => output.push(chunk));
+
+  await waitForServerReady(server, output);
+
+  const bootstrapRes = await fetch(`http://127.0.0.1:${port}/agent-api-keys`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": `bootstrap-routing-${port}`,
+    },
+    body: JSON.stringify({
+      agent: { id: "agt_routing_runtime", displayName: "Routing Runtime", role: "test" },
+      scopes: ["auth:admin", "routing:admin", "routing:read"],
+    }),
+  });
+  const bootstrapText = await bootstrapRes.text();
+  assert.equal(bootstrapRes.status, 201, `Bootstrap failed: ${bootstrapText}`);
+  const apiKey = JSON.parse(bootstrapText).data.apiKey;
+
+  const replaceRes = await fetch(`http://127.0.0.1:${port}/operator/routing/rule-sets/current`, {
+    method: "PUT",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+      "idempotency-key": `routing-runtime-${port}`,
+    },
+    body: JSON.stringify({
+      sourceRef: "AGEA-99",
+      changeReason: "verify runtime routing control plane wiring",
+      rules: [
+        {
+          id: "rule_runtime_architecture_to_cto",
+          name: "Runtime architecture route",
+          enabled: true,
+          priority: 10,
+          conditions: { labelsAny: ["architecture"] },
+          target: { type: "agent", id: "agt_cto" },
+          confidence: 0.9,
+          explanation: "Architecture work maps to CTO.",
+        },
+      ],
+      classifier: {
+        enabled: false,
+        provider: "internal-router",
+        confidenceThreshold: 0.82,
+        maxCandidates: 3,
+        fallbackTriageQueueId: "triage_engineering",
+      },
+    }),
+  });
+  const replaceText = await replaceRes.text();
+  assert.equal(replaceRes.status, 201, `Routing replace failed: ${replaceText}`);
+  assert.equal(JSON.parse(replaceText).data.version, 1);
+
+  const currentRes = await fetch(`http://127.0.0.1:${port}/operator/routing/rule-sets/current`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  const currentBody = await currentRes.json();
+  assert.equal(currentRes.status, 200);
+  assert.equal(currentBody.data.rules[0].id, "rule_runtime_architecture_to_cto");
+});
+
 async function waitForServerReady(server, output) {
   let timeout;
   const onDataCallbacks = [];
