@@ -53,6 +53,39 @@ rely on today:
 | CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries for configured task sources. | **Legacy:** The removed demo simulated CI and review transitions locally. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
 | Ship | **Current:** Ship and rollback routes are implemented behind adapter interfaces with idempotency keys and common state/error handling. | **Legacy:** The removed demo returned a deterministic queued ship result. | **Planned:** Managed control-plane deployments coordinate merge, deploy, rollback, and audit with least-privilege provider permissions. |
 
+## First-Time Routing Bootstrap
+
+The first routing rule is not created by a worker agent and it is not inferred
+only from GitHub labels.
+
+Current OSS/server model:
+
+- A trusted operator or setup script first creates the `AgentProfile` for the
+  new `agentId`.
+- That same setup path then creates the initial routing rule set through
+  `PUT /operator/routing/rule-sets/current`.
+- The first rule should stay narrow: target the new `agentId` only for the
+  selected repo allowlist and capability tags, with triage as the fallback.
+- After that, AgentRail seeds or ingests one setup verification task through
+  the normal assignment path so the new agent can prove it can read its task.
+
+Planned CLI model:
+
+- `agentrail init` / `agentrail agent create-connect` gathers the repo,
+  capability tags, and intended agent identity during setup.
+- The CLI then creates the `AgentProfile`, writes the first routing rule set,
+  and runs the setup verification task automatically.
+
+Why it works this way:
+
+- Routing is control-plane configuration, not worker-owned behavior.
+- AgentRail needs an auditable initial rule-set revision before the first real
+  task arrives, so later ownership changes remain data changes instead of code
+  edits.
+- Starting with one narrow bootstrap rule keeps the first assignment
+  deterministic while still leaving a safe triage fallback for anything the
+  setup flow did not cover.
+
 ## Intended End-to-End Flow
 
 The intended production flow is AgentRail-owned:
