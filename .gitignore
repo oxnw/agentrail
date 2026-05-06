@@ -30,6 +30,7 @@ scripts/paperclip-issue-update.sh
 # Internal docs (not for end users)
 docs/typescript-migration.md
 docs/release-sdk-publishing.md
+docs/mvp-completeness-scorecard.md
 docs/security/release-hygiene.md
 docs/testing/
 
