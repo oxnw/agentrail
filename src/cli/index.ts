@@ -113,7 +113,8 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
     });
 
     if (flags.yes) {
-      const validation = validateSafeDefaults(config, repo);
+      const targetRepo = await Promise.resolve(detectRepo(config.targetRepo.path));
+      const validation = validateSafeDefaults(config, targetRepo);
       if (!validation.ok) {
         stderr.write("--yes is only allowed for safe local defaults.\n");
         validation.reasons.forEach((reason) => {

@@ -50,11 +50,13 @@ function parseRemoteSlug(value: string | null): string | null {
   return null;
 }
 
-function parseDefaultBranch(value: string | null): string | null {
+export function parseDefaultBranch(value: string | null): string | null {
   if (!value) return null;
 
-  const parts = value.split("/");
-  return parts.at(-1) ?? null;
+  const remoteSeparatorIndex = value.indexOf("/");
+  return remoteSeparatorIndex === -1
+    ? value
+    : value.slice(remoteSeparatorIndex + 1);
 }
 
 function hasAgentrailGitIgnore(repoPath: string): boolean {
