@@ -3,6 +3,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { runDoctor } from "./doctor.ts";
 import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
 import { detectRepoContext } from "./repo-detection.ts";
 import { buildInitCommand, createSetupConfig, validateSafeDefaults, type DetectedRepoContext } from "./setup-config.ts";
@@ -49,6 +50,14 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
     if (!command || command === "help" || command === "--help") {
       writeUsage(stdout);
       return command ? 0 : 1;
+    }
+
+    if (command === "doctor") {
+      return await runDoctor(args, {
+        cwd,
+        stdout,
+        stderr,
+      });
     }
 
     if (command !== "init") {
@@ -264,6 +273,7 @@ function writeUsage(output: Writer) {
   output.write([
     "Usage:",
     "  agentrail init [flags]",
+    "  agentrail doctor [flags]",
     "",
     "Flags:",
     "  --mode server",
@@ -271,6 +281,11 @@ function writeUsage(output: Writer) {
     "  --print-only",
     "  --yes",
     "  --markdown-export",
+    "  --base-url <url>",
+    "  --api-key <key>",
+    "  --agent-id <id>",
+    "  --repo <owner/repo>",
+    "  --setup-api-key <key>",
   ].join("\n"));
   output.write("\n");
 }
