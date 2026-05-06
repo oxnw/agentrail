@@ -48,6 +48,57 @@ test("agentrail doctor fails when setup state exists but no assigned onboarding 
   assert.equal(stdout.toString(), "");
 });
 
+test("agentrail doctor does not pass on an unrelated assigned in-progress task", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-unrelated-"));
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
+  const harness = await createSetupDoctorHarness();
+
+  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
+
+  t.after(async () => {
+    process.env.AGENTRAIL_SETUP_API_KEY = previousSetupApiKey;
+    await rm(repoRoot, { recursive: true, force: true });
+    await new Promise((resolve) => harness.server.close(resolve));
+  });
+
+  harness.taskQueue.createTask({
+    identifier: "github:oxnw/agentrail:issues/unrelated",
+    title: "Unrelated work",
+    description: "This task proves doctor must find the setup verification task specifically.",
+    status: "in_progress",
+    priority: "medium",
+    assignee: { id: harness.agentId, name: "Setup Agent" },
+    assigneeAgentId: harness.agentId,
+    acceptanceCriteria: [],
+    links: { issue: "https://github.com/oxnw/agentrail/issues/unrelated" },
+    context: { project: "oxnw/agentrail", goal: "Unrelated work" },
+    availableActions: ["submit"],
+  });
+
+  await writeDoctorRepo({
+    repoRoot,
+    baseUrl: harness.baseUrl,
+    agentApiKey: harness.agentApiKey,
+    agentId: harness.agentId,
+    repoAllowlist: harness.repoAllowlist,
+  });
+
+  const exitCode = await runCli(["doctor"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.match(stderr.toString(), /LOCAL-SETUP-AGT-SETUP/i);
+  assert.match(stderr.toString(), /github:oxnw\/agentrail:issues\/unrelated/i);
+  assert.equal(stdout.toString(), "");
+});
+
 function createMemoryWriter() {
   let buffer = "";
 

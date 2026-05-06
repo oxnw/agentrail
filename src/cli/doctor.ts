@@ -77,15 +77,26 @@ interface TaskListResponse {
     id?: string;
     identifier?: string;
   }>;
+  page?: {
+    nextCursor?: string | null;
+  };
 }
 
 interface TaskDetailResponse {
   data?: {
     identifier?: string;
+    assigneeAgentId?: string | null;
     assignee?: {
       id?: string;
     };
   };
+}
+
+interface SetupTaskVisibilityResult {
+  ok: boolean;
+  visibleTaskIdentifier: string | null;
+  scannedCount: number;
+  listStatus: number;
 }
 
 export function parseDoctorArgs(argv: string[]): DoctorFlags {
@@ -221,12 +232,14 @@ async function runDoctorChecks(inputs: DoctorInputs): Promise<{
   agentId: string;
   expectedRepo: string | null;
   visibleTaskIdentifier: string | null;
+  expectedSetupTaskIdentifier: string;
   nextRepairCommand: string | null;
   failedCheckId: DoctorCheck["id"] | null;
 }> {
   const checks: DoctorCheck[] = [];
   let visibleTaskIdentifier: string | null = null;
   let failedCheckId: DoctorCheck["id"] | null = null;
+  const expectedSetupTaskIdentifier = buildExpectedSetupTaskIdentifier(inputs.agentId);
 
   const health = await getJson<{ status?: string }>({
     baseUrl: inputs.baseUrl,
@@ -309,22 +322,17 @@ async function runDoctorChecks(inputs: DoctorInputs): Promise<{
   });
   failedCheckId = failedCheckId ?? (routingOk ? null : "routing");
 
-  let assignedTaskVisibilityOk = false;
-  if (mine.status === 200 && Array.isArray(mine.json?.data) && mine.json.data.length > 0 && mine.json.data[0]?.id) {
-    const detail = await getJson<TaskDetailResponse>({
-      baseUrl: inputs.baseUrl,
-      route: `/tasks/${mine.json.data[0].id}`,
-      bearerToken: inputs.apiKey,
-    });
-    visibleTaskIdentifier = detail.json?.data?.identifier ?? mine.json.data[0]?.identifier ?? null;
-    assignedTaskVisibilityOk = detail.status === 200 && detail.json?.data?.assignee?.id === inputs.agentId;
-  }
+  const setupTaskVisibility = await findVisibleSetupTask(inputs);
+  visibleTaskIdentifier = setupTaskVisibility.visibleTaskIdentifier;
+  const assignedTaskVisibilityOk = setupTaskVisibility.ok;
   checks.push({
     id: "assigned_task_visibility",
     ok: assignedTaskVisibilityOk,
     summary: assignedTaskVisibilityOk
-      ? `GET /tasks/mine?status=in_progress&limit=1 returned ${visibleTaskIdentifier} for ${inputs.agentId}${inputs.expectedRepo ? ` in ${inputs.expectedRepo}` : ""}.`
-      : `GET /tasks/mine?status=in_progress&limit=1 returned no assigned work for ${inputs.agentId}.`,
+      ? `GET /tasks/mine found setup task ${expectedSetupTaskIdentifier} for ${inputs.agentId}${inputs.expectedRepo ? ` in ${inputs.expectedRepo}` : ""}.`
+      : setupTaskVisibility.listStatus === 200
+        ? `GET /tasks/mine did not expose expected setup task ${expectedSetupTaskIdentifier} for ${inputs.agentId}; scanned ${setupTaskVisibility.scannedCount} in-progress task(s)${visibleTaskIdentifier ? `, first visible task was ${visibleTaskIdentifier}` : ""}.`
+        : `GET /tasks/mine failed while looking for setup task ${expectedSetupTaskIdentifier} with HTTP ${setupTaskVisibility.listStatus}.`,
   });
   failedCheckId = failedCheckId ?? (assignedTaskVisibilityOk ? null : "assigned_task_visibility");
 
@@ -335,6 +343,7 @@ async function runDoctorChecks(inputs: DoctorInputs): Promise<{
     agentId: inputs.agentId,
     expectedRepo: inputs.expectedRepo,
     visibleTaskIdentifier,
+    expectedSetupTaskIdentifier,
     nextRepairCommand: assignedTaskVisibilityOk || !inputs.setupApiKey
       ? null
       : renderRepairCommand(inputs),
@@ -349,6 +358,7 @@ function renderDoctorReport(report: {
   agentId: string;
   expectedRepo: string | null;
   visibleTaskIdentifier: string | null;
+  expectedSetupTaskIdentifier: string;
   nextRepairCommand: string | null;
   failedCheckId: DoctorCheck["id"] | null;
 }): string {
@@ -368,6 +378,7 @@ function renderDoctorReport(report: {
         repo: report.expectedRepo,
         failedCheck: report.failedCheckId,
         visibleTaskIdentifier: report.visibleTaskIdentifier,
+        expectedSetupTaskIdentifier: report.expectedSetupTaskIdentifier,
       }, null, 2),
     );
 
@@ -402,6 +413,80 @@ function ruleMatchesDoctorExpectation({
 
   const repositories = rule.conditions?.repositories;
   return !Array.isArray(repositories) || repositories.includes(expectedRepo);
+}
+
+async function findVisibleSetupTask(inputs: DoctorInputs): Promise<SetupTaskVisibilityResult> {
+  const expectedIdentifier = buildExpectedSetupTaskIdentifier(inputs.agentId);
+  let cursor: string | null = null;
+  let visibleTaskIdentifier: string | null = null;
+  let scannedCount = 0;
+  const seenCursors = new Set<string>();
+
+  do {
+    const route = `/tasks/mine?status=in_progress&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const list = await getJson<TaskListResponse>({
+      baseUrl: inputs.baseUrl,
+      route,
+      bearerToken: inputs.apiKey,
+    });
+    if (list.status !== 200) {
+      return {
+        ok: false,
+        visibleTaskIdentifier,
+        scannedCount,
+        listStatus: list.status,
+      };
+    }
+
+    const tasks = Array.isArray(list.json?.data) ? list.json.data : [];
+    for (const task of tasks) {
+      if (!task.id) continue;
+      scannedCount += 1;
+      const detail = await getJson<TaskDetailResponse>({
+        baseUrl: inputs.baseUrl,
+        route: `/tasks/${task.id}`,
+        bearerToken: inputs.apiKey,
+      });
+      const detailIdentifier = detail.json?.data?.identifier ?? task.identifier ?? null;
+      visibleTaskIdentifier = visibleTaskIdentifier ?? detailIdentifier;
+      const assigneeAgentId = detail.json?.data?.assigneeAgentId;
+      const assigneeId = typeof assigneeAgentId === "string" && assigneeAgentId.length > 0
+        ? assigneeAgentId
+        : assigneeAgentId === null
+          ? null
+          : detail.json?.data?.assignee?.id;
+      if (detail.status === 200 && detailIdentifier === expectedIdentifier && assigneeId === inputs.agentId) {
+        return {
+          ok: true,
+          visibleTaskIdentifier: detailIdentifier,
+          scannedCount,
+          listStatus: list.status,
+        };
+      }
+    }
+
+    cursor = list.json?.page?.nextCursor ?? null;
+    if (cursor && seenCursors.has(cursor)) {
+      cursor = null;
+    } else if (cursor) {
+      seenCursors.add(cursor);
+    }
+  } while (cursor);
+
+  return {
+    ok: false,
+    visibleTaskIdentifier,
+    scannedCount,
+    listStatus: 200,
+  };
+}
+
+function buildExpectedSetupTaskIdentifier(agentId: string): string {
+  return `LOCAL-SETUP-${normalizeAgentId(agentId)}`;
+}
+
+function normalizeAgentId(agentId: string): string {
+  return agentId.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").toUpperCase();
 }
 
 function renderRepairCommand(inputs: DoctorInputs): string {
