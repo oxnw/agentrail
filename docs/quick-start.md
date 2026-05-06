@@ -1,17 +1,23 @@
 # AgentRail Five-Minute Quick Start
 
-This path proves the local AgentRail lifecycle contract with the core
-self-hosted server path instead of the removed demo runtime.
+This is the default local/self-hosted onboarding path for the current OSS
+runtime.
 
-It is a local/self-managed OSS path, not the planned AgentRail Cloud team
-control plane. Cloud differentiation lives in managed connectors, durable shared
-run history and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards,
-support, compliance, and hosted reliability.
+It uses the shipped CLI pieces that exist today:
 
-Current setup is manual: copy the example task-store and task-source files,
-export the local base URL, and bootstrap a real AgentRail API key. The planned
-`agentrail init` and `agentrail agent create/connect` flow is specified in the
-[local and self-hosted setup CLI contract](./architecture/local-self-hosted-setup-cli-contract.md).
+- `agentrail init` to write `.agentrail` scaffolding.
+- Public auth/routing/setup endpoints to bootstrap the first agent identity,
+  profile, rule set, and setup smoke task.
+- `agentrail doctor` as the success gate.
+
+This closes the routing bootstrap described in
+[AGEA-95](/AGEA/issues/AGEA-95) and makes the setup story clearer per
+[AGEA-93](/AGEA/issues/AGEA-93). It is still local/self-managed OSS, not the
+planned AgentRail Cloud team control plane.
+
+The examples below use `node src/cli/index.ts` so they work directly from this
+repository checkout. That is the same CLI surface exposed as `agentrail` when
+the package is installed as a binary.
 
 ## Prerequisites
 
@@ -20,19 +26,26 @@ export the local base URL, and bootstrap a real AgentRail API key. The planned
 - A GitHub token that can read and open pull requests in the repository you use
   for the sample task source.
 
-## 1. Start the Local API
+## 1. Initialize Local Setup Files
 
 ```bash
 git clone https://github.com/oxnw/agentrail.git
 cd agentrail
 npm install
+node src/cli/index.ts init --mode server --provider-mode disabled --repo "$PWD"
 cp .env.example .env
 cp examples/self-hosted-task-store.json .agentrail.tasks.json
 cp examples/self-hosted-task-sources.json .agentrail.task-sources.json
 ```
 
-Edit both copied files so the owner, repo, issue number, working branch, and
-assignee match your environment. Then start the server:
+`agentrail init` writes `.agentrail/config.json`,
+`.agentrail/agent.env.example`, and `.agentrail/README.md`, but it does not
+mint secrets or claim setup is finished.
+
+## 2. Start The Local API
+
+Edit the copied JSON files so the owner, repo, issue number, working branch,
+and assignee match your environment. Then start the server:
 
 ```bash
 export GITHUB_TOKEN=ghp_your_token
@@ -49,58 +62,182 @@ AgentRail API listening on http://127.0.0.1:3000
 
 Leave this terminal running.
 
-## 2. Check Health
+## 3. Bootstrap Operator And Agent Keys
 
-In a second terminal:
-
-```bash
-curl -s http://127.0.0.1:3000/health
-```
-
-Expected shape:
-
-```json
-{
-  "status": "ok",
-  "service": "agentrail-service",
-  "publicBaseUrl": "http://127.0.0.1:3000",
-  "pathPrefix": null
-}
-```
-
-The response also includes time and uptime fields.
-
-## 3. Bootstrap an API Key
+In a second terminal, bootstrap the first operator/setup key:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
   -H "content-type: application/json" \
-  -H "idempotency-key: bootstrap-local-admin" \
+  -H "idempotency-key: bootstrap-local-setup-admin" \
   -d '{
     "agent": {
-      "id": "agt_local_agent",
-      "displayName": "Local Agent",
-      "role": "developer"
+      "id": "agt_setup_operator",
+      "displayName": "Local Setup Operator",
+      "role": "operator"
     },
     "scopes": [
       "auth:admin",
-      "tasks:read",
-      "tasks:write",
-      "ci:read",
-      "reviews:read",
-      "ship:write"
+      "routing:admin",
+      "routing:read",
+      "tasks:read"
     ]
   }'
 ```
 
-Save the returned `data.apiKey` value in your shell:
+Copy the returned `data.apiKey` value into your shell:
 
 ```bash
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=<paste-the-returned-data.apiKey-here>
+export AGENTRAIL_SETUP_API_KEY=<paste-the-operator-data.apiKey-here>
+export AGENTRAIL_AGENT_ID=agt_codex_local
 ```
 
-## 4. Make the Same Calls by Hand
+Create the scoped agent key that the coding agent will use:
+
+```bash
+curl -s -X POST "$AGENTRAIL_BASE_URL/agent-api-keys" \
+  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \
+  -H "content-type: application/json" \
+  -H "idempotency-key: create-agent-key:$AGENTRAIL_AGENT_ID:v1" \
+  -d '{
+    "agent": {
+      "id": "agt_codex_local",
+      "displayName": "Codex Local",
+      "role": "coding_agent"
+    },
+    "scopes": [
+      "tasks:read",
+      "tasks:write",
+      "ci:read",
+      "reviews:read",
+      "events:read"
+    ]
+  }'
+```
+
+Copy that second `data.apiKey` value too:
+
+```bash
+export AGENTRAIL_API_KEY=<paste-the-agent-data.apiKey-here>
+```
+
+## 4. Seed Profile, Routing, And Setup Smoke State
+
+Create the first `AgentProfile`:
+
+```bash
+curl -s -X PUT "$AGENTRAIL_BASE_URL/operator/routing/agent-profiles/$AGENTRAIL_AGENT_ID" \
+  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \
+  -H "content-type: application/json" \
+  -H "idempotency-key: profile:$AGENTRAIL_AGENT_ID:v1" \
+  -d '{
+    "displayName": "Codex Local",
+    "role": "coding_agent",
+    "status": "active",
+    "capabilityTags": ["code", "tests", "api"],
+    "ownershipTags": [],
+    "repoAllowlist": ["oxnw/agentrail"],
+    "providerIdentityMappings": [
+      { "provider": "github", "subject": "codex" }
+    ],
+    "maxConcurrentTasks": 1,
+    "sourceRef": "quick-start",
+    "changeReason": "Seed local onboarding profile."
+  }'
+```
+
+Create the first routing rule set:
+
+```bash
+curl -s -X PUT "$AGENTRAIL_BASE_URL/operator/routing/rule-sets/current" \
+  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \
+  -H "content-type: application/json" \
+  -H "idempotency-key: rule-set:$AGENTRAIL_AGENT_ID:v1" \
+  -d '{
+    "sourceRef": "quick-start",
+    "changeReason": "Seed local onboarding routing state.",
+    "rules": [
+      {
+        "id": "quick-start-bootstrap",
+        "name": "Route the setup repo to the first local agent",
+        "enabled": true,
+        "priority": 100,
+        "conditions": {
+          "repositories": ["oxnw/agentrail"]
+        },
+        "target": {
+          "type": "agent",
+          "id": "agt_codex_local"
+        },
+        "confidence": 1,
+        "explanation": "The first local repo routes directly to the setup agent."
+      }
+    ],
+    "classifier": {
+      "enabled": false,
+      "provider": "internal-router",
+      "confidenceThreshold": 0.8,
+      "maxCandidates": 3,
+      "fallbackTriageQueueId": "triage_default"
+    }
+  }'
+```
+
+Create the deterministic setup verification task:
+
+```bash
+curl -s -X POST "$AGENTRAIL_BASE_URL/operator/setup/verification-task" \
+  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \
+  -H "content-type: application/json" \
+  -H "idempotency-key: setup-verification:$AGENTRAIL_AGENT_ID:v1" \
+  -d '{
+    "agentId": "agt_codex_local",
+    "sourceRef": "quick-start"
+  }'
+```
+
+## 5. Fill `.agentrail/agent.env`
+
+`agentrail agent create/connect` will automate this later. For the current OSS
+path, fill the generated env file once:
+
+```bash
+cp .agentrail/agent.env.example .agentrail/agent.env
+chmod 600 .agentrail/agent.env
+cat > .agentrail/agent.env <<'EOF'
+AGENTRAIL_BASE_URL=http://127.0.0.1:3000
+AGENTRAIL_API_KEY=<paste-the-agent-data.apiKey-here>
+AGENTRAIL_AGENT_ID=agt_codex_local
+AGENTRAIL_AGENT_RUNNER=codex
+AGENTRAIL_REPO_ALLOWLIST=oxnw/agentrail
+AGENTRAIL_AGENT_RECIPE_PATH=/path/to/agentrail/docs/agent-recipes.md
+EOF
+```
+
+## 6. Run `agentrail doctor`
+
+```bash
+AGENTRAIL_SETUP_API_KEY="$AGENTRAIL_SETUP_API_KEY" \
+node src/cli/index.ts doctor
+```
+
+Success means:
+
+- `GET /health` returned `status: "ok"`.
+- `AGENTRAIL_API_KEY` authenticated against `GET /tasks/mine`.
+- The `AgentProfile` is active for the repo allowlist.
+- The current rule set targets the agent.
+- `GET /tasks/mine?status=in_progress&limit=1` returned the setup task, for
+  example `LOCAL-SETUP-AGT-CODEX-LOCAL`.
+
+If doctor fails because no assigned work is visible, rerun the setup smoke task
+endpoint from step 4 and fix the missing profile/rule/task state before you
+start the coding agent.
+
+## 7. Advanced Manual Lifecycle Calls
+
+The remaining raw lifecycle curls are reference material after doctor passes.
 
 List assigned work:
 
@@ -154,7 +291,7 @@ curl -s -X POST "$AGENTRAIL_BASE_URL/tasks/tsk_SELFHOSTED000000000001/ship" \
 Use the task's current `headSha` from `GET /tasks/mine` or the GitHub pull
 request head commit for `expectedHeadSha`.
 
-## 5. Give the Flow to a Coding Agent
+## 8. Give The Flow To A Coding Agent
 
 Open the repository where the agent should edit code. Then start the agent with
 the AgentRail environment variables and the operating recipe:
@@ -162,7 +299,7 @@ the AgentRail environment variables and the operating recipe:
 ```bash
 cd /path/to/target-repo
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_API_KEY=<paste-the-returned-data.apiKey-here>
+export AGENTRAIL_API_KEY=<paste-the-agent-data.apiKey-here>
 ```
 
 Claude Code:

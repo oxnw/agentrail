@@ -60,6 +60,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.equal(prompt.notes[1]?.title, "Next steps");
   assert.match(prompt.notes[1]?.body ?? "", /Add tokens to \.agentrail\/agent\.env file in this repository/);
   assert.match(prompt.notes[1]?.body ?? "", /Template at \.agentrail\/agent\.env\.example/);
+  assert.match(prompt.notes[1]?.body ?? "", /passing `agentrail doctor` run/i);
   assert.match(prompt.notes[1]?.body ?? "", /Happy building!/);
   assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
   assert.equal(prompt.interactions[1]?.message, "GitHub remote repository:");

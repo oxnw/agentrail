@@ -47,6 +47,7 @@ test("local setup CLI contract defines two-phase setup and runner next commands"
     "agentrail server start",
     "agentrail agent create",
     "agentrail agent connect",
+    "agentrail doctor",
     "GET /tasks/mine?status=in_progress&limit=1",
     "source .agentrail/agent.env && cd /path/to/target-repo && codex",
     'claude --append-system-prompt-file "$AGENTRAIL_AGENT_RECIPE_PATH"',
@@ -54,6 +55,21 @@ test("local setup CLI contract defines two-phase setup and runner next commands"
   ]) {
     assert.match(contract, new RegExp(escapeRegExp(requiredText)));
   }
+});
+
+test("quick-start and integration guide make doctor the onboarding gate and link back to setup rationale issues", () => {
+  const quickStart = readFileSync(path.join(repoRoot, "docs/quick-start.md"), "utf8");
+  const integrationGuide = readFileSync(path.join(repoRoot, "docs/integration-guide.md"), "utf8");
+
+  assert.match(quickStart, /agentrail doctor/i);
+  assert.match(quickStart, /AGEA-95/);
+  assert.match(quickStart, /AGEA-93/);
+  assert.match(quickStart, /Advanced Manual Lifecycle Calls/i);
+
+  assert.match(integrationGuide, /agentrail init/i);
+  assert.match(integrationGuide, /agentrail doctor/i);
+  assert.match(integrationGuide, /AGEA-95/);
+  assert.match(integrationGuide, /AGEA-93/);
 });
 
 test("README docker compose quickstart has a compose file", () => {

@@ -315,6 +315,10 @@ paths:
       tags: [Tasks]
       operationId: listMyTasks
       summary: List tasks assigned to the current agent
+      description: |
+        Returns the compact task list for the authenticated agent.
+        `agentrail doctor` uses this route as the final local onboarding
+        success gate after auth, profile, and routing bootstrap.
       parameters:
         - in: query
           name: status
