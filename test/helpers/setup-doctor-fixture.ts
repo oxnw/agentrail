@@ -22,6 +22,7 @@ export interface SetupDoctorHarness {
   agentApiKey: string;
   agentId: string;
   repoAllowlist: string[];
+  taskQueue: AgentTaskQueue;
 }
 
 export async function createSetupDoctorHarness({
@@ -74,6 +75,7 @@ export async function createSetupDoctorHarness({
       agentApiKey,
       agentId,
       repoAllowlist,
+      taskQueue,
     };
   } catch (error) {
     await new Promise((resolve) => server.close(resolve));
