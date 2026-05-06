@@ -41,6 +41,13 @@ export interface TaskSource {
   receivedAt?: string;
 }
 
+export interface TaskSourceAudit {
+  sourceRef: string;
+  changeReason: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export interface TaskRecord {
   id: string;
   identifier: string;
@@ -64,6 +71,7 @@ export interface TaskRecord {
   createdAt: string;
   version: number;
   source?: TaskSource;
+  sourceAudit?: TaskSourceAudit | null;
   assigneeAgentId?: string | null;
   triageQueueId?: string | null;
   assignmentSource?: TaskAssignmentSource | null;
@@ -342,6 +350,10 @@ export class TaskStore {
     return null;
   }
 
+  listAllTasks(): TaskRecord[] {
+    return [...this._tasks.values()].map((task) => structuredClone(task));
+  }
+
   createTask(partial: Omit<Partial<TaskRecord>, "id"> & { identifier: string; title: string }): TaskRecord {
     const id = createId();
     const now = this.now().toISOString();
@@ -368,6 +380,7 @@ export class TaskStore {
       createdAt: partial.createdAt ?? now,
       version: partial.version ?? 1,
       source: partial.source,
+      sourceAudit: "sourceAudit" in partial ? (partial.sourceAudit ?? null) : null,
       assigneeAgentId: "assigneeAgentId" in partial ? (partial.assigneeAgentId ?? null) : (partial.assignee?.id ?? null),
       triageQueueId: "triageQueueId" in partial ? (partial.triageQueueId ?? null) : null,
       assignmentSource: "assignmentSource" in partial ? (partial.assignmentSource ?? null) : null,

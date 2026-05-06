@@ -503,6 +503,35 @@ async function routeRequest({
     return;
   }
 
+  const repairTaskSourceMatch =
+    request.method === "PATCH"
+      ? pathname.match(/^\/operator\/tasks\/(tsk_[A-Za-z0-9]+)\/source$/)
+      : null;
+  if (repairTaskSourceMatch) {
+    obs.operation = "repair_task_source";
+    obs.taskId = repairTaskSourceMatch[1];
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "routing:admin",
+      operation: "repair_task_source"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleRepairTaskSource({
+      request,
+      response,
+      taskLifecycleStore,
+      taskId: repairTaskSourceMatch[1],
+      actorId: principal?.agent?.id ?? principal?.keyId ?? "system",
+    });
+    return;
+  }
+
   if (request.method === "GET" && pathname === "/tasks/mine") {
     obs.operation = "list_my_tasks";
     const principal = authorizeRoute({
@@ -1264,6 +1293,45 @@ async function handleCreateSetupVerificationTask({
       now
     });
     writeJson(response, 201, {
+      ...body,
+      meta: responseMeta()
+    });
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function handleRepairTaskSource({
+  request,
+  response,
+  taskLifecycleStore,
+  taskId,
+  actorId,
+}: {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  taskLifecycleStore: unknown;
+  taskId: string;
+  actorId: string;
+}) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { repairTaskSource?: unknown }).repairTaskSource !== "function") {
+    writeError(response, 404, "not_found", "Task source repair is not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const payload = await readJsonBody(request);
+    const body = (taskLifecycleStore as {
+      repairTaskSource: (taskId: string, payload: unknown, actorId: string, idempotencyKey: string) => unknown;
+    }).repairTaskSource(taskId, payload, actorId, idempotencyKey) as Record<string, unknown>;
+    writeJson(response, 200, {
       ...body,
       meta: responseMeta()
     });

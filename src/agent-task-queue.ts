@@ -3,6 +3,7 @@ import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 import { TaskStore, type TaskRecord } from "./task-store.ts";
 import type { TaskEventStore } from "./task-event-store.ts";
 import { getLatestTaskSubmission } from "./task-source-resolution.ts";
+import { mergeTaskSource, validateTaskSourceRepairRequest, type TaskSourceRepairRequest } from "./task-source-repair.ts";
 
 export interface AgentTaskQueueOptions {
   now?: () => Date;
@@ -16,6 +17,17 @@ export interface TaskLifecycleDelegate {
   submitTask?(taskId: string, payload: unknown, idempotencyKey: string | undefined): Promise<unknown>;
   shipTask?(taskId: string, payload: unknown, idempotencyKey: string | undefined): Promise<unknown>;
   rollbackTask?(taskId: string, payload: unknown, idempotencyKey: string | undefined): Promise<unknown>;
+}
+
+interface TaskSourceRepairResponseBody {
+  data: {
+    taskId: string;
+    source: NonNullable<TaskRecord["source"]>;
+    sourceAudit: NonNullable<TaskRecord["sourceAudit"]>;
+    updatedAt: string;
+    version: number;
+  };
+  availableActions: string[];
 }
 
 function toTaskDetail(task: TaskRecord) {
@@ -223,6 +235,74 @@ export class AgentTaskQueue {
     });
   }
 
+  repairTaskSource(
+    taskId: string,
+    payload: TaskSourceRepairRequest,
+    updatedBy: string,
+    idempotencyKey: string | undefined,
+  ): TaskSourceRepairResponseBody {
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    const validated = validateTaskSourceRepairRequest(payload);
+    const existing = this.store.getTask(taskId);
+    if (!existing) {
+      throw new TaskLifecycleError(404, "not_found", "Task not found.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+
+    const key = `repair-task-source:${idempotencyKey}`;
+    const fingerprint = JSON.stringify({ taskId, payload: validated, updatedBy });
+    const prior = this.store.getIdempotencyEntry(key);
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) {
+        throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different task source repair payload.", {
+          idempotencyKey,
+          availableActions: ["retry"],
+        });
+      }
+      return structuredClone(prior.response as TaskSourceRepairResponseBody);
+    }
+
+    const mergedSource = mergeTaskSource({
+      currentSource: existing.source,
+      patch: validated.source,
+    });
+    const updated = this.store.updateTask(taskId, {
+      source: mergedSource,
+      sourceAudit: {
+        sourceRef: validated.sourceRef,
+        changeReason: validated.changeReason,
+        updatedBy,
+        updatedAt: this.now().toISOString(),
+      },
+    });
+
+    if (!updated?.source || !updated.sourceAudit) {
+      throw new TaskLifecycleError(500, "internal_error", "Failed to persist repaired task source.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    const response = {
+      data: {
+        taskId: updated.id,
+        source: structuredClone(updated.source),
+        sourceAudit: structuredClone(updated.sourceAudit),
+        updatedAt: updated.updatedAt,
+        version: updated.version,
+      },
+      availableActions: ["get_task"],
+    };
+
+    this.store.setIdempotencyEntry(key, { fingerprint, response: structuredClone(response) });
+    return response;
+  }
+
   // Internal helpers for store management (used by intake/routing engine and tests)
   createTask(partial: Parameters<TaskStore["createTask"]>[0]) {
     return this.store.createTask(partial);
@@ -250,6 +330,10 @@ export class AgentTaskQueue {
 
   setIdempotencyEntry(key: string, entry: Parameters<TaskStore["setIdempotencyEntry"]>[1]) {
     return this.store.setIdempotencyEntry(key, entry);
+  }
+
+  listRawTasks() {
+    return this.store.listAllTasks();
   }
 
   private async appendTaskUpdatedEvent(
