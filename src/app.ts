@@ -882,10 +882,16 @@ function handleGetTask({ response, taskLifecycleStore, taskId, principal }: GetT
 
 function isTaskVisibleToPrincipal(body: unknown, principal: ReturnType<AgentAuthStore["authenticate"]> | null): boolean {
   if (!principal) return true;
-  const taskBody = body as { data?: { assignee?: { id?: string } } } | null;
-  const assigneeId = taskBody?.data?.assignee?.id;
-  if (!assigneeId) return true;
-  return assigneeId === principal.agent.id;
+  const taskBody = body as { data?: { assigneeAgentId?: string | null; assignee?: { id?: string } } } | null;
+  const assigneeAgentId = taskBody?.data?.assigneeAgentId;
+  if (typeof assigneeAgentId === "string" && assigneeAgentId.length > 0) {
+    return assigneeAgentId === principal.agent.id;
+  }
+  if (assigneeAgentId === null) return false;
+
+  const legacyAssigneeId = taskBody?.data?.assignee?.id;
+  if (!legacyAssigneeId) return true;
+  return legacyAssigneeId === principal.agent.id;
 }
 
 interface CreateKeyOptions {

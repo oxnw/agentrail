@@ -114,20 +114,15 @@ describe("GitHubIssueIntakeAdapter", () => {
   it("returns cached result on duplicate replay with same idempotency key", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
-
-    const first = await adapter.ingest({
+    const payload = {
       issueNumber: 20,
       issueUrl: "https://github.com/oxnw/agentrail/issues/20",
       issueTitle: "Duplicate test",
       labels: ["bug"],
-    }, "idemp_dup");
+    };
 
-    const second = await adapter.ingest({
-      issueNumber: 20,
-      issueUrl: "https://github.com/oxnw/agentrail/issues/20",
-      issueTitle: "Duplicate test updated",
-      labels: ["feature"],
-    }, "idemp_dup");
+    const first = await adapter.ingest(payload, "idemp_dup");
+    const second = await adapter.ingest(payload, "idemp_dup");
 
     // Cached from first request (idempotency key hit)
     assert.strictEqual(second.taskId, first.taskId);
@@ -137,6 +132,51 @@ describe("GitHubIssueIntakeAdapter", () => {
     const stored = queue.getRawTask(first.taskId);
     assert.strictEqual(stored!.title, "Duplicate test");
     assert.deepStrictEqual(stored!.source!.labels, ["bug"]);
+  });
+
+  it("rejects a reused idempotency key with a different intake payload", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    await adapter.ingest({
+      issueNumber: 20,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/20",
+      issueTitle: "Duplicate test",
+      labels: ["bug"],
+    }, "idemp_conflict");
+
+    await assert.rejects(
+      adapter.ingest({
+        issueNumber: 20,
+        issueUrl: "https://github.com/oxnw/agentrail/issues/20",
+        issueTitle: "Duplicate test updated",
+        labels: ["feature"],
+      }, "idemp_conflict"),
+      (err: any) => err.statusCode === 409 && err.code === "conflict"
+    );
+  });
+
+  it("namespaces idempotency keys away from other task operations", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+    queue.setIdempotencyEntry("setup-verification:agt_setup:v1", {
+      fingerprint: "setup",
+      response: {
+        data: {
+          taskId: "tsk_setup",
+          taskIdentifier: "LOCAL-SETUP-AGT-SETUP",
+        },
+      },
+    });
+
+    const result = await adapter.ingest({
+      issueNumber: 23,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/23",
+      issueTitle: "Do not replay setup result",
+    }, "setup-verification:agt_setup:v1");
+
+    assert.ok(result.taskId.startsWith("tsk_"));
+    assert.strictEqual(result.identifier, "github:oxnw/agentrail:issues/23");
   });
 
   it("updates existing task on repeat webhook with different idempotency key", async () => {
@@ -170,6 +210,7 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(stored!.status, "done");
     assert.strictEqual(stored!.priority, "high");
     assert.deepStrictEqual(stored!.assignee, { id: "bob", name: "bob" });
+    assert.strictEqual(stored!.assigneeAgentId, "bob");
     assert.deepStrictEqual(stored!.source!.labels, ["enhancement", "high-priority"]);
   });
 

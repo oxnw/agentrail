@@ -201,6 +201,35 @@ test("GET /operator/routing/agent-profiles/{agentId} rejects worker without rout
   }
 });
 
+test("GET /tasks/{taskId} authorizes against canonical assigneeAgentId", async () => {
+  const { server, baseUrl, workerKey, taskQueue } = await setupServer();
+  try {
+    const task = taskQueue.createTask({
+      identifier: "github:oxnw/agentrail:issues/canonical-assignee",
+      title: "Canonical assignment visibility",
+      description: "Display assignee can differ from the AgentRail agent id.",
+      status: "in_progress",
+      priority: "medium",
+      assignee: { id: "github-login", name: "GitHub Login" },
+      assigneeAgentId: "agt_worker",
+      acceptanceCriteria: [],
+      links: { issue: "https://github.com/oxnw/agentrail/issues/canonical-assignee" },
+      context: { project: "oxnw/agentrail", goal: "Visibility test" },
+      availableActions: ["submit"],
+    });
+
+    const res = await fetch(`${baseUrl}/tasks/${task.id}`, {
+      headers: { authorization: `Bearer ${workerKey.apiKey}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.data.assignee.id, "github-login");
+    assert.equal(body.data.assigneeAgentId, "agt_worker");
+  } finally {
+    server.close();
+  }
+});
+
 test("routing profile and rule-set endpoints reload persisted state after restart", async () => {
   const ruleSetPath = tmpPath("rules");
   const profilePath = tmpPath("profiles");

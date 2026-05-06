@@ -1,4 +1,6 @@
 /** GitHub issue intake adapter: maps a GitHub issue to the AgentRail task store. */
+import crypto from "node:crypto";
+
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 import type { AgentTaskQueue } from "./agent-task-queue.ts";
 
@@ -35,6 +37,23 @@ function hasField<Key extends PropertyKey>(value: object, key: Key): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableStringify(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function sha256(value: unknown): string {
+  return `sha256:${crypto.createHash("sha256").update(stableStringify(value)).digest("hex")}`;
+}
+
 export class GitHubIssueIntakeAdapter {
   private taskQueue: AgentTaskQueue;
   private now: () => Date;
@@ -53,11 +72,19 @@ export class GitHubIssueIntakeAdapter {
 
     const repository = this.resolveRepository(payload);
     const identifier = this.buildIdentifier(repository, payload.issueNumber);
+    const fingerprint = sha256(payload);
+    const idempotencyStoreKey = idempotencyKey ? `github-issue-intake:${idempotencyKey}` : null;
 
-    if (idempotencyKey) {
-      const cached = this.taskQueue.getIdempotencyEntry(idempotencyKey);
+    if (idempotencyStoreKey) {
+      const cached = this.taskQueue.getIdempotencyEntry(idempotencyStoreKey);
       if (cached) {
-        return cached.response as GitHubIssueIntakeResult;
+        if (cached.fingerprint !== fingerprint) {
+          throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different GitHub issue intake payload.", {
+            idempotencyKey,
+            availableActions: ["retry"],
+          });
+        }
+        return structuredClone(cached.response as GitHubIssueIntakeResult);
       }
     }
 
@@ -74,13 +101,15 @@ export class GitHubIssueIntakeAdapter {
       const assigneeLogins = hasAssignees
         ? (payload.assignees ?? []).map(a => a.login)
         : (existing.source?.assignees ?? []);
+      const assignee = hasAssignees ? this.mapAssignee(payload.assignees ?? []) : existing.assignee;
 
       const updated = this.taskQueue.updateTask(existing.id, {
         title: payload.issueTitle ?? existing.title,
         description,
         status: hasState ? this.mapStatus(payload.state) : existing.status,
         priority: hasLabels ? this.mapPriority(payload.labels ?? []) : existing.priority,
-        assignee: hasAssignees ? this.mapAssignee(payload.assignees ?? []) : existing.assignee,
+        assignee,
+        assigneeAgentId: hasAssignees ? assignee.id : existing.assigneeAgentId,
         acceptanceCriteria,
         links: { issue: payload.issueUrl },
         context: {
@@ -112,20 +141,22 @@ export class GitHubIssueIntakeAdapter {
         createdAt: updated.createdAt,
       };
 
-      if (idempotencyKey) {
-        this.taskQueue.setIdempotencyEntry(idempotencyKey, { fingerprint: identifier, response: result });
+      if (idempotencyStoreKey) {
+        this.taskQueue.setIdempotencyEntry(idempotencyStoreKey, { fingerprint, response: structuredClone(result) });
       }
 
       return result;
     }
 
+    const assignee = this.mapAssignee(payload.assignees ?? []);
     const taskRecord = this.taskQueue.createTask({
       identifier,
       title: payload.issueTitle ?? `Issue #${payload.issueNumber}`,
       description: payload.body ?? "",
       status: this.mapStatus(payload.state),
       priority: this.mapPriority(payload.labels ?? []),
-      assignee: this.mapAssignee(payload.assignees ?? []),
+      assignee,
+      assigneeAgentId: assignee.id,
       links: {
         issue: payload.issueUrl,
       },
@@ -164,8 +195,8 @@ export class GitHubIssueIntakeAdapter {
       createdAt: taskRecord.createdAt,
     };
 
-    if (idempotencyKey) {
-      this.taskQueue.setIdempotencyEntry(idempotencyKey, { fingerprint: identifier, response: result });
+    if (idempotencyStoreKey) {
+      this.taskQueue.setIdempotencyEntry(idempotencyStoreKey, { fingerprint, response: structuredClone(result) });
     }
 
     return result;
