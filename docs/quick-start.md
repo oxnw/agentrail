@@ -111,7 +111,8 @@ curl -s -X POST "$AGENTRAIL_BASE_URL/agent-api-keys" \
       "tasks:write",
       "ci:read",
       "reviews:read",
-      "events:read"
+      "events:read",
+      "ship:write"
     ]
   }'
 ```
@@ -203,7 +204,7 @@ curl -s -X POST "$AGENTRAIL_BASE_URL/operator/setup/verification-task" \
 path, fill the generated env file once:
 
 ```bash
-cp .agentrail/agent.env.example .agentrail/agent.env
+touch .agentrail/agent.env
 chmod 600 .agentrail/agent.env
 cat > .agentrail/agent.env <<'EOF'
 AGENTRAIL_BASE_URL=http://127.0.0.1:3000

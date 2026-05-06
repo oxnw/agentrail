@@ -51,8 +51,8 @@ Default local onboarding is now CLI-assisted: run `agentrail init`, bring up
 the current server runtime, seed auth/routing/setup state through the public
 contracts, and finish with `agentrail doctor`. The full walkthrough lives in
 [docs/quick-start.md](docs/quick-start.md) and ties the routing bootstrap back
-to [AGEA-95](/AGEA/issues/AGEA-95) and the integration-doc cleanup back to
-[AGEA-93](/AGEA/issues/AGEA-93).
+to [AGEA-95](https://github.com/oxnw/agentrail/issues/95) and the integration-doc cleanup back to
+[AGEA-93](https://github.com/oxnw/agentrail/issues/93).
 
 Node setup:
 
