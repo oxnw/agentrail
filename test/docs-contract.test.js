@@ -9,8 +9,8 @@ test("OpenAPI lint script validates lifecycle and intake routing contracts", () 
   const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
   const lintScript = packageJson.scripts?.["lint:openapi"] ?? "";
 
-  assert.match(lintScript, /docs\/api\/task-lifecycle\.openapi\.yaml/);
-  assert.match(lintScript, /docs\/api\/intake-routing-admin\.openapi\.yaml/);
+  assert.match(lintScript, /docs\/api\/task-lifecycle\.openapi\.yaml/, "package.json lint:openapi should include task lifecycle OpenAPI");
+  assert.match(lintScript, /docs\/api\/intake-routing-admin\.openapi\.yaml/, "package.json lint:openapi should include intake routing OpenAPI");
 });
 
 test("integration guide labels current, legacy, and planned behavior by capability", () => {
@@ -53,7 +53,7 @@ test("local setup CLI contract defines two-phase setup and runner next commands"
     'claude --append-system-prompt-file "$AGENTRAIL_AGENT_RECIPE_PATH"',
     "cursor /path/to/target-repo",
   ]) {
-    assert.match(contract, new RegExp(escapeRegExp(requiredText)));
+    assert.match(contract, new RegExp(escapeRegExp(requiredText)), `setup CLI contract should include ${requiredText}`);
   }
 });
 
@@ -61,15 +61,15 @@ test("quick-start and integration guide make doctor the onboarding gate and link
   const quickStart = readFileSync(path.join(repoRoot, "docs/quick-start.md"), "utf8");
   const integrationGuide = readFileSync(path.join(repoRoot, "docs/integration-guide.md"), "utf8");
 
-  assert.match(quickStart, /agentrail doctor/i);
-  assert.match(quickStart, /AGEA-95/);
-  assert.match(quickStart, /AGEA-93/);
-  assert.match(quickStart, /Advanced Manual Lifecycle Calls/i);
+  assert.match(quickStart, /agentrail doctor/i, "quick-start.md should mention agentrail doctor");
+  assert.match(quickStart, /AGEA-95/, "quick-start.md should reference AGEA-95");
+  assert.match(quickStart, /AGEA-93/, "quick-start.md should reference AGEA-93");
+  assert.match(quickStart, /Advanced Manual Lifecycle Calls/i, "quick-start.md should include Advanced Manual Lifecycle Calls");
 
-  assert.match(integrationGuide, /agentrail init/i);
-  assert.match(integrationGuide, /agentrail doctor/i);
-  assert.match(integrationGuide, /AGEA-95/);
-  assert.match(integrationGuide, /AGEA-93/);
+  assert.match(integrationGuide, /agentrail init/i, "integration-guide.md should mention agentrail init");
+  assert.match(integrationGuide, /agentrail doctor/i, "integration-guide.md should mention agentrail doctor");
+  assert.match(integrationGuide, /AGEA-95/, "integration-guide.md should reference AGEA-95");
+  assert.match(integrationGuide, /AGEA-93/, "integration-guide.md should reference AGEA-93");
 });
 
 test("README docker compose quickstart has a compose file", () => {
