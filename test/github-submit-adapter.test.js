@@ -7,21 +7,40 @@ import { GitHubSubmitAdapter, extractIdempotencyKey, IDEMPOTENCY_TAG } from "../
 const taskId = "tsk_DEMOISSUETOSHIP01";
 const idempotencyKey = "idem-key-001";
 
-function makeTaskSources(overrides = {}) {
-  return new Map([
-    [
-      taskId,
-      {
-        owner: "acme",
-        repo: "webapp",
-        branch: "feat/fix-auth",
-        baseBranch: "main",
-        issueNumber: 42,
-        reviewers: ["reviewer1"],
-        ...overrides,
-      },
-    ],
-  ]);
+function makeTask(overrides = {}) {
+  return {
+    id: taskId,
+    identifier: "AGEA-101",
+    title: "Submit provider-backed task",
+    description: "",
+    status: "assigned",
+    priority: "high",
+    assignee: { id: "agt_test", name: "Test Agent" },
+    acceptanceCriteria: [],
+    links: { issue: "https://github.com/acme/webapp/issues/42" },
+    context: { project: "acme/webapp", goal: "test" },
+    updatedAt: "2026-05-05T12:00:00Z",
+    availableActions: ["submit"],
+    submissions: [],
+    latestSubmissionId: null,
+    ciStatus: null,
+    reviewOutcome: null,
+    shipOperation: null,
+    rollbackOperation: null,
+    dueAt: null,
+    createdAt: "2026-05-05T12:00:00Z",
+    version: 1,
+    source: {
+      provider: "github",
+      owner: "acme",
+      repo: "webapp",
+      branch: "feat/fix-auth",
+      baseBranch: "main",
+      issueNumber: 42,
+      reviewers: ["reviewer1"],
+      ...overrides,
+    },
+  };
 }
 
 function makePR(overrides = {}) {
@@ -52,7 +71,7 @@ test("creates a real GitHub PR via POST /repos/{owner}/{repo}/pulls", async () =
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url, options) => {
       fetchCalls.push({ url: String(url), method: options?.method ?? "GET" });
 
@@ -103,7 +122,6 @@ test("resolves submit source from persisted routed task when not configured in t
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: new Map(),
     getTask: (requestedTaskId) => {
       assert.equal(requestedTaskId, taskId);
       return {
@@ -152,7 +170,7 @@ test("returns existing PR without creating a duplicate (idempotent replay)", asy
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url, options) => {
       if (String(url).includes("/pulls") && options?.method === "POST" && !String(url).includes("requested_reviewers")) {
         createCallCount++;
@@ -188,7 +206,7 @@ test("rejects mismatched payload on same idempotency key with 409", async () => 
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url, options) => {
       if (options?.method === "POST" && String(url).endsWith("/pulls")) return jsonResponse(pr);
       if (String(url).includes("/requested_reviewers")) return jsonResponse({ requested_reviewers: [] });
@@ -221,7 +239,7 @@ test("finds existing PR by idempotency key embedded in body", async () => {
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url) => {
       if (String(url).includes("/pulls?state=all")) {
         return jsonResponse([existingPR]);
@@ -245,7 +263,7 @@ test("finds existing PR by head branch match", async () => {
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async (url) => {
       if (String(url).includes("/pulls?state=all")) {
         return jsonResponse([]);
@@ -278,7 +296,7 @@ test("delegates to the fallback lifecycle store when no task source exists", asy
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: new Map(),
+    getTask: () => null,
     fetch: async () => jsonResponse({}),
     delegate,
   });
@@ -290,7 +308,7 @@ test("delegates to the fallback lifecycle store when no task source exists", asy
 test("requires Idempotency-Key header", async () => {
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources: makeTaskSources(),
+    getTask: () => makeTask(),
     fetch: async () => jsonResponse({}),
   });
 

@@ -19,7 +19,6 @@ export class CiStatusSourceError extends Error {
 }
 
 export class GitHubActionsCiAdapter {
-  declare taskSources: any;
   declare githubToken: string | undefined;
   declare fetch: typeof globalThis.fetch;
   declare apiBaseUrl: string;
@@ -27,7 +26,6 @@ export class GitHubActionsCiAdapter {
   declare jobsByRunId: Map<string, any>;
   declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
-    taskSources = {},
     getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
@@ -38,7 +36,6 @@ export class GitHubActionsCiAdapter {
       throw new TypeError("GitHubActionsCiAdapter requires a fetch implementation.");
     }
 
-    this.taskSources = taskSources;
     this.getTask = getTask;
     this.githubToken = githubToken;
     this.fetch = fetch;
@@ -49,7 +46,6 @@ export class GitHubActionsCiAdapter {
 
   async getTaskCiStatus(taskId) {
     const source = resolveTaskSource(taskId, {
-      taskSources: this.taskSources,
       getTask: this.getTask,
     });
     if (!source) {

@@ -13,22 +13,19 @@ import { RoutingAuditStore } from "./routing-audit-store.ts";
 import { RoutingRuleStore } from "./routing-rule-store.ts";
 
 export function buildRuntime({
-  taskSourcesJson,
   githubToken,
   circleciToken,
   now,
   eventStore,
   publicBaseUrl
 }: {
-  taskSourcesJson: string | null;
   githubToken: string | null;
   circleciToken: string | null;
   now: () => Date;
   eventStore: TaskEventStore;
   publicBaseUrl: string;
 }) {
-  const taskSources = parseTaskSources(taskSourcesJson);
-  const hasGitHubRuntime = Boolean(taskSources && githubToken);
+  const hasGitHubRuntime = Boolean(githubToken);
 
   const taskStorePath = process.env.AGENTRAIL_TASK_STORE_PATH || undefined;
   const agentProfileStorePath = process.env.AGENTRAIL_AGENT_PROFILES_STORE_PATH || undefined;
@@ -37,7 +34,6 @@ export function buildRuntime({
   let agentQueue: AgentTaskQueue;
   const submitAdapter = hasGitHubRuntime
     ? new GitHubSubmitAdapter({
-        taskSources: taskSources!,
         githubToken: githubToken!,
         apiBaseUrl: publicBaseUrl,
         getTask: (taskId: string) => agentQueue.getRawTask(taskId),
@@ -78,21 +74,19 @@ export function buildRuntime({
   return {
     taskLifecycleStore: agentQueue,
     ciStatusAdapter: buildCiStatusAdapter({
-      taskSources,
       githubToken,
       circleciToken,
       getTask: (taskId) => agentQueue.getRawTask(taskId),
+      listTasks: () => agentQueue.listRawTasks(),
     }),
     reviewFeedbackAdapter: hasGitHubRuntime
       ? new GitHubReviewFeedbackAdapter({
-          taskSources: taskSources!,
           githubToken: githubToken!,
           getTask: (taskId) => agentQueue.getRawTask(taskId),
         })
       : null,
     rollbackAdapter: hasGitHubRuntime
       ? new GitHubRollbackAdapter({
-          taskSources: taskSources!,
           githubToken: githubToken!,
           getTask: (taskId) => agentQueue.getRawTask(taskId),
         })
@@ -102,48 +96,29 @@ export function buildRuntime({
   };
 }
 
-export function parseTaskSources(taskSourcesJson: string | null): Map<string, unknown> | null {
-  if (!taskSourcesJson) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(taskSourcesJson);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("not an object");
-    }
-
-    return new Map(Object.entries(parsed));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`AGENTRAIL_TASK_SOURCES must be a JSON object keyed by task id: ${message}`);
-  }
-}
-
-function buildCiStatusAdapter({ taskSources, githubToken, circleciToken, getTask }: {
-  taskSources: Map<string, unknown> | null;
+function buildCiStatusAdapter({ githubToken, circleciToken, getTask, listTasks }: {
   githubToken: string | null;
   circleciToken: string | null;
   getTask?: ((taskId: string) => unknown) | null;
+  listTasks?: (() => unknown[]) | null;
 }) {
   const adapters = [];
 
-  if (taskSources && githubToken) {
+  if (githubToken) {
     adapters.push(
       new GitHubActionsCiAdapter({
-        taskSources,
         githubToken,
         getTask: getTask as ((taskId: string) => any) ?? null,
       })
     );
   }
 
-  if (taskSources && circleciToken) {
+  if (circleciToken) {
     adapters.push(
       new CircleCiStatusAdapter({
-        taskSources,
         circleciToken,
         getTask: getTask as ((taskId: string) => any) ?? null,
+        listTasks: listTasks as (() => any[]) ?? null,
       })
     );
   }

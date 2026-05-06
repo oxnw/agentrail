@@ -9,7 +9,6 @@ const DEFAULT_PIPELINE_LIMIT = 20;
 const MAX_FAILURE_SUMMARIES = 5;
 
 export class CircleCiStatusAdapter {
-  declare taskSources: any;
   declare circleciToken: string | undefined;
   declare webhookSecret: string | null;
   declare fetch: typeof globalThis.fetch;
@@ -20,9 +19,10 @@ export class CircleCiStatusAdapter {
   declare webhookSnapshots: Map<string, any>;
   declare processedWebhookIds: Set<string>;
   declare getTask: ((taskId: string) => TaskRecord | null) | null;
+  declare listTasks: (() => TaskRecord[]) | null;
   constructor({
-    taskSources = {},
     getTask = null,
+    listTasks = null,
     circleciToken = process.env.CIRCLECI_TOKEN,
     webhookSecret = process.env.CIRCLECI_WEBHOOK_SECRET || null,
     fetch = globalThis.fetch,
@@ -33,8 +33,8 @@ export class CircleCiStatusAdapter {
       throw new TypeError("CircleCiStatusAdapter requires a fetch implementation.");
     }
 
-    this.taskSources = taskSources;
     this.getTask = getTask;
+    this.listTasks = listTasks;
     this.circleciToken = circleciToken;
     this.webhookSecret = webhookSecret;
     this.fetch = fetch;
@@ -48,7 +48,6 @@ export class CircleCiStatusAdapter {
 
   async getTaskCiStatus(taskId) {
     const source = resolveTaskSource(taskId, {
-      taskSources: this.taskSources,
       getTask: this.getTask,
     });
     if (!source || !isCircleCiSource(source)) {
@@ -153,14 +152,19 @@ export class CircleCiStatusAdapter {
     }
 
     const matchedTasks = [];
-    for (const [taskId, source] of iterateTaskSources(this.taskSources)) {
-      if (!isCircleCiSource(source) || !webhookMatchesSource(payload, source)) {
-        continue;
-      }
+    if (this.listTasks) {
+      for (const task of this.listTasks()) {
+        const source = resolveTaskSource(task.id, {
+          getTask: () => task,
+        });
+        if (!source || !isCircleCiSource(source) || !webhookMatchesSource(payload, source)) {
+          continue;
+        }
 
-      const snapshot = mergeWebhookSnapshot(this.webhookSnapshots.get(taskId), payload);
-      this.webhookSnapshots.set(taskId, snapshot);
-      matchedTasks.push(taskId);
+        const snapshot = mergeWebhookSnapshot(this.webhookSnapshots.get(task.id), payload);
+        this.webhookSnapshots.set(task.id, snapshot);
+        matchedTasks.push(task.id);
+      }
     }
 
     this.processedWebhookIds.add(payload.id);
@@ -290,22 +294,6 @@ export class CircleCiStatusAdapter {
 
 function isCircleCiSource(source) {
   return source?.ciProvider === "circleci";
-}
-
-function lookupTaskSource(taskSources, taskId) {
-  if (taskSources instanceof Map) {
-    return taskSources.get(taskId) ?? null;
-  }
-
-  return taskSources?.[taskId] ?? null;
-}
-
-function iterateTaskSources(taskSources) {
-  if (taskSources instanceof Map) {
-    return taskSources.entries();
-  }
-
-  return Object.entries(taskSources ?? {});
 }
 
 function validateTaskSource(source) {

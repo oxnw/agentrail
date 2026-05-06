@@ -15,38 +15,39 @@ async function startTestServer() {
   const eventStore = new TaskEventStore({ now });
   const demoStore = createAgentShipCycleDemoStore({ now, eventStore });
 
-  const taskSources = new Map([
-    [
-      taskId,
-      {
-        owner: "acme",
-        repo: "webapp",
-        branch: "feat/fix-auth",
-        baseBranch: "main",
-        issueNumber: 42,
-        reviewers: ["reviewer1"],
-      },
-    ],
-  ]);
+  const task = demoStore.getExistingTask(taskId);
+  assert.ok(task);
+  task.source = {
+    provider: "github",
+    owner: "acme",
+    repo: "webapp",
+    branch: "feat/fix-auth",
+    baseBranch: "main",
+    issueNumber: 42,
+    reviewers: ["reviewer1"],
+  };
+  demoStore.tasks.set(taskId, task);
 
   const adapter = new GitHubSubmitAdapter({
     githubToken: "ghs_test",
-    taskSources,
+    getTask: demoStore.getExistingTask.bind(demoStore),
     delegate: demoStore,
     apiBaseUrl: mockGithubUrl,
     fetch: globalThis.fetch,
   });
-
-  adapter.listMyTasks = demoStore.listMyTasks.bind(demoStore);
-  adapter.getTask = demoStore.getTask.bind(demoStore);
-  adapter.getTaskCiStatus = demoStore.getTaskCiStatus.bind(demoStore);
-  adapter.getTaskReviewFeedback = demoStore.getTaskReviewFeedback.bind(demoStore);
-  adapter.shipTask = demoStore.shipTask.bind(demoStore);
-  adapter.rollbackTask = demoStore.rollbackTask.bind(demoStore);
+  const taskLifecycleStore = {
+    listMyTasks: demoStore.listMyTasks.bind(demoStore),
+    getTask: demoStore.getTask.bind(demoStore),
+    getTaskCiStatus: demoStore.getTaskCiStatus.bind(demoStore),
+    getTaskReviewFeedback: demoStore.getTaskReviewFeedback.bind(demoStore),
+    shipTask: demoStore.shipTask.bind(demoStore),
+    rollbackTask: demoStore.rollbackTask.bind(demoStore),
+    submitTask: adapter.submitTask.bind(adapter),
+  };
 
   const server = createServer({
     store: eventStore,
-    taskLifecycleStore: adapter,
+    taskLifecycleStore,
     ciStatusAdapter: demoStore,
     reviewFeedbackAdapter: demoStore,
     now,

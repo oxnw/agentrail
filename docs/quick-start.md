@@ -35,7 +35,6 @@ npm install
 node src/cli/index.ts init --mode server --provider-mode disabled --repo "$PWD"
 cp .env.example .env
 cp examples/self-hosted-task-store.json .agentrail.tasks.json
-cp examples/self-hosted-task-sources.json .agentrail.task-sources.json
 ```
 
 `agentrail init` writes `.agentrail/config.json`,
@@ -44,13 +43,12 @@ mint secrets or claim setup is finished.
 
 ## 2. Start The Local API
 
-Edit the copied JSON files so the owner, repo, issue number, working branch,
-and assignee match your environment. Then start the server:
+Edit the copied task-store JSON so the owner, repo, issue number, working
+branch, and assignee match your environment. Then start the server:
 
 ```bash
 export GITHUB_TOKEN=ghp_your_token
 export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
-export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
 npm start
 ```
 

@@ -20,13 +20,11 @@ export class ReviewFeedbackSourceError extends Error {
 }
 
 export class GitHubReviewFeedbackAdapter {
-  declare taskSources: any;
   declare githubToken: string | undefined;
   declare fetch: typeof globalThis.fetch;
   declare apiBaseUrl: string;
   declare getTask: ((taskId: string) => TaskRecord | null) | null;
   constructor({
-    taskSources = {},
     getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
@@ -36,7 +34,6 @@ export class GitHubReviewFeedbackAdapter {
       throw new TypeError("GitHubReviewFeedbackAdapter requires a fetch implementation.");
     }
 
-    this.taskSources = taskSources;
     this.getTask = getTask;
     this.githubToken = githubToken;
     this.fetch = fetch;
@@ -45,7 +42,6 @@ export class GitHubReviewFeedbackAdapter {
 
   async getTaskReviewFeedback(taskId) {
     const source = resolveTaskSource(taskId, {
-      taskSources: this.taskSources,
       getTask: this.getTask,
     });
     if (!source) {

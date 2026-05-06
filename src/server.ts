@@ -21,7 +21,6 @@ const eventStore = new TaskEventStore({ now, storagePath });
 
 const githubToken = process.env.GITHUB_TOKEN || null;
 const circleciToken = process.env.CIRCLECI_TOKEN || null;
-const taskSourcesJson = process.env.AGENTRAIL_TASK_SOURCES || null;
 
 let server: ReturnType<typeof createServer> | null = null;
 
@@ -38,7 +37,6 @@ function shutdown() {
 export function startServer() {
   try {
     const runtime = buildRuntime({
-      taskSourcesJson,
       githubToken,
       circleciToken,
       now,

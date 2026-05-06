@@ -62,17 +62,15 @@ cd agentrail
 cp .env.example .env
 npm install
 cp examples/self-hosted-task-store.json .agentrail.tasks.json
-cp examples/self-hosted-task-sources.json .agentrail.task-sources.json
 ```
 
-Edit the copied example files so the repository owner, repo, issue number,
+Edit the copied task-store file so the repository owner, repo, issue number,
 branch, and assignee match your local setup. Then start the server with real
 GitHub credentials:
 
 ```bash
 export GITHUB_TOKEN=ghp_your_token
 export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
-export AGENTRAIL_TASK_SOURCES="$(cat .agentrail.task-sources.json)"
 npm start
 ```
 
@@ -210,14 +208,14 @@ agent.
 
 Provider adapters are opt-in at runtime:
 
-- `GITHUB_TOKEN` enables the GitHub Actions CI adapter for task sources with no
+- `GITHUB_TOKEN` enables the GitHub Actions CI adapter for tasks with no
   `ciProvider` or with `ciProvider: "github_actions"`.
-- `CIRCLECI_TOKEN` enables the CircleCI CI adapter for task sources with
+- `CIRCLECI_TOKEN` enables the CircleCI CI adapter for tasks with
   `ciProvider: "circleci"` and a CircleCI `projectSlug`.
 - `CIRCLECI_WEBHOOK_SECRET` turns on HMAC verification for
   `POST /providers/circleci/webhooks`.
 
-Example `AGENTRAIL_TASK_SOURCES` entry for CircleCI:
+Example persisted `task.source` entry for CircleCI:
 
 ```json
 {
@@ -298,7 +296,7 @@ See [Cloud boundary](./docs/cloud.md).
 | Status | Feature | Description |
 |--------|---------|-------------|
 | :white_check_mark: | Task lifecycle API | Issue → PR → CI → review → ship through one typed API |
-| :white_check_mark: | GitHub provider adapters | PR submit/reuse, CI status, and review feedback for configured task sources; live merge/ship remains gated by sandbox validation |
+| :white_check_mark: | GitHub provider adapters | PR submit/reuse, CI status, and review feedback from persisted task source metadata; live merge/ship remains gated by sandbox validation |
 | :white_check_mark: | CircleCI adapter | Multi-CI support via pluggable adapter pattern |
 | :white_check_mark: | TypeScript & Python SDKs | Typed clients with retry logic, SSE streaming, structured errors |
 | :white_check_mark: | Agent auth primitives | Per-agent API key creation, scopes, rate limits, and audit primitives; live runtime wiring remains part of the control-plane work |
