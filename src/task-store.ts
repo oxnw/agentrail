@@ -291,7 +291,12 @@ export class TaskStore {
       tasks = tasks.filter((task) => task.status === status);
     }
     if (assigneeAgentId) {
-      tasks = tasks.filter((task) => task.assignee.id === assigneeAgentId);
+      tasks = tasks.filter((task) => {
+        const canonicalAssigneeAgentId = Object.prototype.hasOwnProperty.call(task, "assigneeAgentId")
+          ? task.assigneeAgentId
+          : task.assignee.id;
+        return canonicalAssigneeAgentId === assigneeAgentId;
+      });
     }
 
     tasks.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));

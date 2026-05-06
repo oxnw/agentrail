@@ -179,6 +179,23 @@ test("TaskStore supports per-agent filtering", async () => {
   assert.equal(bobTasks.data[0].id, t2.id);
 });
 
+test("TaskStore filters by canonical assigneeAgentId instead of display assignee id", async () => {
+  const store = new TaskStore({ now });
+  const task = store.createTask(makeTask({
+    identifier: "A-3",
+    title: "Canonical assignment",
+    assignee: { id: "github-login", name: "GitHub Login" },
+    assigneeAgentId: "agt_alice",
+  }));
+
+  const aliceTasks = store.listTasks({ assigneeAgentId: "agt_alice" });
+  assert.equal(aliceTasks.data.length, 1);
+  assert.equal(aliceTasks.data[0].id, task.id);
+
+  const githubLoginTasks = store.listTasks({ assigneeAgentId: "github-login" });
+  assert.equal(githubLoginTasks.data.length, 0);
+});
+
 test("TaskStore supports status filtering", () => {
   const store = new TaskStore({ now });
   store.createTask(makeTask({ identifier: "S-1", title: "Todo task", status: "todo" }));
