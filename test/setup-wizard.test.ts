@@ -113,6 +113,42 @@ test("runCli lets the user cancel instead of writing files at the final confirma
   assert.equal(prompt.notes[0]?.title, "Before you confirm");
 });
 
+test("runCli print-only mode does not show file-write next steps", async () => {
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const prompt = new ScriptedPromptSession([
+    { kind: "input", value: detectedRepo.repoPath },
+    { kind: "input", value: detectedRepo.remoteSlug ?? detectedRepo.repoPath },
+    { kind: "input", value: detectedRepo.defaultBranch },
+    { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "confirm", value: false },
+  ]);
+  let didWrite = false;
+
+  const exitCode = await runCli(["init", "--interactive", "--print-only"], {
+    cwd: detectedRepo.repoPath,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stdout,
+    stderr,
+    detectRepoContext: async () => detectedRepo,
+    createPrompt: () => prompt,
+    writeSetupFiles: async () => {
+      didWrite = true;
+      throw new Error("writeSetupFiles should not run in print-only mode");
+    },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(didWrite, false);
+  assert.match(stdout.toString(), /Equivalent command:/);
+  assert.match(stdout.toString(), /No files were written\./);
+  assert.equal(stderr.toString(), "");
+  assert.equal(prompt.notes.length, 1);
+  assert.equal(prompt.notes[0]?.title, "Before you confirm");
+  assert.doesNotMatch(prompt.notes.map((note) => note.title).join("\n"), /Next steps/);
+});
+
 test("runCli requires explicit flags in non-TTY mode", async () => {
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
@@ -153,6 +189,69 @@ test("runCli rejects unsafe --yes defaults", async () => {
   assert.equal(stdout.toString(), "");
   assert.match(stderr.toString(), /--yes is only allowed for safe local defaults/i);
   assert.match(stderr.toString(), /gitignore/i);
+});
+
+test("runCli validates --yes safe defaults against the target repo", async () => {
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const writes: Array<{ repoRoot: string; config: SetupConfig }> = [];
+  const detectedByPath = new Map<string, DetectedRepoContext>([
+    [
+      "/tmp/invocation",
+      {
+        ...detectedRepo,
+        repoPath: "/tmp/invocation",
+        remoteSlug: "unsafe/invocation",
+        gitIgnoreHasAgentrail: false,
+      },
+    ],
+    [
+      "/tmp/safe-target",
+      {
+        ...detectedRepo,
+        repoPath: "/tmp/safe-target",
+        remoteSlug: "safe/target",
+        gitIgnoreHasAgentrail: true,
+      },
+    ],
+  ]);
+
+  const exitCode = await runCli([
+    "init",
+    "--yes",
+    "--mode",
+    "server",
+    "--provider-mode",
+    "disabled",
+    "--repo",
+    "/tmp/safe-target",
+  ], {
+    cwd: "/tmp/invocation",
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    detectRepoContext: async (cwd) => {
+      const detected = detectedByPath.get(cwd);
+      if (!detected) throw new Error(`Unexpected repo detection path: ${cwd}`);
+      return detected;
+    },
+    writeSetupFiles: async ({ repoRoot, config }) => {
+      writes.push({ repoRoot, config });
+      return {
+        writtenPaths: [
+          `${repoRoot}/.agentrail/config.json`,
+          `${repoRoot}/.agentrail/agent.env.example`,
+          `${repoRoot}/.agentrail/README.md`,
+        ],
+      };
+    },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(stderr.toString(), "");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0]?.repoRoot, "/tmp/safe-target");
 });
 
 test("createPromptSession wraps Clack with AgentRail branding", async () => {
