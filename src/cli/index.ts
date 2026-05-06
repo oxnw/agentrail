@@ -8,6 +8,7 @@ import { createPromptSession, PromptCancelledError, type PromptSession } from ".
 import { detectRepoContext } from "./repo-detection.ts";
 import { buildInitCommand, createSetupConfig, validateSafeDefaults, type DetectedRepoContext } from "./setup-config.ts";
 import { writeSetupFiles, type WriteSetupFilesResult } from "./setup-files.ts";
+import { runTaskSourceRepair } from "./task-source-repair.ts";
 import {
   acceptedDefaultsFromFlags,
   createSetupConfigFromFlags,
@@ -54,6 +55,14 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
 
     if (command === "doctor") {
       return await runDoctor(args, {
+        cwd,
+        stdout,
+        stderr,
+      });
+    }
+
+    if (command === "task" && args[0] === "source" && args[1] === "repair") {
+      return await runTaskSourceRepair(args.slice(2), {
         cwd,
         stdout,
         stderr,
@@ -274,6 +283,7 @@ function writeUsage(output: Writer) {
     "Usage:",
     "  agentrail init [flags]",
     "  agentrail doctor [flags]",
+    "  agentrail task source repair --task-id <tsk_...> --file <json> [flags]",
     "",
     "Flags:",
     "  --mode server",
@@ -286,6 +296,8 @@ function writeUsage(output: Writer) {
     "  --agent-id <id>",
     "  --repo <owner/repo>",
     "  --setup-api-key <key>",
+    "  --task-id <tsk_...>",
+    "  --file <json>",
   ].join("\n"));
   output.write("\n");
 }
