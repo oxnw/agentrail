@@ -52,6 +52,21 @@ export interface ClackPromptsLike {
     input?: Readable;
     output?: Writable;
   }): Promise<string | symbol>;
+  password?(opts: {
+    message: string;
+    mask?: string;
+    input?: Readable;
+    output?: Writable;
+  }): Promise<string | symbol>;
+  spinner?(opts?: {
+    input?: Readable;
+    output?: Writable;
+  }): {
+    start(message?: string): void;
+    stop(message?: string): void;
+    error(message?: string): void;
+    message?(message?: string): void;
+  };
   log?: {
     message(message: string, options?: { symbol?: string }): void;
   };
@@ -92,6 +107,15 @@ export interface PromptSession {
     message?: string;
     defaultValue?: string;
   }): Promise<string>;
+  secret(options?: {
+    message?: string;
+    mask?: string;
+  }): Promise<string>;
+  spinner(): {
+    start(message?: string): void;
+    stop(message?: string): void;
+    error(message?: string): void;
+  };
   close(): Promise<void>;
 }
 
@@ -199,6 +223,61 @@ export function createPromptSession({
         input,
         output,
       }));
+    },
+
+    async secret({ message = "Secret", mask = "*" } = {}) {
+      await ensureIntro();
+      if (typeof clackPrompts.password === "function") {
+        return unwrapValue(await clackPrompts.password({
+          message,
+          mask,
+          input,
+          output,
+        }));
+      }
+
+      return unwrapValue(await clackPrompts.text({
+        message,
+        input,
+        output,
+      }));
+    },
+
+    spinner() {
+      const fallback = {
+        start(message = "") {
+          if (message) {
+            output.write(`${message}\n`);
+          }
+        },
+        stop(message = "") {
+          if (message) {
+            output.write(`${message}\n`);
+          }
+        },
+        error(message = "") {
+          if (message) {
+            output.write(`${message}\n`);
+          }
+        },
+      };
+
+      if (typeof clackPrompts.spinner !== "function") {
+        return fallback;
+      }
+
+      const spinner = clackPrompts.spinner({ input, output });
+      return {
+        start(message = "") {
+          spinner.start(message);
+        },
+        stop(message = "") {
+          spinner.stop(message);
+        },
+        error(message = "") {
+          spinner.error(message);
+        },
+      };
     },
 
     async close() {

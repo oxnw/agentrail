@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { Writable } from "node:stream";
 import test from "node:test";
 
@@ -102,6 +102,62 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.equal(writes[0]?.config.repos[0]?.defaultBranch, "develop");
   assert.equal(writes[0]?.config.server.baseUrl, "http://127.0.0.1:4100");
   assert.equal(writes[0]?.config.providers.github.mode, "real");
+});
+
+test("runCli can connect GitHub during init with a masked token and shows provider follow-up commands", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const prompt = new ScriptedPromptSession([
+    { kind: "input", value: detectedRepo.repoPath },
+    { kind: "input", value: `https://github.com/${detectedRepo.remoteSlug}` },
+    { kind: "input", value: detectedRepo.defaultBranch },
+    { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: true },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: true },
+    { kind: "secret", value: "ghp_init_flow_token" },
+  ]);
+  const fetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+  ]);
+
+  const exitCode = await runCli(["init"], {
+    cwd: detectedRepo.repoPath,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stdout,
+    stderr,
+    detectRepoContext: async () => detectedRepo,
+    createPrompt: () => prompt,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(stderr.toString(), "");
+  assert.equal(stdout.toString(), "");
+  assert.doesNotMatch(stdout.toString(), /Run `agentrail provider test github`/);
+  const providerEnv = await readFile(path.join(agentrailHome, "provider.env"), "utf8");
+  assert.match(providerEnv, /GITHUB_TOKEN="ghp_init_flow_token"/);
+  assert.ok(prompt.calls.includes("secret"));
+  assert.deepEqual(prompt.spinnerEvents, [
+    { kind: "start", message: "Testing GitHub connection" },
+    { kind: "stop", message: "\u2713 Connected GitHub using GITHUB_TOKEN." },
+  ]);
+  assert.match(prompt.notes.map((note) => note.body).join("\n"), /agentrail provider list/i);
+  assert.match(prompt.notes.map((note) => note.body).join("\n"), /agentrail provider connect github/i);
+  assert.match(prompt.notes.map((note) => note.body).join("\n"), /agentrail provider connect circleci/i);
+
+  if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+  else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(agentrailHome, { recursive: true, force: true });
 });
 
 test("runCli lets the user cancel instead of writing files at the final confirmation step", async () => {
@@ -602,6 +658,37 @@ test("createPromptSession forwards multiselect choices and defaults to Clack", a
   assert.deepEqual((calls[0][1] as { initialValues?: string[] }).initialValues, ["tasks:read"]);
 });
 
+test("createPromptSession forwards masked secret prompts to Clack password", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const session = createPromptSession({
+    output: createMemoryWriter(),
+    clack: {
+      intro() {},
+      select: async () => "real" as any,
+      multiselect: async () => [],
+      confirm: async () => true,
+      text: async () => "",
+      password: async (options: unknown) => {
+        calls.push(["password", options]);
+        return "ghp_secret" as any;
+      },
+      note() {},
+      cancel() {},
+      isCancel() {
+        return false;
+      },
+    } as any,
+  });
+
+  const value = await (session as any).secret({
+    message: "GitHub Personal Access Token",
+  });
+
+  assert.equal(value, "ghp_secret");
+  assert.equal(calls[0][0], "password");
+  assert.equal((calls[0][1] as { message: string }).message, "GitHub Personal Access Token");
+});
+
 function createMemoryWriter(): Writable & { toString(): string } {
   const chunks: string[] = [];
   const writer = new Writable({
@@ -620,12 +707,13 @@ function createMemoryWriter(): Writable & { toString(): string } {
 
 class ScriptedPromptSession implements PromptSession {
   readonly calls: string[] = [];
-  readonly interactions: Array<{ kind: "select" | "multiselect" | "confirm" | "input"; message?: string; defaultValue?: string | boolean | string[] }> = [];
+  readonly interactions: Array<{ kind: "select" | "multiselect" | "confirm" | "input" | "secret"; message?: string; defaultValue?: string | boolean | string[] }> = [];
   readonly notes: Array<{ title?: string; body: string }> = [];
   readonly messages: string[] = [];
-  readonly #steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input"; value: string | boolean | string[] }>;
+  readonly spinnerEvents: Array<{ kind: "start" | "stop" | "error"; message?: string }> = [];
+  readonly #steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input" | "secret"; value: string | boolean | string[] }>;
 
-  constructor(steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input"; value: string | boolean | string[] }>) {
+  constructor(steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input" | "secret"; value: string | boolean | string[] }>) {
     this.#steps = [...steps];
   }
 
@@ -691,6 +779,16 @@ class ScriptedPromptSession implements PromptSession {
     return String(step.value);
   }
 
+  async secret(options: { message?: string } = {}): Promise<string> {
+    this.calls.push("secret");
+    this.interactions.push({
+      kind: "secret",
+      message: options.message,
+    });
+    const step = this.#next("secret");
+    return String(step.value);
+  }
+
   async note(options: { title?: string; body: string }): Promise<void> {
     this.notes.push(options);
   }
@@ -703,10 +801,49 @@ class ScriptedPromptSession implements PromptSession {
     assert.equal(this.#steps.length, 0);
   }
 
-  #next(kind: "select" | "multiselect" | "confirm" | "input") {
+  spinner() {
+    this.calls.push("spinner");
+    return {
+      start: (message?: string) => {
+        this.spinnerEvents.push({ kind: "start", message });
+      },
+      stop: (message?: string) => {
+        this.spinnerEvents.push({ kind: "stop", message });
+      },
+      error: (message?: string) => {
+        this.spinnerEvents.push({ kind: "error", message });
+      },
+    };
+  }
+
+  #next(kind: "select" | "multiselect" | "confirm" | "input" | "secret") {
     const step = this.#steps.shift();
     assert.ok(step, `expected scripted ${kind} step`);
     assert.equal(step.kind, kind);
     return step;
   }
+}
+
+function createFetchStub(responses: Array<{
+  ok: boolean;
+  status: number;
+  json?: unknown;
+  text?: string;
+}>) {
+  const stub = async () => {
+    const next = responses.shift();
+    assert.ok(next, "unexpected fetch call");
+    return {
+      ok: next.ok,
+      status: next.status,
+      async json() {
+        return next.json ?? {};
+      },
+      async text() {
+        return next.text ?? "";
+      },
+    };
+  };
+
+  return stub;
 }

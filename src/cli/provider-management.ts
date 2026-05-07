@@ -35,6 +35,7 @@ export async function runProviderCommand(argv: string[], {
   stdout,
   stderr,
   createPrompt,
+  fetch: fetchImpl,
 }: {
   cwd: string;
   stdinIsTTY: boolean;
@@ -42,6 +43,7 @@ export async function runProviderCommand(argv: string[], {
   stdout: Writer;
   stderr: Writer;
   createPrompt?: () => PromptSession;
+  fetch?: typeof globalThis.fetch;
 }): Promise<number> {
   const [subcommand, maybeProvider, ...rest] = argv;
   const homePath = resolveAgentRailHome({ cwd, explicitHome: null });
@@ -79,7 +81,7 @@ export async function runProviderCommand(argv: string[], {
     const prompt = interactive ? (createPrompt ?? (() => createPromptSession()))() : null;
     try {
       if (provider === "github") {
-        return await connectGitHub({ homePath, config, flags, prompt, stdout, stderr });
+        return await connectGitHub({ homePath, config, flags, prompt, stdout, stderr, fetch: fetchImpl ?? globalThis.fetch });
       }
       return await connectCircleCI({ homePath, config, flags, prompt, stdout, stderr });
     } finally {
@@ -98,6 +100,7 @@ async function connectGitHub({
   prompt,
   stdout,
   stderr,
+  fetch,
 }: {
   homePath: string;
   config: SetupConfigLike;
@@ -105,26 +108,45 @@ async function connectGitHub({
   prompt: PromptSession | null;
   stdout: Writer;
   stderr: Writer;
+  fetch: typeof globalThis.fetch;
 }): Promise<number> {
   const currentEnv = config.providers?.github?.tokenEnv ?? "GITHUB_TOKEN";
+  const tokenEnvName = flags.tokenEnv ?? currentEnv;
   if (prompt) {
     await prompt.note({
       title: "GitHub connection",
       body: [
         "Connect GitHub so AgentRail can use GitHub issue, review, and submit integrations.",
-        "AgentRail will read the token from an env var that already exists in this shell, then save it into `~/.agentrail/provider.env` for local use.",
+        `AgentRail will prompt for your GitHub Personal Access Token without echoing it, then save it as \`${tokenEnvName}\` in \`~/.agentrail/provider.env\`.`,
       ].join("\n"),
     });
   }
-  const tokenEnvName = flags.tokenEnv ?? (prompt
-    ? await prompt.input({
-      message: "Which env var holds your GitHub token?",
-      defaultValue: currentEnv,
+  const tokenValue = prompt
+    ? await prompt.secret({
+      message: `GitHub Personal Access Token (${tokenEnvName})`,
     })
-    : currentEnv);
-  const tokenValue = process.env[tokenEnvName];
+    : process.env[tokenEnvName];
   if (!tokenValue) {
-    stderr.write(`Missing ${tokenEnvName} in this shell. Export it first, then run \`agentrail provider connect github\` again.\n`);
+    stderr.write(prompt
+      ? "GitHub Personal Access Token is required to connect GitHub.\n"
+      : `Missing ${tokenEnvName} in this shell. Export it first, then run \`agentrail provider connect github\` again.\n`);
+    return 1;
+  }
+
+  const spinner = prompt?.spinner() ?? null;
+  try {
+    spinner?.start("Testing GitHub connection");
+    await verifyGitHubConnection({
+      token: tokenValue,
+      fetch,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (spinner) {
+      spinner.error(message);
+    } else {
+      stderr.write(`${message}\n`);
+    }
     return 1;
   }
 
@@ -138,8 +160,11 @@ async function connectGitHub({
     tokenEnv: tokenEnvName,
   };
   await writeConfig(homePath, nextConfig);
-  stdout.write(`Connected GitHub using ${tokenEnvName}.\n`);
-  stdout.write("Run `agentrail provider test github` to verify the local connection.\n");
+  if (spinner) {
+    spinner.stop(`\u2713 Connected GitHub using ${tokenEnvName}.`);
+  } else {
+    stdout.write(`\u2713 Connected GitHub using ${tokenEnvName}.\n`);
+  }
   return 0;
 }
 
@@ -160,35 +185,37 @@ async function connectCircleCI({
 }): Promise<number> {
   const currentTokenEnv = config.providers?.circleci?.tokenEnv ?? "CIRCLECI_TOKEN";
   const currentWebhookEnv = config.providers?.circleci?.webhookSecretEnv ?? "CIRCLECI_WEBHOOK_SECRET";
+  const tokenEnvName = flags.tokenEnv ?? currentTokenEnv;
+  const webhookSecretEnvName = flags.webhookSecretEnv ?? currentWebhookEnv;
   if (prompt) {
     await prompt.note({
       title: "CircleCI connection",
       body: [
         "Connect CircleCI so AgentRail can read CI status and verify CircleCI webhooks.",
-        "AgentRail will read the token and webhook secret from env vars that already exist in this shell, then save them into `~/.agentrail/provider.env` for local use.",
+        `AgentRail will prompt for your CircleCI token and webhook secret without echoing them, then save them as \`${tokenEnvName}\` and \`${webhookSecretEnvName}\` in \`~/.agentrail/provider.env\`.`,
       ].join("\n"),
     });
   }
-  const tokenEnvName = flags.tokenEnv ?? (prompt
-    ? await prompt.input({
-      message: "Which env var holds your CircleCI token?",
-      defaultValue: currentTokenEnv,
+  const tokenValue = prompt
+    ? await prompt.secret({
+      message: `CircleCI token (${tokenEnvName})`,
     })
-    : currentTokenEnv);
-  const webhookSecretEnvName = flags.webhookSecretEnv ?? (prompt
-    ? await prompt.input({
-      message: "Which env var holds your CircleCI webhook secret?",
-      defaultValue: currentWebhookEnv,
+    : process.env[tokenEnvName];
+  const webhookSecretValue = prompt
+    ? await prompt.secret({
+      message: `CircleCI webhook secret (${webhookSecretEnvName})`,
     })
-    : currentWebhookEnv);
-  const tokenValue = process.env[tokenEnvName];
-  const webhookSecretValue = process.env[webhookSecretEnvName];
+    : process.env[webhookSecretEnvName];
   if (!tokenValue) {
-    stderr.write(`Missing ${tokenEnvName} in this shell. Export it first, then run \`agentrail provider connect circleci\` again.\n`);
+    stderr.write(prompt
+      ? "CircleCI token is required to connect CircleCI.\n"
+      : `Missing ${tokenEnvName} in this shell. Export it first, then run \`agentrail provider connect circleci\` again.\n`);
     return 1;
   }
   if (!webhookSecretValue) {
-    stderr.write(`Missing ${webhookSecretEnvName} in this shell. Export it first, then run \`agentrail provider connect circleci\` again.\n`);
+    stderr.write(prompt
+      ? "CircleCI webhook secret is required to connect CircleCI.\n"
+      : `Missing ${webhookSecretEnvName} in this shell. Export it first, then run \`agentrail provider connect circleci\` again.\n`);
     return 1;
   }
 
@@ -204,8 +231,13 @@ async function connectCircleCI({
     webhookSecretEnv: webhookSecretEnvName,
   };
   await writeConfig(homePath, nextConfig);
-  stdout.write(`Connected CircleCI using ${tokenEnvName} and ${webhookSecretEnvName}.\n`);
-  stdout.write("Run `agentrail provider test circleci` to verify the local connection.\n");
+  const env = await readSimpleEnv(providerEnvPathForHome(homePath));
+  const result = testProvider("circleci", nextConfig.providers ?? {}, env);
+  if (!result.ok) {
+    stderr.write(`${result.message}\n`);
+    return 1;
+  }
+  stdout.write(`\u2713 Connected CircleCI using ${tokenEnvName} and ${webhookSecretEnvName}.\n`);
   return 0;
 }
 
@@ -342,6 +374,41 @@ function testProvider(provider: ProviderName, providers: ProviderConfig, env: Re
     return { ok: false, message: `CircleCI is configured, but ${webhookSecretEnv} is not available in ~/.agentrail/provider.env or the current shell.` };
   }
   return { ok: true, message: `CircleCI looks configured. AgentRail can read ${tokenEnv} and ${webhookSecretEnv}.` };
+}
+
+async function verifyGitHubConnection({
+  token,
+  fetch,
+}: {
+  token: string;
+  fetch: typeof globalThis.fetch;
+}): Promise<void> {
+  if (typeof fetch !== "function") {
+    throw new Error("GitHub connection testing requires a fetch implementation.");
+  }
+
+  const response = await fetch("https://api.github.com/user", {
+    headers: githubHeaders(token),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(
+      response.status === 401 || response.status === 403
+        ? "GitHub connection test failed: GitHub rejected the token."
+        : `GitHub connection test failed: ${response.status} ${text.slice(0, 200)}`.trim(),
+    );
+  }
+
+  await response.json().catch(() => null);
+}
+
+function githubHeaders(token: string): Record<string, string> {
+  return {
+    accept: "application/vnd.github+json",
+    "x-github-api-version": "2022-11-28",
+    authorization: `Bearer ${token}`,
+  };
 }
 
 function resolveConfiguredValue(envName: string, env: Record<string, string>): string | null {
