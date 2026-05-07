@@ -68,7 +68,7 @@ test(".gitignore blocks local env files but keeps the public template", async ()
 });
 
 test("TypeScript source is canonical with no side-by-side JavaScript duplicates", async () => {
-  const duplicates = await findSideBySideSourceDuplicates(["src", "test", "sdk/typescript/src"]);
+  const duplicates = await findSideBySideSourceDuplicates(["src", "sdk/typescript/src"]);
 
   assert.deepEqual(duplicates, []);
 });

@@ -59,6 +59,7 @@ describe("GitHubIssueIntakeAdapter", () => {
     });
 
     const stored = queue.getRawTask(result.taskId);
+    assert.ok(stored, "Task should exist");
     assert.deepStrictEqual(stored!.assignee, { id: "unassigned", name: "Unassigned" });
     assert.strictEqual(stored!.assigneeAgentId, null);
   });

@@ -1938,7 +1938,7 @@ components:
         assignmentSource:
           type: [string, 'null']
           enum: [deterministic_rule, classifier, manual_triage, null]
-          description: Source of the current assignment decision.
+          description: Source of the current assignment decision. Legacy local OSS data that used provider_assignee_mapping is normalized during load and is not emitted by current builds.
         routingDecisionId:
           type: [string, 'null']
           description: Stable routing decision id for audit lookup.

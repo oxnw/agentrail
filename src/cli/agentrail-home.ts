@@ -19,9 +19,12 @@ export interface SetupConfigLike {
   providers?: {
     github?: {
       mode?: string;
+      tokenEnv?: string;
     };
     circleci?: {
       mode?: string;
+      tokenEnv?: string;
+      webhookSecretEnv?: string;
     };
   };
   exports?: {
@@ -77,6 +80,9 @@ export function currentAgentEnvPathForHome(homePath: string): string {
 }
 
 export function managedAgentEnvPathForHome(homePath: string, agentId: string): string {
+  if (!/^[A-Za-z0-9_-]+$/u.test(agentId)) {
+    throw new Error("Invalid agentId for managed agent env path.");
+  }
   return path.join(homePath, "agents", `${agentId}.env`);
 }
 
@@ -135,7 +141,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
 export function primaryRepoFromConfig(config: SetupConfigLike | null): ConnectedRepo | null {
   const repos = config?.repos;
   if (Array.isArray(repos) && repos.length > 0) {
-    return repos[0] ?? null;
+    return repos[0];
   }
   return null;
 }

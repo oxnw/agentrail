@@ -20,16 +20,19 @@ test("agentrail doctor passes after the full local onboarding smoke seeds profil
   const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
   const previousHome = process.env.AGENTRAIL_HOME;
   let harness: SetupDoctorHarness | null = null;
-  process.env.AGENTRAIL_HOME = homePath;
 
   t.after(async () => {
-    restoreSetupApiKey(previousSetupApiKey);
-    await rm(repoRoot, { recursive: true, force: true });
-    await rm(homePath, { recursive: true, force: true });
-    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
-    else process.env.AGENTRAIL_HOME = previousHome;
-    await harness?.close();
+    try {
+      await rm(repoRoot, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+      else process.env.AGENTRAIL_HOME = previousHome;
+      await rm(homePath, { recursive: true, force: true });
+    } finally {
+      restoreSetupApiKey(previousSetupApiKey);
+      await harness?.close();
+    }
   });
+  process.env.AGENTRAIL_HOME = homePath;
 
   harness = await createSetupDoctorHarness();
   process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;

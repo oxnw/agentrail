@@ -61,7 +61,7 @@ test("init creates local operator state and writes local setup env files", async
   assert.match(operatorEnv, /AGENTRAIL_OPERATOR_KEY=ar_live_/);
   assert.match(operatorEnv, /AGENTRAIL_OPERATOR_KEY_ID=akey_/);
   assert.match(authStore, /agt_operator/);
-  assert.match(serverEnv, /AGENTRAIL_AGENT_AUTH_STORE_PATH=stores\/agent-auth\.json/);
+  assert.match(serverEnv, new RegExp(`AGENTRAIL_AGENT_AUTH_STORE_PATH=${escapeForRegExp(path.join(agentrailHome, "stores", "agent-auth.json"))}`));
 });
 
 test("temporary local verification reuses an already-running healthy server", async (t) => {
@@ -162,6 +162,37 @@ test("temporary local verification starts a temp server when the healthy server 
   assert.notEqual(baseUrl, `http://${address.address}:${address.port}`);
 });
 
+test("temporary local verification normalizes wildcard listen hosts to a routable localhost URL", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-init-wildcard-host-"));
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+  });
+
+  const config = createSetupConfig({
+    cwd: repoRoot,
+    detectedRepo: {
+      repoPath: repoRoot,
+      remoteSlug: "oxnw/agentrail",
+      defaultBranch: "main",
+      gitIgnoreHasAgentrail: true,
+    },
+    interactionMode: "non_interactive",
+    acceptedDefaults: true,
+    providerMode: "disabled",
+    host: "0.0.0.0",
+    baseUrl: "http://127.0.0.1:3000",
+  });
+
+  const baseUrl = await withTemporaryLocalServer({
+    repoRoot,
+    config,
+    handler: async ({ baseUrl: temporaryBaseUrl }) => temporaryBaseUrl,
+  });
+
+  assert.match(baseUrl, /^http:\/\/127\.0\.0\.1:\d+$/);
+});
+
 function createMemoryWriter() {
   let buffer = "";
   return {
@@ -173,4 +204,8 @@ function createMemoryWriter() {
       return buffer;
     },
   };
+}
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -395,7 +395,7 @@ export class RoutingControlPlane {
   getAgentProfile(agentId: string): AgentProfile | null {
     const profile = this.agentProfileStore
       ? this.agentProfileStore.getAgentProfile(agentId)
-      : this.profiles.has(agentId) ? clone(this.profiles.get(agentId)!) : null;
+      : this.profiles.get(agentId) ?? null;
     return profile ? clone(profile) : null;
   }
 
@@ -850,13 +850,6 @@ export class RoutingControlPlane {
   private extractIssueNumber(providerIssueId: string): number | undefined {
     const match = providerIssueId.match(/(?:issues\/|issue:)(\d+)$/i);
     return match ? Number.parseInt(match[1]!, 10) : undefined;
-  }
-
-  private listAgentProfiles(): AgentProfile[] {
-    if (this.agentProfileStore) {
-      return this.agentProfileStore.listProfiles().map((profile) => clone(profile));
-    }
-    return [...this.profiles.values()].map((profile) => clone(profile));
   }
 
   private validateSnapshot(snapshot: ProviderIssueSnapshot) {

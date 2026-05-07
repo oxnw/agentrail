@@ -1,4 +1,3 @@
-import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -79,7 +78,7 @@ export async function ensureLocalOperatorBootstrap({
   };
 }
 
-export async function hasExistingLocalAgents({
+export function hasExistingLocalAgents({
   repoRoot,
   homePath,
   config,
@@ -87,7 +86,7 @@ export async function hasExistingLocalAgents({
   repoRoot?: string;
   homePath?: string;
   config: SetupConfig;
-}): Promise<boolean> {
+}): boolean {
   if (config.persistence.kind !== "file") {
     return false;
   }
@@ -188,7 +187,10 @@ export async function withTemporaryLocalServer<T>({
         throw new Error("Temporary local server did not expose a TCP address.");
       }
 
-      const baseUrl = `http://${address.address}:${address.port}`;
+      const normalizedHost = address.address === "0.0.0.0" || address.address === "::"
+        ? "127.0.0.1"
+        : address.address;
+      const baseUrl = `http://${normalizedHost}:${address.port}`;
       return await handler({ baseUrl });
     } finally {
       await closeServer(server);
@@ -272,6 +274,8 @@ async function listen(
             resolve({ mode: "reuse_existing" });
             return;
           }
+          server.off("error", onError);
+          server.off("listening", onListening);
           attach(0);
           return;
         }

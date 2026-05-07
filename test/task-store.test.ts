@@ -55,6 +55,9 @@ function makePersistedTask(
   if (partial.source !== undefined) {
     task.source = partial.source;
   }
+  if (partial.assignmentSource !== undefined) {
+    task.assignmentSource = partial.assignmentSource;
+  }
 
   return task;
 }
@@ -136,6 +139,32 @@ test("TaskStore migrates legacy multi-record JSONL files and preserves all tasks
       tasks: legacyTasks,
       idempotencyEntries: [],
     });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("TaskStore normalizes legacy provider assignee assignment sources on load", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-taskstore-"));
+  const storagePath = path.join(tempDir, "tasks.ndjson");
+  const legacyTask = {
+    ...makePersistedTask({
+      id: "tsk_legacy_provider_assignment",
+      identifier: "AGEA-101",
+      title: "Legacy provider assignment source",
+    }),
+    assignmentSource: "provider_assignee_mapping",
+  };
+
+  try {
+    await writeFile(storagePath, JSON.stringify({
+      tasks: [legacyTask],
+      idempotencyEntries: [],
+    }) + "\n", "utf8");
+
+    const store = new TaskStore({ now, storagePath });
+    const restored = store.getTask(legacyTask.id);
+    assert.equal(restored?.assignmentSource, "deterministic_rule");
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

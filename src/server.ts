@@ -79,10 +79,10 @@ export function startServer() {
 function loadDotEnv() {
   try {
     const agentrailHome = process.env.AGENTRAIL_HOME || path.join(os.homedir(), ".agentrail");
-    loadEnvFile(path.join(agentrailHome, "server.env"));
-    loadEnvFile(path.join(agentrailHome, "provider.env"));
-    loadEnvFile(".agentrail/server.env");
     loadEnvFile(".env");
+    loadEnvFile(".agentrail/server.env");
+    loadEnvFile(path.join(agentrailHome, "provider.env"));
+    loadEnvFile(path.join(agentrailHome, "server.env"));
   } catch {
     // .env loading is convenience-only; environment variables still work.
   }
@@ -100,7 +100,7 @@ function loadEnvFile(filePath: string) {
     if (separatorIndex === -1) continue;
 
     const key = line.slice(0, separatorIndex).trim();
-    const value = line.slice(separatorIndex + 1).trim();
+    const value = stripInlineComment(line.slice(separatorIndex + 1)).trim();
     if (key && process.env[key] === undefined) {
       process.env[key] = stripQuotes(value);
     }
@@ -117,6 +117,26 @@ function stripQuotes(value: string): string {
     (value.startsWith("'") && value.endsWith("'"))
   ) {
     return value.slice(1, -1);
+  }
+  return value;
+}
+
+function stripInlineComment(value: string): string {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+    if (char === "\"" && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+    if (char === "#" && !inSingleQuote && !inDoubleQuote) {
+      return value.slice(0, index);
+    }
   }
   return value;
 }

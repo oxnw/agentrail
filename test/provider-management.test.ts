@@ -9,40 +9,16 @@ import { createSetupConfig, type DetectedRepoContext } from "../src/cli/setup-co
 import { writeSetupFiles } from "../src/cli/setup-files.ts";
 
 const detectedRepo: DetectedRepoContext = {
-  repoPath: "/tmp/agentrail-provider-test",
+  repoPath: "",
   remoteSlug: "oxnw/agentrail",
   defaultBranch: "main",
   gitIgnoreHasAgentrail: true,
 };
 
 test("provider connect github writes provider.env and updates config", async (t) => {
-  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-provider-repo-"));
-  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-provider-home-"));
-  const previousHome = process.env.AGENTRAIL_HOME;
-  const previousGitHubToken = process.env.GITHUB_TOKEN;
-  process.env.AGENTRAIL_HOME = homePath;
-  process.env.GITHUB_TOKEN = "ghp_test_provider_token";
-
-  t.after(async () => {
-    await rm(repoRoot, { recursive: true, force: true });
-    await rm(homePath, { recursive: true, force: true });
-    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
-    else process.env.AGENTRAIL_HOME = previousHome;
-    if (previousGitHubToken === undefined) delete process.env.GITHUB_TOKEN;
-    else process.env.GITHUB_TOKEN = previousGitHubToken;
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
   });
-
-  const config = createSetupConfig({
-    cwd: repoRoot,
-    detectedRepo: {
-      ...detectedRepo,
-      repoPath: repoRoot,
-    },
-    interactionMode: "non_interactive",
-    acceptedDefaults: true,
-    providerMode: "disabled",
-  });
-  await writeSetupFiles({ homePath, config });
 
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
@@ -66,17 +42,57 @@ test("provider connect github writes provider.env and updates config", async (t)
 });
 
 test("provider test github fails clearly when not connected", async (t) => {
-  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-provider-repo-"));
-  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-provider-home-"));
+  const { repoRoot } = await setupProviderTest(t);
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "test", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 1, stderr.toString());
+  assert.match(stderr.toString(), /GitHub is not connected yet/);
+});
+
+async function setupProviderTest(
+  t: { after(fn: () => unknown): void },
+  env: Record<string, string> = {},
+): Promise<{ repoRoot: string; homePath: string }> {
+  let repoRoot: string | undefined;
+  let homePath: string | undefined;
   const previousHome = process.env.AGENTRAIL_HOME;
-  process.env.AGENTRAIL_HOME = homePath;
+  const previousEnv = Object.fromEntries(
+    Object.keys(env).map((key) => [key, process.env[key]]),
+  );
 
   t.after(async () => {
-    await rm(repoRoot, { recursive: true, force: true });
-    await rm(homePath, { recursive: true, force: true });
-    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
-    else process.env.AGENTRAIL_HOME = previousHome;
+    try {
+      if (repoRoot) {
+        await rm(repoRoot, { recursive: true, force: true });
+      }
+      if (homePath) {
+        await rm(homePath, { recursive: true, force: true });
+      }
+    } finally {
+      if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+      else process.env.AGENTRAIL_HOME = previousHome;
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
+
+  repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-provider-repo-"));
+  homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-provider-home-"));
+  process.env.AGENTRAIL_HOME = homePath;
+  for (const [key, value] of Object.entries(env)) {
+    process.env[key] = value;
+  }
 
   const config = createSetupConfig({
     cwd: repoRoot,
@@ -89,20 +105,8 @@ test("provider test github fails clearly when not connected", async (t) => {
     providerMode: "disabled",
   });
   await writeSetupFiles({ homePath, config });
-
-  const stdout = createMemoryWriter();
-  const stderr = createMemoryWriter();
-  const exitCode = await runCli(["provider", "test", "github"], {
-    cwd: repoRoot,
-    stdinIsTTY: false,
-    stdoutIsTTY: false,
-    stdout,
-    stderr,
-  });
-
-  assert.equal(exitCode, 1);
-  assert.match(stderr.toString(), /GitHub is not connected yet/);
-});
+  return { repoRoot, homePath };
+}
 
 function createMemoryWriter() {
   let buffer = "";

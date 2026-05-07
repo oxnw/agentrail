@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const DEFAULT_RATE_LIMIT = {
@@ -461,18 +461,24 @@ function loadState(storagePath: string | undefined): PersistedState {
       warnInvalidState(storagePath, error.message);
       return {};
     }
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return {};
+    }
     throw error;
   }
 }
 
 function persistState(storagePath: string | undefined, keys: ApiKeyRecord[], idempotencyEntries: Map<string, IdempotencyEntry>): void {
   if (!storagePath) return;
-  mkdirSync(path.dirname(storagePath), { recursive: true });
+  const directory = path.dirname(storagePath);
+  mkdirSync(directory, { recursive: true });
   const state: PersistedState = {
     keys,
     idempotencyEntries: [...idempotencyEntries.entries()],
   };
-  writeFileSync(storagePath, JSON.stringify(state, null, 2) + "\n", "utf8");
+  const tempPath = path.join(directory, `.${path.basename(storagePath)}.tmp`);
+  writeFileSync(tempPath, JSON.stringify(state, null, 2) + "\n", "utf8");
+  renameSync(tempPath, storagePath);
 }
 
 function createUsageState(): UsageState {

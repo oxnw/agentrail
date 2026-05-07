@@ -167,9 +167,13 @@ async function readOperatorKey(homePath: string): Promise<string | null> {
   try {
     const content = await readFile(operatorEnvPathForHome(homePath), "utf8");
     const match = content.match(/^AGENTRAIL_OPERATOR_KEY=(.+)$/m);
-    return match?.[1]?.trim() ?? null;
-  } catch {
-    return null;
+    const rawValue = match?.[1]?.replace(/\s+#.*$/u, "").trim() ?? null;
+    return rawValue?.replace(/^["']|["']$/gu, "") ?? null;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
   }
 }
 

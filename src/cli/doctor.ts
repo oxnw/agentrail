@@ -201,6 +201,7 @@ async function resolveDoctorInputs({
     homePath,
     explicitEnvFile: flags.envFile,
   });
+  const operatorEnvValues = await readOperatorEnvFile(homePath);
 
   const baseUrl = flags.baseUrl
     ?? process.env.AGENTRAIL_BASE_URL
@@ -223,8 +224,8 @@ async function resolveDoctorInputs({
     ?? process.env.AGENTRAIL_SETUP_API_KEY
     ?? process.env.AGENTRAIL_OPERATOR_API_KEY
     ?? process.env.AGENTRAIL_ADMIN_API_KEY
-    ?? envFileValues.AGENTRAIL_OPERATOR_KEY
-    ?? envFileValues.AGENTRAIL_SETUP_API_KEY
+    ?? operatorEnvValues.AGENTRAIL_OPERATOR_KEY
+    ?? operatorEnvValues.AGENTRAIL_SETUP_API_KEY
     ?? null;
 
   const missing: string[] = [];
@@ -606,9 +607,8 @@ async function readAgentEnvFiles({
   explicitEnvFile?: string;
 }): Promise<Record<string, string>> {
   const candidates = [
-    explicitEnvFile ? path.resolve(cwd, explicitEnvFile) : null,
     currentAgentEnvPathForHome(homePath),
-    operatorEnvPathForHome(homePath),
+    explicitEnvFile ? path.resolve(cwd, explicitEnvFile) : null,
   ].filter((value): value is string => Boolean(value));
 
   const merged: Record<string, string> = {};
@@ -625,6 +625,15 @@ async function readAgentEnvFiles({
   }
 
   return merged;
+}
+
+async function readOperatorEnvFile(homePath: string): Promise<Record<string, string>> {
+  try {
+    const content = await readFile(operatorEnvPathForHome(homePath), "utf8");
+    return parseEnvFile(content);
+  } catch {
+    return {};
+  }
 }
 
 function parseEnvFile(content: string): Record<string, string> {

@@ -67,8 +67,6 @@ export class PromptCancelledError extends Error {
   }
 }
 
-const AGENTRAIL_INTRO = buildAgentRailIntro();
-
 export interface PromptSession {
   select(options: {
     message: string;
@@ -106,19 +104,14 @@ export function createPromptSession({
   output?: Writable;
   clack?: ClackPromptsLike;
 } = {}): PromptSession {
-  let hasStarted = false;
   let introPromise: Promise<void> | null = null;
 
   async function ensureIntro() {
-    if (hasStarted) return;
-    if (introPromise) {
-      await introPromise;
-      return;
+    if (!introPromise) {
+      introPromise = buildAgentRailIntro().then((intro) => {
+        output.write(intro);
+      });
     }
-    introPromise = (async () => {
-      hasStarted = true;
-      output.write(await AGENTRAIL_INTRO);
-    })();
     await introPromise;
   }
 

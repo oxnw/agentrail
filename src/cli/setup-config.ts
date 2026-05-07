@@ -76,7 +76,6 @@ export interface CreateSetupConfigOptions {
   repoAllowlist?: string[];
   defaultBranch?: string;
   markdownExport?: boolean;
-  agentrailHome?: string;
 }
 
 export interface SafetyValidation {

@@ -82,6 +82,7 @@ const ROUTING_CONDITION_FIELDS = [
   "ownershipTagsAny",
   "capabilityTagsAll",
 ] as const;
+const LEGACY_PROVIDER_ASSIGNEES_FIELD = "providerAssigneesAny";
 
 function createId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(10).toString("hex")}`;
@@ -202,7 +203,7 @@ export class RoutingRuleStore {
     this.now = now;
     this.storagePath = storagePath;
     const state = loadState(storagePath);
-    this.ruleSets = clone((state.ruleSets ?? []).filter(isRoutingRuleSet));
+    this.ruleSets = clone(sanitizeLoadedRuleSets((state.ruleSets ?? []).filter(isRoutingRuleSet), storagePath));
     this.idempotency = new Map(filterIdempotencyEntries(state.idempotencyEntries ?? []));
     this.trimIdempotency();
   }
@@ -376,6 +377,28 @@ export class RoutingRuleStore {
       }
     }
   }
+}
+
+function sanitizeLoadedRuleSets(ruleSets: RoutingRuleSet[], storagePath: string | undefined): RoutingRuleSet[] {
+  return ruleSets.map((ruleSet) => {
+    const retainedRules = ruleSet.rules.filter((rule) => !hasLegacyProviderAssigneeCondition(rule));
+    const droppedRules = ruleSet.rules.filter(hasLegacyProviderAssigneeCondition);
+    if (droppedRules.length > 0) {
+      const droppedRuleIds = droppedRules.map((rule) => rule.id).join(", ");
+      warnInvalidState(
+        storagePath,
+        `dropped legacy provider-assignee routing rules (${droppedRuleIds}) because local provider assignee routing is no longer supported`,
+      );
+    }
+    return {
+      ...ruleSet,
+      rules: retainedRules,
+    };
+  });
+}
+
+function hasLegacyProviderAssigneeCondition(rule: RoutingRule): boolean {
+  return isRecord(rule.conditions) && LEGACY_PROVIDER_ASSIGNEES_FIELD in rule.conditions;
 }
 
 function isRoutingRuleSet(value: unknown): value is RoutingRuleSet {
