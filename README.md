@@ -81,6 +81,10 @@ current session.
 Current shipped CLI surface:
 
 - `agentrail init` writes the local `.agentrail` config and env scaffolding.
+- Interactive `agentrail init` can optionally connect GitHub immediately with a
+  masked token prompt.
+- `agentrail provider connect <github|circleci>` accepts masked secrets
+  interactively and still supports env vars for non-interactive automation.
 - `agentrail doctor` verifies health, auth, profile/routing readiness, and
   `/tasks/mine` visibility.
 - The server-backed `agentrail agent create/connect` wrapper is still planned,

@@ -33,6 +33,7 @@ export interface RunCliOptions {
   stderr?: Writer;
   detectRepoContext?: (cwd: string) => DetectedRepoContext | Promise<DetectedRepoContext>;
   createPrompt?: () => PromptSession;
+  providerFetch?: typeof globalThis.fetch;
   writeSetupFiles?: (options: {
     homePath?: string;
     repoRoot?: string;
@@ -87,6 +88,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
         stdout,
         stderr,
         createPrompt: options.createPrompt,
+        fetch: options.providerFetch,
       });
     }
 
@@ -163,6 +165,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
           stderr,
           prompt,
           createPrompt: options.createPrompt,
+          providerFetch: options.providerFetch,
           detectRepo,
           writeFiles,
         });
@@ -212,6 +215,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
       stderr,
       prompt: null,
       createPrompt: options.createPrompt,
+      providerFetch: options.providerFetch,
       detectRepo,
       writeFiles,
     });
@@ -236,6 +240,7 @@ async function finalizeInit({
   stderr,
   prompt,
   createPrompt,
+  providerFetch,
   detectRepo,
   writeFiles,
 }: {
@@ -248,6 +253,7 @@ async function finalizeInit({
   stderr: Writer;
   prompt: PromptSession | null;
   createPrompt?: () => PromptSession;
+  providerFetch?: typeof globalThis.fetch;
   detectRepo: (cwd: string) => DetectedRepoContext | Promise<DetectedRepoContext>;
   writeFiles: (options: {
     homePath?: string;
@@ -329,11 +335,21 @@ async function finalizeInit({
         stdout,
         stderr,
         createPrompt: prompt ? () => prompt : createPrompt,
+        fetch: providerFetch,
       });
       if (providerExitCode !== 0) {
         return providerExitCode;
       }
     }
+
+    await prompt.note({
+      title: "More provider commands",
+      body: [
+        "Use `agentrail provider list` to review configured provider status.",
+        "Use `agentrail provider connect github` to reconnect or rotate the GitHub token later.",
+        "Use `agentrail provider connect circleci` to add CircleCI with a masked token and webhook-secret prompt.",
+      ].join("\n"),
+    });
   }
 
   return 0;

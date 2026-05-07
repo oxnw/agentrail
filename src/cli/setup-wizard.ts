@@ -145,6 +145,8 @@ export async function runSetupWizard({
         "If no local agents exist yet, the wizard will offer first-agent creation before you leave setup.",
         "You can rerun `agentrail init` safely to refresh your global AgentRail home.",
         "",
+        "If you choose GitHub next, the wizard will prompt for the token without echoing it and write `~/.agentrail/provider.env`.",
+        "Use `agentrail provider list` to inspect provider status at any time.",
         "Use `agentrail provider connect github` or `agentrail provider connect circleci` when you are ready to connect live providers.",
         "When the API is running, `agentrail doctor` is the final verification step.",
         "Use `./agentrail server start` whenever you want the local API running outside the wizard.",

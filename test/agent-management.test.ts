@@ -601,9 +601,9 @@ function createMemoryWriter() {
 class ScriptedPromptSession implements PromptSession {
   readonly notes: Array<{ title?: string; body: string }> = [];
   readonly messages: string[] = [];
-  readonly #steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input"; value: string | boolean | string[] }>;
+  readonly #steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input" | "secret"; value: string | boolean | string[] }>;
 
-  constructor(steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input"; value: string | boolean | string[] }>) {
+  constructor(steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input" | "secret"; value: string | boolean | string[] }>) {
     this.#steps = [...steps];
   }
 
@@ -632,6 +632,19 @@ class ScriptedPromptSession implements PromptSession {
     return String(step.value);
   }
 
+  async secret(): Promise<string> {
+    const step = this.#next("secret");
+    return String(step.value);
+  }
+
+  spinner() {
+    return {
+      start() {},
+      stop() {},
+      error() {},
+    };
+  }
+
   async note(options: { title?: string; body: string }): Promise<void> {
     this.notes.push(options);
   }
@@ -644,7 +657,7 @@ class ScriptedPromptSession implements PromptSession {
     assert.equal(this.#steps.length, 0);
   }
 
-  #next(kind: "select" | "multiselect" | "confirm" | "input") {
+  #next(kind: "select" | "multiselect" | "confirm" | "input" | "secret") {
     const step = this.#steps.shift();
     assert.ok(step, `expected ${kind} prompt step`);
     assert.equal(step.kind, kind);

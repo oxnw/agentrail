@@ -86,9 +86,10 @@ assignment work:
   stable generated `agentId` such as `agt_codex_local` unless explicitly set.
 - Starter routing is minimal: one profile, one repo-scoped rule, and one setup
   verification task or demo task so `/tasks/mine` proves visibility.
-- Provider secrets are never requested by default. Real provider mode asks for
-  env var names and validates that the variables are set before enabling live
-  provider operations.
+- Provider secrets are never requested during the initial repo/base-URL setup
+  questions. After files are written, `init` may optionally offer GitHub
+  connection with masked token entry, and dedicated provider commands can
+  prompt for masked secrets interactively or read env vars non-interactively.
 
 ## Interactive Setup UX
 
@@ -142,8 +143,8 @@ Wizard rules:
 - Use a terminal-safe prompt library or small internal prompt layer; do not make
   the CLI depend on a browser UI.
 - Every question must show the inferred default first.
-- Required secrets are never entered directly. The wizard asks for env var
-  names and checks whether those variables are present.
+- Optional provider secrets are entered through masked terminal prompts when
+  the user chooses an interactive provider connect step.
 - `No, print commands only` emits the equivalent non-interactive command set so
   users can inspect or paste it later.
 - Non-TTY mode never blocks on prompts. It requires explicit flags or exits with
@@ -180,8 +181,9 @@ choice: `providers.github.mode` receives the selected mode, and
 `providers.circleci.mode` is `real` only when the selected mode is `real`;
 otherwise it is `disabled`.
 
-`agentrail init` creates local files only. It must not require the server to be
-reachable and must not create secrets.
+`agentrail init` writes local files without requiring the server to be
+reachable. After that write step, the interactive flow may optionally create
+`provider.env` if the user chooses immediate GitHub connection.
 
 Expected local files:
 
