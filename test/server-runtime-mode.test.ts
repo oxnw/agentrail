@@ -10,10 +10,12 @@ import { TaskStore } from "../src/task-store.ts";
 const DEMO_TASK_ID = "tsk_DEMOISSUETOSHIP01";
 
 test("server mode does not expose a seeded lifecycle fixture by default", async (t) => {
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-runtime-home-"));
   const port = 34000 + Math.floor(Math.random() * 1000);
   const server = spawn(process.execPath, ["src/server.ts"], {
     env: {
       ...process.env,
+      AGENTRAIL_HOME: homePath,
       AGENTRAIL_HOST: "127.0.0.1",
       AGENTRAIL_PORT: String(port),
       GITHUB_TOKEN: "ghp_testtoken",
@@ -28,6 +30,7 @@ test("server mode does not expose a seeded lifecycle fixture by default", async 
       server.kill("SIGTERM");
     }
   });
+  t.after(() => rm(homePath, { recursive: true, force: true }));
 
   const output = [];
   server.stdout.setEncoding("utf8");
@@ -71,10 +74,12 @@ test("server mode does not expose a seeded lifecycle fixture by default", async 
 });
 
 test("server mode exposes routing control plane routes", async (t) => {
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-runtime-home-"));
   const port = 36000 + Math.floor(Math.random() * 1000);
   const server = spawn(process.execPath, ["src/server.ts"], {
     env: {
       ...process.env,
+      AGENTRAIL_HOME: homePath,
       AGENTRAIL_HOST: "127.0.0.1",
       AGENTRAIL_PORT: String(port),
       GITHUB_TOKEN: "ghp_testtoken",
@@ -89,6 +94,7 @@ test("server mode exposes routing control plane routes", async (t) => {
       server.kill("SIGTERM");
     }
   });
+  t.after(() => rm(homePath, { recursive: true, force: true }));
 
   const output = [];
   server.stdout.setEncoding("utf8");
@@ -192,6 +198,7 @@ async function waitForServerReady(server, output) {
 
 test("server mode serves configured durable task store records", async (t) => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-server-store-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-runtime-home-"));
   const storagePath = path.join(tempDir, "tasks.json");
   const persistedStore = new TaskStore({
     now: () => new Date("2026-05-05T13:00:00Z"),
@@ -225,6 +232,7 @@ test("server mode serves configured durable task store records", async (t) => {
   const server = spawn(process.execPath, ["src/server.ts"], {
     env: {
       ...process.env,
+      AGENTRAIL_HOME: homePath,
       AGENTRAIL_HOST: "127.0.0.1",
       AGENTRAIL_PORT: String(port),
       AGENTRAIL_TASK_STORE_PATH: storagePath,
@@ -241,6 +249,7 @@ test("server mode serves configured durable task store records", async (t) => {
       server.kill("SIGTERM");
     }
     await rm(tempDir, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
   });
 
   const output = [];

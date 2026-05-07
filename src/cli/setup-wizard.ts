@@ -196,7 +196,12 @@ async function promptForRepoAllowlist({
 function normalizeRepoInput(value: string): string {
   const trimmed = value.trim();
   if (/^https?:\/\//iu.test(trimmed)) {
-    const url = new URL(trimmed);
+    let url: URL;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
+    }
     if (url.hostname !== "github.com") {
       throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
     }
@@ -204,12 +209,17 @@ function normalizeRepoInput(value: string): string {
     if (parts.length < 2 || !parts[0] || !parts[1]) {
       throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
     }
-    return `${parts[0]}/${parts[1]}`;
+    return `${parts[0]}/${stripGitSuffix(parts[1])}`;
   }
-  if (/^[^/\s]+\/[^/\s]+$/u.test(trimmed)) {
-    return trimmed;
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(trimmed)) {
+    const [owner, repo] = trimmed.split("/", 2);
+    return `${owner}/${stripGitSuffix(repo ?? "")}`;
   }
   throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
+}
+
+function stripGitSuffix(value: string): string {
+  return value.replace(/\.git$/iu, "");
 }
 
 function toGitHubUrl(value: string): string {

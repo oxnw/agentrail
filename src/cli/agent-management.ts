@@ -173,7 +173,7 @@ interface ApiKeyMutationResponse {
 
 const DEFAULT_SCOPE_PRESET = ["tasks:read", "tasks:write", "ci:read", "reviews:read", "events:read"];
 const READ_ONLY_SCOPE_PRESET = ["tasks:read", "ci:read", "reviews:read", "events:read"];
-const READ_WRITE_SCOPE_PRESET = [...DEFAULT_SCOPE_PRESET];
+const READ_WRITE_SCOPE_PRESET = DEFAULT_SCOPE_PRESET;
 const READ_WRITE_SHIP_SCOPE_PRESET = [...DEFAULT_SCOPE_PRESET, "ship:write"];
 const COMMON_ADVANCED_SCOPES = ["tasks:read", "tasks:write", "ci:read", "reviews:read", "events:read", "ship:write"];
 const EXPANDED_ADVANCED_SCOPES = ["routing:read", "routing:evaluate", "routing:admin", "usage:read", "webhooks:read", "webhooks:write", "auth:admin"];
@@ -315,7 +315,14 @@ function parseAgentCommandArgs(argv: string[]): AgentCreateFlags {
         flags.ownershipTags = parseCsv(nextValue(argv, ++index, arg));
         break;
       case "--max-concurrent-tasks":
-        flags.maxConcurrentTasks = Number.parseInt(nextValue(argv, ++index, arg), 10);
+        {
+          const rawValue = nextValue(argv, ++index, arg);
+          const parsedValue = Number.parseInt(rawValue, 10);
+          if (!Number.isInteger(parsedValue) || parsedValue < 1) {
+            throw new Error(`Invalid --max-concurrent-tasks value "${rawValue}". Use a positive integer.`);
+          }
+          flags.maxConcurrentTasks = parsedValue;
+        }
         break;
       case "--instructions-path":
         flags.instructionsPath = nextValue(argv, ++index, arg);
@@ -926,7 +933,7 @@ async function collectUpdateInputs({
   currentEnvPath: string | null;
   currentRunner: string;
   currentInstructionsPath: string;
-  currentProfile: any;
+  currentProfile: ProfileBody;
   currentUsage: NonNullable<UsageBody["data"]>;
 }) {
   const runner = flags.runner ?? currentRunner;
@@ -972,10 +979,10 @@ async function collectUpdateInputs({
       message: "Ownership tags (comma-separated)",
       defaultValue: (currentProfile.ownershipTags ?? []).join(","),
     }) : (currentProfile.ownershipTags ?? []).join(",")),
-    maxConcurrentTasks: flags.maxConcurrentTasks ?? Number.parseInt(prompt ? await prompt.input({
+    maxConcurrentTasks: flags.maxConcurrentTasks ?? validateCapacity(Number.parseInt(prompt ? await prompt.input({
       message: "Max concurrent tasks",
       defaultValue: String(currentProfile.maxConcurrentTasks ?? 1),
-    }) : String(currentProfile.maxConcurrentTasks ?? 1), 10),
+    }) : String(currentProfile.maxConcurrentTasks ?? 1), 10)),
     instructionsPath: path.resolve(cwd, flags.instructionsPath ?? (prompt ? await prompt.input({
       message: "Instructions path",
       defaultValue: currentInstructionsPath,
@@ -1210,39 +1217,14 @@ async function maybeWriteDefaultEnvAlias({
   const aliasPath = currentAgentEnvPathForHome(homePath);
   const content = await readFile(envFilePath, "utf8");
   let shouldWrite = setDefaultEnv;
-  if (prompt) {
-    try {
-      const existing = await readFile(aliasPath, "utf8");
-      if (!existing.trim()) {
-        shouldWrite = true;
-      } else {
-        const existingAgentId = parseEnvFile(existing).AGENTRAIL_AGENT_ID;
-        const nextAgentId = parseEnvFile(content).AGENTRAIL_AGENT_ID;
-        shouldWrite = shouldWrite || (Boolean(existingAgentId) && existingAgentId === nextAgentId);
-      }
-      if (shouldWrite && existing.trim() && existing !== content) {
-        const overwrite = await prompt.confirm({
-          message: "Update ~/.agentrail/agent.env to point to this agent?",
-          defaultValue: true,
-        });
-        if (!overwrite) return;
-      }
-    } catch {
-      shouldWrite = true;
-    }
-  } else {
-    try {
-      const existing = await readFile(aliasPath, "utf8");
-      if (!existing.trim()) {
-        shouldWrite = true;
-      } else {
-        const existingAgentId = parseEnvFile(existing).AGENTRAIL_AGENT_ID;
-        const nextAgentId = parseEnvFile(content).AGENTRAIL_AGENT_ID;
-        shouldWrite = shouldWrite || (Boolean(existingAgentId) && existingAgentId === nextAgentId);
-      }
-    } catch {
-      shouldWrite = true;
-    }
+  const aliasState = await readAliasState(aliasPath, content);
+  shouldWrite = shouldWrite || aliasState.shouldWrite;
+  if (prompt && shouldWrite && aliasState.existing?.trim() && aliasState.existing !== content) {
+    const overwrite = await prompt.confirm({
+      message: "Update ~/.agentrail/agent.env to point to this agent?",
+      defaultValue: true,
+    });
+    if (!overwrite) return;
   }
   if (!shouldWrite) return;
   await writeFile(aliasPath, content, { mode: 0o600 });
@@ -1768,7 +1750,7 @@ function normalizeRepoInput(value: string, connectedRepos: ConnectedRepo[]): { s
       if (parts.length < 2 || !parts[0] || !parts[1]) {
         throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
       }
-      const slug = `${parts[0]}/${parts[1]}`;
+      const slug = `${parts[0]}/${stripGitSuffix(parts[1])}`;
       return { slug, url: toGitHubUrl(slug), path: findRepoPath(connectedRepos, slug) ?? connectedRepos[0]?.path ?? process.cwd() };
     } catch (error) {
       if (error instanceof Error) throw error;
@@ -1776,9 +1758,15 @@ function normalizeRepoInput(value: string, connectedRepos: ConnectedRepo[]): { s
     }
   }
   if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(trimmed)) {
-    return { slug: trimmed, url: toGitHubUrl(trimmed), path: findRepoPath(connectedRepos, trimmed) ?? connectedRepos[0]?.path ?? process.cwd() };
+    const [owner, repo] = trimmed.split("/", 2);
+    const slug = `${owner}/${stripGitSuffix(repo ?? "")}`;
+    return { slug, url: toGitHubUrl(slug), path: findRepoPath(connectedRepos, slug) ?? connectedRepos[0]?.path ?? process.cwd() };
   }
   throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
+}
+
+function stripGitSuffix(value: string): string {
+  return value.replace(/\.git$/iu, "");
 }
 
 function toGitHubUrl(slug: string): string {
@@ -1856,7 +1844,8 @@ function inferPermissionPreset(scopes: string[]): PermissionPreset {
 }
 
 function sameScopes(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((scope, index) => scope === normalizeScopeList(right)[index]);
+  const normalizedRight = normalizeScopeList(right);
+  return left.length === normalizedRight.length && left.every((scope, index) => scope === normalizedRight[index]);
 }
 
 function describeScope(scope: string): string {
@@ -1916,13 +1905,43 @@ function warnPrivilegedScopes(scopes: string[], output: Writer): void {
 }
 
 function renderRunnerCommand(runner: string, envFilePath: string, repoPath: string): string {
+  const quotedEnvFilePath = quoteShellArg(envFilePath);
+  const quotedRepoPath = quoteShellArg(repoPath);
   if (runner === "claude-code") {
-    return `source ${envFilePath} && cd ${repoPath} && claude --append-system-prompt-file "$AGENTRAIL_AGENT_RECIPE_PATH"`;
+    return `source ${quotedEnvFilePath} && cd ${quotedRepoPath} && claude --append-system-prompt-file "$AGENTRAIL_AGENT_RECIPE_PATH"`;
   }
   if (runner === "cursor") {
-    return `source ${envFilePath} && cursor ${repoPath}`;
+    return `source ${quotedEnvFilePath} && cursor ${quotedRepoPath}`;
   }
-  return `source ${envFilePath} && cd ${repoPath} && ${runner}`;
+  return `source ${quotedEnvFilePath} && cd ${quotedRepoPath} && ${runner}`;
+}
+
+async function readAliasState(aliasPath: string, content: string): Promise<{ existing: string | null; shouldWrite: boolean }> {
+  try {
+    const existing = await readFile(aliasPath, "utf8");
+    if (!existing.trim()) {
+      return { existing, shouldWrite: true };
+    }
+    const existingAgentId = parseEnvFile(existing).AGENTRAIL_AGENT_ID;
+    const nextAgentId = parseEnvFile(content).AGENTRAIL_AGENT_ID;
+    return {
+      existing,
+      shouldWrite: Boolean(existingAgentId) && existingAgentId === nextAgentId,
+    };
+  } catch {
+    return { existing: null, shouldWrite: true };
+  }
+}
+
+function validateCapacity(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
 function renderAgentCreateUsage(): string {

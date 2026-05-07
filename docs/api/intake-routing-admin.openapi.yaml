@@ -959,16 +959,6 @@ components:
           $ref: '#/components/schemas/AvailableActions'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
-    ProviderIdentityMapping:
-      type: object
-      additionalProperties: false
-      required: [provider, subject]
-      properties:
-        provider:
-          type: string
-          enum: [github, linear, jira, gitlab]
-        subject:
-          type: string
     RoutingRuleSetReplaceRequest:
       type: object
       additionalProperties: false

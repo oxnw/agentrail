@@ -134,8 +134,7 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 1. Normalize the provider issue snapshot and compute `inputDigest`.
 2. Load the active rule set and eligible agent profiles.
 3. Evaluate deterministic rules in order:
-   repo, labels, project, issue type, priority,
-   ownership tags, and capability tags.
+   repo, labels, project, issue type, and priority.
 4. If exactly one deterministic target wins, assign with that rule's
    confidence.
 5. If deterministic rules conflict, send to triage with conflict reasons.
@@ -153,6 +152,23 @@ This is a follow-up note for the next routing-engine pass. The current data
 model already has `role`, `capabilityTags`, and `ownershipTags`, but the
 meaning of those fields should be tightened so setup, audit, and routing all
 use the same mental model.
+
+Current behavior:
+
+- local OSS routing uses hard constraints plus deterministic rule conditions
+  such as repo, labels, project, issue type, and priority;
+- `role`, `capabilityTags`, and `ownershipTags` exist on profiles, but they are
+  not yet modeled as a separate soft-scoring phase;
+- local OSS AgentRail no longer uses provider-assignee mapping as a routing
+  signal.
+
+Planned behavior:
+
+- keep hard constraints such as `repoAllowlist`, permissions, status, and
+  capacity as blocking checks;
+- use `role`, `capabilityTags`, and `ownershipTags` as soft routing signals
+  that improve ranking and explanation before triage, rather than as brittle
+  blockers.
 
 Use the fields this way:
 
@@ -177,8 +193,8 @@ The intended routing split is:
 - hard constraints:
   `repoAllowlist`, permissions, agent status, and capacity;
 - soft routing signals:
-  `role`, `capabilityTags`, `ownershipTags`, provider identity mappings, and
-  later historical performance if the product adds it.
+  `role`, `capabilityTags`, `ownershipTags`, and later historical performance
+  if the product adds it.
 
 The intended fallback behavior is:
 

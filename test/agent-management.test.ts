@@ -652,7 +652,7 @@ class ScriptedPromptSession implements PromptSession {
   }
 }
 
-async function getJson<T = any>(baseUrl: string, route: string, apiKey: string): Promise<{ status: number; json: T }> {
+async function getJson<T = any>(baseUrl: string, route: string, apiKey: string): Promise<{ status: number; json: T | null }> {
   const response = await fetch(`${baseUrl}${route}`, {
     headers: {
       authorization: `Bearer ${apiKey}`,
@@ -660,9 +660,9 @@ async function getJson<T = any>(baseUrl: string, route: string, apiKey: string):
     },
   });
   const text = await response.text();
-  let json: T;
+  let json: T | null;
   try {
-    json = text ? JSON.parse(text) as T : null as T;
+    json = text ? JSON.parse(text) as T : null;
   } catch {
     throw new Error(`Expected JSON from ${route}, got ${response.status}: ${text.slice(0, 200)}`);
   }

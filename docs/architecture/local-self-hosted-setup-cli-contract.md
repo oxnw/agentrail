@@ -11,7 +11,6 @@ Related contracts:
 - [task lifecycle OpenAPI](../api/task-lifecycle.openapi.yaml)
 - [operator routing OpenAPI](../api/intake-routing-admin.openapi.yaml)
 - [agent recipes](../agent-recipes.md)
-- [setup flow](./setup-flow.md)
 
 Current implementation status:
 

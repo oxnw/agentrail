@@ -63,15 +63,14 @@ test("POST /providers/github/intake creates a task and returns 201", async () =>
     assert.strictEqual(json.data.status, "todo");
     assert.deepStrictEqual(json.availableActions, ["get_task"]);
 
-    // Verify the created task is later reachable via GET /tasks/{id} (if agent is assigned)
+    // Provider-ingested tasks now remain unassigned until AgentRail routes them internally,
+    // so the writer key should not be able to read the task directly yet.
     const getRes = await fetch(`${baseUrl}/tasks/${json.data.taskId}`, {
       headers: {
         authorization: `Bearer ${testKey.apiKey}`,
       },
     });
-    assert.strictEqual(getRes.status, 200);
-    const task = await getRes.json();
-    assert.strictEqual(task.data.title, "E2E intake test issue");
+    assert.strictEqual(getRes.status, 403);
   } finally {
     server.close();
   }

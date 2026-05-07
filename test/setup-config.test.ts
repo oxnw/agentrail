@@ -33,7 +33,7 @@ test("createSetupConfig derives server defaults from repo detection", () => {
   assert.equal(config.providers.github.mode, "real");
   assert.equal(config.providers.circleci.mode, "real");
   assert.deepEqual(config.repos.map((repo) => repo.slug), ["oxnw/agentrail"]);
-  assert.equal(config.repos[0]?.defaultBranch, "main");
+  assert.equal(config.repos[0].defaultBranch, "main");
   assert.equal(config.exports.markdown.enabled, false);
 });
 

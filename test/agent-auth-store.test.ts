@@ -51,11 +51,16 @@ test("AgentAuthStore persists keys and rotates with updated scopes and metadata"
   assert.ok(oldUsage.data, "oldUsage should have data");
   assert.ok(stored && typeof stored === "object", "persisted auth store should be a JSON object");
   assert.ok(Array.isArray(stored.keys), "persisted auth store should include a keys array");
-  assert.deepEqual(rotatedUsage.data.scopes, ["ship:write", "tasks:read"]);
+  assert.deepEqual([...rotatedUsage.data.scopes].sort(), ["ship:write", "tasks:read"]);
   assert.equal(rotatedUsage.data.agent.displayName, "Updated Example");
   assert.equal(rotatedUsage.data.agent.role, "reviewer");
   assert.deepEqual(rotatedUsage.data.agent.externalIdentities, [{ provider: "github", subject: "updated-octocat" }]);
   assert.equal(oldUsage.data.status, "rotated");
+  assert.throws(() => reloaded.authenticate({
+    authorizationHeader: `Bearer ${created.data.apiKey}`,
+    requiredScope: "tasks:read",
+    operation: "list_my_tasks",
+  }), /Authentication failed/);
   assert.equal(stored.keys.length, 2);
 });
 

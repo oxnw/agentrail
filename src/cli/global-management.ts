@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { startServer } from "../server.ts";
@@ -23,7 +23,13 @@ export async function runServerStart({
   stdout: Writer;
 }): Promise<number> {
   stdout.write("Starting AgentRail API.\n");
-  startServer();
+  try {
+    startServer();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    stdout.write(`Failed to start AgentRail API: ${message}\n`);
+    return 1;
+  }
   return await new Promise<number>(() => {});
 }
 
@@ -60,7 +66,13 @@ export async function runRepoCommand(argv: string[], {
   }
 
   if (subcommand === "add") {
-    const flags = parseRepoFlags(rest);
+    let flags: RepoFlags;
+    try {
+      flags = parseRepoFlags(rest);
+    } catch (error) {
+      stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
     if (!flags.repo || !flags.slug) {
       stderr.write("agentrail repo add requires --repo <path> and --slug <owner/repo|url>.\n");
       return 1;
@@ -80,9 +92,15 @@ export async function runRepoCommand(argv: string[], {
   }
 
   if (subcommand === "remove") {
-    const flags = parseRepoFlags(rest);
+    let flags: RepoFlags;
+    try {
+      flags = parseRepoFlags(rest);
+    } catch (error) {
+      stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
     if (!flags.slug) {
-      stderr.write("agentrail repo remove requires --repo <owner/repo|url>.\n");
+      stderr.write("agentrail repo remove requires --slug <owner/repo|url>.\n");
       return 1;
     }
     const slug = normalizeRepoSlug(flags.slug);
@@ -132,17 +150,28 @@ export async function runConfigCommand(argv: string[], {
   }
 
   if (subcommand === "set") {
-    const flags = parseConfigSetFlags(rest);
+    let flags: ConfigSetFlags;
+    try {
+      flags = parseConfigSetFlags(rest);
+    } catch (error) {
+      stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
     const nextConfig = structuredClone(config as object) as any;
     if (flags.baseUrl) {
       nextConfig.server = nextConfig.server ?? {};
       nextConfig.server.baseUrl = flags.baseUrl;
     }
     if (flags.providerMode) {
+      nextConfig.providers = nextConfig.providers ?? {};
+      nextConfig.providers.github = nextConfig.providers.github ?? {};
+      nextConfig.providers.circleci = nextConfig.providers.circleci ?? {};
       nextConfig.providers.github.mode = flags.providerMode;
       nextConfig.providers.circleci.mode = flags.providerMode === "real" ? "real" : "disabled";
     }
     if (flags.markdownExport !== undefined) {
+      nextConfig.exports = nextConfig.exports ?? {};
+      nextConfig.exports.markdown = nextConfig.exports.markdown ?? {};
       nextConfig.exports.markdown.enabled = flags.markdownExport;
     }
     await writeConfig(homePath, nextConfig);
@@ -196,7 +225,13 @@ function parseConfigSetFlags(argv: string[]): ConfigSetFlags {
         flags.baseUrl = nextValue(argv, ++index, arg);
         break;
       case "--provider-mode":
-        flags.providerMode = nextValue(argv, ++index, arg) as "real" | "disabled";
+        {
+          const mode = nextValue(argv, ++index, arg);
+          if (mode !== "real" && mode !== "disabled") {
+            throw new Error(`Invalid --provider-mode value "${mode}". Must be "real" or "disabled".`);
+          }
+          flags.providerMode = mode;
+        }
         break;
       case "--markdown-export":
         flags.markdownExport = true;
@@ -212,6 +247,8 @@ function parseConfigSetFlags(argv: string[]): ConfigSetFlags {
 }
 
 async function writeConfig(homePath: string, config: SetupConfigLike): Promise<void> {
+  // Older local installs may still have this removed store on disk; drop it whenever
+  // config is rewritten so the home stays aligned with the current no-local-mapping model.
   await rm(path.join(homePath, "stores", "provider-identity-mappings.json"), { force: true });
   await writeFile(configPathForHome(homePath), `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }

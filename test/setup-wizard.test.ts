@@ -191,6 +191,47 @@ test("runCli re-prompts when the GitHub repo input is not a valid owner/repo or 
   ]);
 });
 
+test("runCli normalizes .git suffix from GitHub repo input", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const writes: Array<{ homePath?: string; repoRoot?: string; config: SetupConfig }> = [];
+  const prompt = new ScriptedPromptSession([
+    { kind: "input", value: detectedRepo.repoPath },
+    { kind: "input", value: "https://github.com/custom/agentrail.git" },
+    { kind: "input", value: detectedRepo.defaultBranch },
+    { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: true },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: false },
+  ]);
+
+  const exitCode = await runCli(["init"], {
+    cwd: detectedRepo.repoPath,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stdout,
+    stderr,
+    detectRepoContext: async () => detectedRepo,
+    createPrompt: () => prompt,
+    writeSetupFiles: async ({ homePath, repoRoot, config }) => {
+      writes.push({ homePath, repoRoot, config });
+      return { writtenPaths: [] };
+    },
+  });
+
+  if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+  else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(agentrailHome, { recursive: true, force: true });
+
+  assert.equal(exitCode, 0);
+  assert.equal(writes[0]?.config.repos[0]?.slug, "custom/agentrail");
+  assert.match(prompt.notes[0]?.body ?? "", /GitHub repo: https:\/\/github\.com\/custom\/agentrail/);
+});
+
 test("runCli print-only mode does not show file-write next steps", async () => {
   const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const previousHome = process.env.AGENTRAIL_HOME;
@@ -619,9 +660,12 @@ class ScriptedPromptSession implements PromptSession {
     });
     const step = this.#next("multiselect");
     assert.ok(Array.isArray(step.value), `multiselect step value must be an array, got ${typeof step.value}`);
-    const values = step.value.map(String);
+    const values = (step.value as string[]).map(String);
     const allowed = new Set(options.choices.map((choice) => choice.value));
-    values.forEach((value) => assert.ok(allowed.has(value)));
+    values.forEach((value) => assert.ok(
+      allowed.has(value),
+      `invalid multiselect value "${value}", allowed: ${Array.from(allowed).join(", ")}`,
+    ));
     return values;
   }
 

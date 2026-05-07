@@ -6,6 +6,7 @@ import {
   providerEnvPathForHome,
   readSetupConfigFromHome,
   resolveAgentRailHome,
+  type SetupConfigLike,
 } from "./agentrail-home.ts";
 import { createPromptSession, type PromptSession } from "./prompt.ts";
 
@@ -99,7 +100,7 @@ async function connectGitHub({
   stderr,
 }: {
   homePath: string;
-  config: any;
+  config: SetupConfigLike;
   flags: ProviderConnectFlags;
   prompt: PromptSession | null;
   stdout: Writer;
@@ -151,7 +152,7 @@ async function connectCircleCI({
   stderr,
 }: {
   homePath: string;
-  config: any;
+  config: SetupConfigLike;
   flags: ProviderConnectFlags;
   prompt: PromptSession | null;
   stdout: Writer;
@@ -236,7 +237,9 @@ function parseProviderName(value: string | undefined): ProviderName {
   throw new Error("Provider must be one of: github, circleci.");
 }
 
-async function writeConfig(homePath: string, config: any): Promise<void> {
+async function writeConfig(homePath: string, config: SetupConfigLike): Promise<void> {
+  // Older local installs may still have this removed store on disk; drop it whenever
+  // provider config is rewritten so the home stays aligned with the current model.
   await rm(path.join(homePath, "stores", "provider-identity-mappings.json"), { force: true });
   await writeFile(configPathForHome(homePath), `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }

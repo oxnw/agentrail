@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
 import {
@@ -12,6 +12,7 @@ import {
   type RoutingRule,
 } from "../src/intake-routing-control-plane.ts";
 import { RoutingAuditStore } from "../src/routing-audit-store.ts";
+import { RoutingRuleStore } from "../src/routing-rule-store.ts";
 import { TaskLifecycleError } from "../src/task-lifecycle-errors.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
@@ -222,6 +223,69 @@ test("RoutingControlPlane preserves lifecycle status and actions when re-routing
   assert.equal(stored?.status, "in_review");
   assert.deepEqual(stored?.availableActions, ["ship", "view_ci_status", "view_review_feedback"]);
   assert.equal(stored?.source?.deliveryId, "2026-05-05T12:01:00Z:delivery-02");
+});
+
+test("RoutingRuleStore drops persisted legacy provider-assignee rules instead of broadening them", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-routing-rules-"));
+  const storagePath = path.join(tempDir, "routing-rules.json");
+
+  await writeFile(storagePath, `${JSON.stringify({
+    ruleSets: [{
+      id: "rset_legacy",
+      version: 1,
+      status: "active",
+      source: "admin_api",
+      sourceRef: "legacy-test",
+      createdBy: "agt_router",
+      createdAt: FIXED_NOW.toISOString(),
+      rules: [
+        {
+          id: "legacy_provider_rule",
+          name: "Legacy provider-assignee rule",
+          enabled: true,
+          priority: 10,
+          conditions: {
+            repositories: ["oxnw/agentrail"],
+            providerAssigneesAny: ["github:onyeka"],
+          },
+          target: { type: "agent", id: "agt_cto" },
+          confidence: 0.95,
+          explanation: "Legacy provider mapping",
+        },
+      ],
+      classifier: {
+        enabled: false,
+        provider: "internal-router",
+        confidenceThreshold: 0.82,
+        maxCandidates: 3,
+        fallbackTriageQueueId: "triage_engineering",
+      },
+      audit: {
+        supersedesRuleSetId: null,
+        changeReason: "legacy seed",
+      },
+    }],
+    idempotencyEntries: [],
+  }, null, 2)}\n`);
+
+  const warnings: string[] = [];
+  const onWarning = (warning: Error) => warnings.push(warning.message);
+  process.on("warning", onWarning);
+  try {
+    const store = new RoutingRuleStore({ now, storagePath });
+    const current = store.getCurrentRuleSet();
+    assert.ok(current);
+    assert.deepEqual(current.rules, []);
+
+    const persisted = JSON.parse(await readFile(storagePath, "utf8"));
+    assert.equal(persisted.ruleSets[0].rules[0].id, "legacy_provider_rule");
+  } finally {
+    process.off("warning", onWarning);
+    await rm(tempDir, { recursive: true, force: true });
+  }
+
+  assert.match(warnings.join("\n"), /dropped legacy provider-assignee routing rules/i);
+  assert.match(warnings.join("\n"), /legacy_provider_rule/);
 });
 
 test("RoutingControlPlane resets available actions when re-routing todo tasks between triage and agent", async () => {

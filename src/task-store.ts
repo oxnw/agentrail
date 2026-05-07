@@ -248,7 +248,7 @@ function loadTasks(state: PersistedState): Map<string, TaskRecord> {
   const map = new Map<string, TaskRecord>();
   if (!state.tasks) return map;
   for (const record of state.tasks) {
-    map.set(record.id, record);
+    map.set(record.id, normalizePersistedTaskRecord(record));
   }
   return map;
 }
@@ -261,6 +261,16 @@ function persistState(storagePath: string | undefined, tasks: Map<string, TaskRe
     idempotencyEntries: [...idempotencyEntries.entries()],
   };
   writeFileSync(storagePath, JSON.stringify(state, null, 2) + "\n", "utf8");
+}
+
+function normalizePersistedTaskRecord(record: TaskRecord): TaskRecord {
+  if ((record.assignmentSource as string | null | undefined) === "provider_assignee_mapping") {
+    return {
+      ...record,
+      assignmentSource: "deterministic_rule",
+    } as TaskRecord;
+  }
+  return record;
 }
 
 function toTaskSummary(task: TaskRecord): TaskSummary {

@@ -292,7 +292,7 @@ async function finalizeInit({
       const firstAgentExitCode = await withTemporaryLocalServer({
         homePath,
         config,
-        validateExistingBaseUrl: validateProvisioningServer,
+        validateExistingBaseUrl: (baseUrl) => validateProvisioningServer(baseUrl, operatorBootstrap.operatorKey),
         handler: async ({ baseUrl }) => runAgentCreate([
           "--setup-api-key",
           operatorBootstrap.operatorKey,
@@ -339,14 +339,15 @@ async function finalizeInit({
   return 0;
 }
 
-async function validateProvisioningServer(baseUrl: string): Promise<boolean> {
+async function validateProvisioningServer(baseUrl: string, operatorKey: string): Promise<boolean> {
   try {
     const response = await fetch(new URL("operator/routing/agent-profiles/agt_operator", `${baseUrl.replace(/\/+$/, "")}/`), {
       headers: {
         accept: "application/json",
+        authorization: `Bearer ${operatorKey}`,
       },
     });
-    return response.status !== 404;
+    return response.status === 200 || response.status === 404;
   } catch {
     return false;
   }

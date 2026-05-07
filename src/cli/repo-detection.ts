@@ -22,8 +22,16 @@ export function detectRepoContext(cwd: string): DetectedRepoContext {
 
 function runGit(args: string[]): string | null {
   try {
-    return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
-  } catch {
+    return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim() || null;
+  } catch (error) {
+    if (process.env.AGENTRAIL_DEBUG_GIT === "true") {
+      const stderr = typeof error === "object" && error !== null && "stderr" in error
+        ? String(error.stderr ?? "").trim()
+        : "";
+      if (stderr) {
+        process.stderr.write(`[repo-detection] git ${args.join(" ")} failed: ${stderr}\n`);
+      }
+    }
     return null;
   }
 }

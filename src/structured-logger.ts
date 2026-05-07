@@ -26,12 +26,10 @@ export function createOperationTimer(fields: LogFields): Timer {
 
   return {
     finish(extra: LogFields = {}) {
-      if (!isEnabled()) return;
       const durationMs = Date.now() - start;
       emit({ level: "info", ...fields, ...extra, durationMs });
     },
     error(extra: LogFields = {}) {
-      if (!isEnabled()) return;
       const durationMs = Date.now() - start;
       emit({ level: "error", ...fields, ...extra, durationMs });
     }
@@ -39,7 +37,6 @@ export function createOperationTimer(fields: LogFields): Timer {
 }
 
 export function logEvent(fields: LogFields): void {
-  if (!isEnabled()) return;
   emit({ level: "info", ...fields });
 }
 
@@ -50,6 +47,7 @@ interface LogRecord extends LogFields {
 }
 
 function emit(entry: Partial<LogRecord>): void {
+  if (!isEnabled()) return;
   const ts = new Date().toISOString();
   const record: LogRecord = { ts, level: "info", ...entry };
 
@@ -77,9 +75,19 @@ function emit(entry: Partial<LogRecord>): void {
 }
 
 function isEnabled(): boolean {
-  return (process.env.AGENTRAIL_OBSERVABILITY ?? "true") !== "false";
+  return (process.env.AGENTRAIL_OBSERVABILITY ?? "true").toLowerCase() !== "false";
 }
 
-function getFormat(): string {
-  return (process.env.AGENTRAIL_LOG_FORMAT ?? "text").toLowerCase();
+let warnedAboutLogFormat = false;
+
+function getFormat(): "json" | "text" {
+  const raw = (process.env.AGENTRAIL_LOG_FORMAT ?? "text").toLowerCase();
+  if (raw === "json" || raw === "text") {
+    return raw;
+  }
+  if (!warnedAboutLogFormat) {
+    warnedAboutLogFormat = true;
+    process.stderr.write(`[structured-logger] Unknown AGENTRAIL_LOG_FORMAT "${raw}", defaulting to "text"\n`);
+  }
+  return "text";
 }

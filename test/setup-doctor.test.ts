@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { runCli } from "../src/cli/index.ts";
 import {
   createSetupDoctorHarness,
+  seedSetupVerificationTask,
   type SetupDoctorHarness,
   writeDoctorRepo,
 } from "./helpers/setup-doctor-fixture.ts";
+import { currentAgentEnvPathForHome } from "../src/cli/agentrail-home.ts";
 
 test("agentrail doctor fails when setup state exists but no assigned onboarding task is visible", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-fail-"));
@@ -19,16 +21,14 @@ test("agentrail doctor fails when setup state exists but no assigned onboarding 
   const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
   const previousHome = process.env.AGENTRAIL_HOME;
   let harness: SetupDoctorHarness | null = null;
+  t.after(createCleanup({
+    previousSetupApiKey,
+    previousHome,
+    repoRoot,
+    homePath,
+    getHarness: () => harness,
+  }));
   process.env.AGENTRAIL_HOME = homePath;
-
-  t.after(async () => {
-    restoreSetupApiKey(previousSetupApiKey);
-    await rm(repoRoot, { recursive: true, force: true });
-    await rm(homePath, { recursive: true, force: true });
-    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
-    else process.env.AGENTRAIL_HOME = previousHome;
-    await harness?.close();
-  });
 
   harness = await createSetupDoctorHarness();
   process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
@@ -65,16 +65,14 @@ test("agentrail doctor does not pass on an unrelated assigned in-progress task",
   const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
   const previousHome = process.env.AGENTRAIL_HOME;
   let harness: SetupDoctorHarness | null = null;
+  t.after(createCleanup({
+    previousSetupApiKey,
+    previousHome,
+    repoRoot,
+    homePath,
+    getHarness: () => harness,
+  }));
   process.env.AGENTRAIL_HOME = homePath;
-
-  t.after(async () => {
-    restoreSetupApiKey(previousSetupApiKey);
-    await rm(repoRoot, { recursive: true, force: true });
-    await rm(homePath, { recursive: true, force: true });
-    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
-    else process.env.AGENTRAIL_HOME = previousHome;
-    await harness?.close();
-  });
 
   harness = await createSetupDoctorHarness();
   process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
@@ -116,6 +114,82 @@ test("agentrail doctor does not pass on an unrelated assigned in-progress task",
   assert.equal(stdout.toString(), "");
 });
 
+test("agentrail doctor honors an explicit --env-file over the shared current-agent alias", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-explicit-env-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
+  const previousHome = process.env.AGENTRAIL_HOME;
+  let harness: SetupDoctorHarness | null = null;
+  t.after(createCleanup({
+    previousSetupApiKey,
+    previousHome,
+    repoRoot,
+    homePath,
+    getHarness: () => harness,
+  }));
+  process.env.AGENTRAIL_HOME = homePath;
+
+  harness = await createSetupDoctorHarness();
+  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
+
+  await seedSetupVerificationTask({
+    baseUrl: harness.baseUrl,
+    operatorApiKey: harness.operatorApiKey,
+    agentId: harness.agentId,
+  });
+
+  await writeDoctorRepo({
+    repoRoot,
+    homePath,
+    baseUrl: harness.baseUrl,
+    agentApiKey: harness.agentApiKey,
+    agentId: harness.agentId,
+    repoAllowlist: harness.repoAllowlist,
+  });
+
+  await writeFile(
+    currentAgentEnvPathForHome(homePath),
+    [
+      `AGENTRAIL_BASE_URL=${harness.baseUrl}`,
+      "AGENTRAIL_API_KEY=ar_live_wrong",
+      "AGENTRAIL_AGENT_ID=agt_wrong",
+      "AGENTRAIL_AGENT_RUNNER=codex",
+      "AGENTRAIL_REPO_ALLOWLIST=oxnw/wrong",
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
+
+  const explicitEnvPath = path.join(repoRoot, "tmp", "doctor-explicit.env");
+  await mkdir(path.dirname(explicitEnvPath), { recursive: true });
+  await writeFile(
+    explicitEnvPath,
+    [
+      `AGENTRAIL_BASE_URL=${harness.baseUrl}`,
+      `AGENTRAIL_API_KEY=${harness.agentApiKey}`,
+      `AGENTRAIL_AGENT_ID=${harness.agentId}`,
+      "AGENTRAIL_AGENT_RUNNER=codex",
+      `AGENTRAIL_REPO_ALLOWLIST=${harness.repoAllowlist.join(",")}`,
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
+
+  const exitCode = await runCli(["doctor", "--env-file", path.relative(repoRoot, explicitEnvPath)], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /AgentRail doctor passed/i);
+  assert.equal(stderr.toString(), "");
+});
+
 function createMemoryWriter() {
   let buffer = "";
 
@@ -136,4 +210,30 @@ function restoreSetupApiKey(previousSetupApiKey: string | undefined): void {
     return;
   }
   process.env.AGENTRAIL_SETUP_API_KEY = previousSetupApiKey;
+}
+
+function createCleanup({
+  previousSetupApiKey,
+  previousHome,
+  repoRoot,
+  homePath,
+  getHarness,
+}: {
+  previousSetupApiKey: string | undefined;
+  previousHome: string | undefined;
+  repoRoot: string;
+  homePath: string;
+  getHarness: () => SetupDoctorHarness | null;
+}) {
+  return async () => {
+    try {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(homePath, { recursive: true, force: true });
+    } finally {
+      restoreSetupApiKey(previousSetupApiKey);
+      if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+      else process.env.AGENTRAIL_HOME = previousHome;
+      await getHarness()?.close();
+    }
+  };
 }
