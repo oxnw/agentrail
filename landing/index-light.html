@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>AgentRail — Open-source infrastructure for coding agents</title>
+<title>AgentRail — Coding agents that close tickets, end-to-end</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&display=swap" />
@@ -159,7 +159,12 @@
   }
 
   /* ===== HERO ===== */
-  .hero { position: relative; padding: 96px 0 56px; }
+  .hero-fold {
+    min-height: calc(100vh - 56px);
+    display: flex;
+    flex-direction: column;
+  }
+  .hero { position: relative; padding: 96px 0 56px; flex: 1; }
   .hero-grid {
     display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 64px;
     align-items: end;
@@ -512,6 +517,16 @@
     background: rgba(232,116,31,0.09);
     border: 1px solid rgba(232,116,31,0.28);
   }
+  .badge-cloud {
+    display: inline-flex; align-items: center;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 6px; border-radius: 4px;
+    color: #3b82f6;
+    background: rgba(59,130,246,0.08);
+    border: 1px solid rgba(59,130,246,0.25);
+    margin-left: 8px; vertical-align: middle;
+  }
   .waitlist-panel {
     margin-top: 28px;
     border: 1px solid var(--line);
@@ -659,6 +674,58 @@
   /* ===== Tweaks panel scoped overrides ===== */
   body.compact .sec { padding: 72px 0; }
 
+  /* ===== Integrations logo cloud ===== */
+  .logos-sec {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 64px 0;
+    background: linear-gradient(180deg, transparent, rgba(12,20,32,0.02));
+  }
+  .logos-eyebrow {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+  .logos-track {
+    display: flex;
+    gap: 64px;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .logo-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    color: var(--ink-2);
+    transition: opacity .2s;
+    cursor: default;
+  }
+  .logo-item:hover { opacity: 0.7; }
+  .logo-item svg { width: 48px; height: 48px; flex-shrink: 0; }
+  .logo-item .logo-name {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .logo-item .logo-status {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .logo-status .dot-live {
+    width: 5px; height: 5px; border-radius: 999px; background: var(--accent);
+  }
+  .logo-status .dot-soon {
+    width: 5px; height: 5px; border-radius: 999px; background: var(--warn);
+  }
+  .logo-status.live { color: var(--accent); }
+  .logo-status.soon { color: var(--warn); }
+  .logo-item.logo-soon { opacity: 0.4; }
+  .logo-item.logo-soon:hover { opacity: 0.4; }
+
   @media (max-width: 960px) {
     .hero-grid, .sec-header, .lifecycle, .code-grid, .quote-grid { grid-template-columns: 1fr; gap: 32px; }
     .problem-grid, .caps, .metrics { grid-template-columns: 1fr 1fr; }
@@ -668,6 +735,7 @@
     .waitlist-form { grid-template-columns: 1fr; }
     .nav-links { display: none; }
     .foot-grid { grid-template-columns: 1fr 1fr; }
+    .logos-track { gap: 14px; }
   }
 </style>
 </head>
@@ -697,7 +765,7 @@
       <a href="#product">Product</a>
       <a href="#lifecycle">Lifecycle</a>
       <a href="#sdk">SDK</a>
-      <a href="https://github.com/oxnw/agentrail/tree/main/docs">Docs</a>
+      <a href="/docs">Docs</a>
       <a href="#cloud-waitlist">Cloud (Waitlist)</a>
     </nav>
     <div class="nav-cta">
@@ -712,7 +780,8 @@
 
 <main>
 
-<!-- ============== HERO ============== -->
+<!-- ============== HERO + FOLD ============== -->
+<div class="hero-fold">
 <section class="hero">
   <div class="wrap">
     <div class="eyebrow-row">
@@ -724,20 +793,19 @@
     <div class="hero-grid">
       <div>
         <h1 class="headline">
-          Open-source <em>infrastructure</em><br/>
-          for coding<br/>agents.
+          Coding agents<br/>
+          that <em>close tickets,</em><br/>
+          end-to-end.
         </h1>
         <p class="lede">
-          Run AgentRail on your machine<br/>with your own API keys. Give your agents<br/>
-          structured task lifecycles,<br/>CI feedback loops, and event streams —
-          <br/>without sending anything<br/>to a third party.
+          Coding agents can write the code. The hard part is everything around it: picking up the right ticket, watching CI, incorporating review feedback, and merging when it's ready. AgentRail connects your agents to GitHub, Linear, and CircleCI — and handles the full loop.
         </p>
         <div class="hero-cta">
           <a href="https://github.com/oxnw/agentrail" class="btn btn-primary">
             Star on GitHub
             <svg class="caret" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
           </a>
-          <a href="#sdk" class="btn btn-ghost">
+          <a href="/docs" class="btn btn-ghost">
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 3l-3 3.5L4 10M9 3l3 3.5L9 10"/></svg>
             Read the docs
           </a>
@@ -761,9 +829,9 @@
             <div class="rail-line"></div>
             <div class="rail-progress" id="railProgress"></div>
             <div class="rail-stations">
-              <div class="station done"><div class="node"></div><div class="label">Queue</div></div>
-              <div class="station done"><div class="node"></div><div class="label">Plan</div></div>
-              <div class="station done"><div class="node"></div><div class="label">Execute</div></div>
+              <div class="station done"><div class="node"></div><div class="label">Intake</div></div>
+              <div class="station done"><div class="node"></div><div class="label">Route</div></div>
+              <div class="station done"><div class="node"></div><div class="label">Claim</div></div>
               <div class="station active"><div class="node"></div><div class="label">Review</div></div>
               <div class="station"><div class="node"></div><div class="label">Ship</div></div>
             </div>
@@ -771,28 +839,28 @@
 
           <div class="task-list">
             <div class="task">
-              <div class="id">#A41</div>
+              <div class="id">AGEA-41</div>
               <div class="title">Migrate auth handler to v2 API<span class="repo">acme/payments</span></div>
               <div class="status review">In review</div>
-              <div class="agent"><span class="av"></span>cursor-3</div>
-            </div>
-            <div class="task">
-              <div class="id">#A40</div>
-              <div class="title">Fix flaky test in checkout suite<span class="repo">acme/web</span></div>
-              <div class="status running">Running</div>
               <div class="agent"><span class="av"></span>claude-code</div>
             </div>
             <div class="task">
-              <div class="id">#A39</div>
-              <div class="title">Add Stripe webhook for refunds<span class="repo">acme/payments</span></div>
-              <div class="status merged">Merged</div>
-              <div class="agent"><span class="av"></span>devin-prod</div>
+              <div class="id">AGEA-40</div>
+              <div class="title">Fix flaky test in checkout suite<span class="repo">acme/web</span></div>
+              <div class="status running">Running</div>
+              <div class="agent"><span class="av"></span>cursor-agent</div>
             </div>
             <div class="task">
-              <div class="id">#A38</div>
-              <div class="title">Refactor logger to OTel spans<span class="repo">acme/core</span></div>
+              <div class="id">AGEA-39</div>
+              <div class="title">Add Linear webhook for billing events<span class="repo">acme/billing</span></div>
+              <div class="status merged">Merged</div>
+              <div class="agent"><span class="av"></span>codex-prod</div>
+            </div>
+            <div class="task">
+              <div class="id">AGEA-38</div>
+              <div class="title">Refactor rate limiter to token bucket<span class="repo">acme/api</span></div>
               <div class="status queued">Queued</div>
-              <div class="agent"><span class="av"></span>internal-01</div>
+              <div class="agent"><span class="av"></span>claude-code</div>
             </div>
           </div>
         </div>
@@ -806,25 +874,29 @@
   <div class="strip-track">
     <span><span class="glyph">◆</span> open source</span>
     <span><span class="glyph">◇</span> MIT license</span>
-    <span><span class="glyph">◆</span> runs locally</span>
-    <span><span class="glyph">◇</span> bring your own keys</span>
-    <span><span class="glyph">◆</span> structured task lifecycle</span>
-    <span><span class="glyph">◇</span> CI feedback loop</span>
-    <span><span class="glyph">◆</span> event stream</span>
-    <span><span class="glyph">◇</span> TypeScript SDK</span>
-    <span><span class="glyph">◆</span> Python SDK</span>
+    <span><span class="glyph">◆</span> GitHub + Linear intake</span>
+    <span><span class="glyph">◇</span> GitHub Actions + CircleCI</span>
+    <span><span class="glyph">◆</span> rules-based routing</span>
+    <span><span class="glyph">◇</span> structured CI feedback</span>
+    <span><span class="glyph">◆</span> per-agent scoped auth</span>
+    <span><span class="glyph">◇</span> SSE event stream · cloud</span>
+    <span><span class="glyph">◆</span> TypeScript + Python SDK</span>
+    <span><span class="glyph">◇</span> runs locally · bring your own keys</span>
     <!-- duplicate for marquee -->
     <span><span class="glyph">◆</span> open source</span>
     <span><span class="glyph">◇</span> MIT license</span>
-    <span><span class="glyph">◆</span> runs locally</span>
-    <span><span class="glyph">◇</span> bring your own keys</span>
-    <span><span class="glyph">◆</span> structured task lifecycle</span>
-    <span><span class="glyph">◇</span> CI feedback loop</span>
-    <span><span class="glyph">◆</span> event stream</span>
-    <span><span class="glyph">◇</span> TypeScript SDK</span>
-    <span><span class="glyph">◆</span> Python SDK</span>
+    <span><span class="glyph">◆</span> GitHub + Linear intake</span>
+    <span><span class="glyph">◇</span> GitHub Actions + CircleCI</span>
+    <span><span class="glyph">◆</span> rules-based routing</span>
+    <span><span class="glyph">◇</span> structured CI feedback</span>
+    <span><span class="glyph">◆</span> per-agent scoped auth</span>
+    <span><span class="glyph">◇</span> SSE event stream · cloud</span>
+    <span><span class="glyph">◆</span> TypeScript + Python SDK</span>
+    <span><span class="glyph">◇</span> runs locally · bring your own keys</span>
   </div>
 </div>
+
+</div><!-- /.hero-fold -->
 
 <!-- ============== PROBLEM ============== -->
 <section class="sec problem" id="problem">
@@ -832,12 +904,12 @@
     <div class="sec-header">
       <div>
         <div class="sec-kicker"><span class="bar"></span><span class="sec-num">01 / The problem</span></div>
-        <h2 class="sec-title">Coding agents are <em>brilliant</em> at typing.<br/>Less so at shipping.</h2>
+        <h2 class="sec-title">Coding agents are <em>brilliant</em> at writing code.<br/>Less so at closing tickets.</h2>
       </div>
       <p class="sec-blurb">
-        Today's coding agents handle the easy part — writing code. The rest of the
-        software lifecycle is glued together with brittle scripts, unscoped tokens,
-        and ad-hoc prompts. AgentRail is the open-source layer that fills the gap.
+        Today's coding agents handle the easy part — writing code. The hard part is
+        everything around it: picking up the right ticket, watching CI, acting on
+        review feedback, and merging cleanly. That loop is still broken.
       </p>
     </div>
 
@@ -847,7 +919,7 @@
         <span class="glyph">PROBLEM</span>
         <div>
           <h3>No lifecycle, just a prompt and a prayer.</h3>
-          <p>Agents lose context between turns, retry on the wrong commits, and re-ask the same question because nothing tracks state.</p>
+          <p>Agents lose context between turns, retry on wrong commits, and re-ask the same questions because nothing tracks state across the issue → PR → merge loop.</p>
         </div>
       </div>
       <div class="problem-cell">
@@ -855,7 +927,7 @@
         <span class="glyph">PROBLEM</span>
         <div>
           <h3>Personal access tokens with full repo scope.</h3>
-          <p>Most agent stacks reuse the developer's GitHub PAT — meaning every run holds keys to every repository in the org.</p>
+          <p>Most agent stacks hand the developer's GitHub PAT straight to the agent — full org access, no expiry, no audit trail. One compromised run exposes everything.</p>
         </div>
       </div>
       <div class="problem-cell">
@@ -863,8 +935,47 @@
         <span class="glyph">PROBLEM</span>
         <div>
           <h3>CI is a wall, not a feedback&nbsp;loop.</h3>
-          <p>Test failures arrive as opaque logs ten minutes after the agent moved on, with no structured signal to act on.</p>
+          <p>Test failures arrive as raw logs ten minutes after the agent moved on. There's no structured signal — the agent can't reason over a wall of text.</p>
         </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== INTEGRATIONS LOGO CLOUD ============== -->
+<section class="logos-sec">
+  <div class="wrap">
+    <p class="logos-eyebrow mono">Connects to your existing stack</p>
+    <div class="logos-track">
+      <div class="logo-item">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.009-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+        <span class="logo-name">GitHub</span>
+        <span class="logo-status live"><span class="dot-live"></span>Live</span>
+      </div>
+      <div class="logo-item">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.28 16.31L7.7 20.73a10 10 0 0 0 8.56-2.93L3.28 16.31zM2.5 14.9l6.62 1.6L2.5 9.87v5.03zM2.94 8.3l12.77 6.16a9.95 9.95 0 0 0 .85-4.01c0-2.1-.65-4.05-1.76-5.66L2.94 8.3zM15.7 4.3A9.97 9.97 0 0 0 9.1 2.5c-.54 0-1.07.04-1.58.12L15.7 4.3z"/></svg>
+        <span class="logo-name">Linear</span>
+        <span class="logo-status live"><span class="dot-live"></span>Live</span>
+      </div>
+      <div class="logo-item">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 9.84a2.16 2.16 0 1 1 0 4.32 2.16 2.16 0 0 1 0-4.32zM2 12C2 6.48 6.48 2 12 2c3.69 0 6.92 1.99 8.7 4.97l-2.04 1.18A7.5 7.5 0 0 0 4.5 12a7.5 7.5 0 0 0 14.16 3.85l2.04 1.18A10 10 0 0 1 2 12z"/></svg>
+        <span class="logo-name">CircleCI</span>
+        <span class="logo-status live"><span class="dot-live"></span>Live</span>
+      </div>
+      <div class="logo-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg>
+        <span class="logo-name">GitHub Actions</span>
+        <span class="logo-status live"><span class="dot-live"></span>Live</span>
+      </div>
+      <div class="logo-item logo-soon">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.53 2.01L5.91 7.62a.93.93 0 0 0 0 1.31l2.6 2.6 5.03-5.03 5.55 5.55a.93.93 0 0 0 1.31 0l.59-.59a.93.93 0 0 0 0-1.31L12.84 2.01a.93.93 0 0 0-1.31 0zM12.47 10.52l-5.03 5.03-2.6-2.6a.93.93 0 0 0-1.31 0l-.59.59a.93.93 0 0 0 0 1.31l8.15 8.14a.93.93 0 0 0 1.31 0l5.62-5.62a.93.93 0 0 0 0-1.31l-2.6-2.6-2.95 2.95-5.55-5.55 5.55-5.55z"/></svg>
+        <span class="logo-name">Jira</span>
+        <span class="logo-status soon"><span class="dot-soon"></span>Soon</span>
+      </div>
+      <div class="logo-item logo-soon">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22.65 14.39L12 22.13 1.35 14.39a.84.84 0 0 1-.3-.94l1.22-3.78 2.44-7.51a.42.42 0 0 1 .82 0l2.44 7.51H16.03l2.44-7.51a.42.42 0 0 1 .82 0l2.44 7.51 1.22 3.78a.84.84 0 0 1-.3.94z"/></svg>
+        <span class="logo-name">GitLab</span>
+        <span class="logo-status soon"><span class="dot-soon"></span>Soon</span>
       </div>
     </div>
   </div>
@@ -879,9 +990,9 @@
         <h2 class="sec-title">Eight primitives.<br/>One <em>open-source</em> backbone.</h2>
       </div>
       <p class="sec-blurb">
-        AgentRail is the open-source middle layer between your agent and the rest
-        of software delivery. Run it locally, extend it freely, and own your data.
-        Each primitive is a narrow API with a typed SDK on top.
+        AgentRail connects your coding agents to GitHub, Linear, and your CI system.
+        Each primitive is a narrow, typed API — run it locally, own your data,
+        extend it freely.
       </p>
     </div>
 
@@ -903,13 +1014,13 @@
       <div class="cap">
         <div>
           <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-            <path d="M12 2v4M12 18v4M4 12H2M22 12h-2M5 5l3 3M16 16l3 3M5 19l3-3M16 8l3-3"/>
-            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+            <path d="M8 12l3 3 5-5"/>
           </svg>
-          <h4>Runs</h4>
-          <p>Sandboxed execution contexts with provisioned environments, timeouts, and replayable transcripts.</p>
+          <h4>Issue Intake</h4>
+          <p>GitHub Issues and Linear tickets become AgentRail tasks automatically via webhook — with routing decisions already baked in.</p>
         </div>
-        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/runs</div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/intake/github</div>
       </div>
       <div class="cap">
         <div>
@@ -919,9 +1030,9 @@
             <path d="M13 14l2 2 4-4" stroke="#c8ff3e"/>
           </svg>
           <h4>CI Feedback</h4>
-          <p>Structured test, lint, and build results streamed to the agent as typed events — not log scraping.</p>
+          <p>GitHub Actions and CircleCI results stream back as typed events with structured summaries — not raw log walls for the agent to parse.</p>
         </div>
-        <div class="endpoint"><span class="verb">GET</span>&nbsp;/v1/runs/:id/checks</div>
+        <div class="endpoint"><span class="verb">GET</span>&nbsp;/tasks/:id/ci-status</div>
       </div>
       <div class="cap">
         <div>
@@ -931,19 +1042,19 @@
             <circle cx="12" cy="15.5" r="1.2" fill="currentColor"/>
           </svg>
           <h4>Scoped Auth</h4>
-          <p>Credential policies are modeled per task — repo, branch, and label scopes are explicit so org-wide tokens can be phased out as adapters mature.</p>
+          <p>Per-agent API keys with narrow scopes — not org-wide PATs. Each agent gets only the access its tasks require, with usage tracked per operation.</p>
         </div>
-        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/credentials</div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/agent-api-keys</div>
       </div>
       <div class="cap">
         <div>
           <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M3 12h4l2-7 4 14 2-7h6"/>
           </svg>
-          <h4>Event Stream</h4>
-          <p>Server-sent events for every state change. Pipe agent activity into Slack, your IDE, or your own observability stack.</p>
+          <h4>Event Stream<span class="badge-cloud">Cloud</span></h4>
+          <p>Server-sent events for every state change — task assigned, CI failed, review requested. Agents subscribe once and react in real time, no polling required.</p>
         </div>
-        <div class="endpoint"><span class="verb">GET</span>&nbsp;/v1/events</div>
+        <div class="endpoint"><span class="verb">GET</span>&nbsp;/tasks/events</div>
       </div>
       <div class="cap">
         <div>
@@ -951,10 +1062,10 @@
             <circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/>
             <path d="M8 7l3 9M16 7l-3 9"/>
           </svg>
-          <h4>Webhooks</h4>
-          <p>Typed delivery with retries, signatures, and replay. Wire AgentRail into the rest of your delivery pipeline.</p>
+          <h4>Webhooks<span class="badge-cloud">Cloud</span></h4>
+          <p>HMAC-signed delivery with exponential backoff retries. Subscribe to task events and wire AgentRail into the rest of your delivery pipeline.</p>
         </div>
-        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/webhooks</div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/webhook-subscriptions</div>
       </div>
       <div class="cap">
         <div>
@@ -962,21 +1073,21 @@
             <path d="M4 7h16M4 12h16M4 17h10"/>
             <circle cx="19" cy="17" r="2"/>
           </svg>
-          <h4>Audit Log</h4>
-          <p>Every action taken, every token used, every file touched — append-only and exportable.</p>
+          <h4>Review Feedback</h4>
+          <p>PR review comments from GitHub come back as severity-ranked structured events — blocking vs. advisory — so the agent knows exactly what to fix.</p>
         </div>
-        <div class="endpoint"><span class="verb">GET</span>&nbsp;/v1/audit</div>
+        <div class="endpoint"><span class="verb">GET</span>&nbsp;/tasks/:id/review-feedback</div>
       </div>
       <div class="cap">
         <div>
           <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-            <path d="M21 12a9 9 0 1 1-3-6.7"/>
-            <path d="M21 4v5h-5"/>
+            <circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/>
+            <path d="M7 11.5l10-4M7 12.5l10 4"/>
           </svg>
-          <h4>Replay &amp; Rollback</h4>
-          <p>Re-run any task from any prior state with the exact same inputs. Roll back a merge with one call.</p>
+          <h4>Routing Engine</h4>
+          <p>Rules-based assignment: match incoming issues by label, project, or priority and route them to the right agent automatically.</p>
         </div>
-        <div class="endpoint"><span class="verb">POST</span>&nbsp;/v1/tasks/:id/replay</div>
+        <div class="endpoint"><span class="verb">POST</span>&nbsp;/intake/routing-rules</div>
       </div>
     </div>
   </div>
@@ -988,27 +1099,27 @@
     <div class="sec-header">
       <div>
         <div class="sec-kicker"><span class="bar"></span><span class="sec-num">03 / Task lifecycle</span></div>
-        <h2 class="sec-title">Five stations.<br/>One <em>typed</em> rail.</h2>
+        <h2 class="sec-title">Five stages.<br/>One <em>complete</em> loop.</h2>
       </div>
       <p class="sec-blurb">
-        Every task on AgentRail moves through five well-defined stages.
-        Transitions are atomic, observable, and reversible — agents can fail
-        loudly, retry safely, and never lose context mid-flight.
+        Every task moves through five well-defined stages — from the moment a
+        ticket arrives to the moment the PR merges. Transitions are atomic,
+        idempotent, and observable at every step.
       </p>
     </div>
 
     <div class="lifecycle">
       <div class="stage-list" id="stageList">
         <div class="stage-item active" data-stage="0">
-          <span class="sn">01</span><span class="sname">Queue</span>
+          <span class="sn">01</span><span class="sname">Intake</span>
           <svg class="arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
         </div>
         <div class="stage-item" data-stage="1">
-          <span class="sn">02</span><span class="sname">Plan</span>
+          <span class="sn">02</span><span class="sname">Route</span>
           <svg class="arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
         </div>
         <div class="stage-item" data-stage="2">
-          <span class="sn">03</span><span class="sname">Execute</span>
+          <span class="sn">03</span><span class="sname">Claim</span>
           <svg class="arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
         </div>
         <div class="stage-item" data-stage="3">
@@ -1023,20 +1134,21 @@
 
       <div class="stage-detail" id="stageDetail">
         <div class="sd-num">01</div>
-        <h3 id="sdTitle">Queue&nbsp;— <em>everything starts as an intent</em></h3>
+        <h3 id="sdTitle">Intake&nbsp;— <em>issues become tasks automatically</em></h3>
         <p class="sd-blurb" id="sdBlurb">
-          Tasks enter the queue from anywhere — a webhook, a Slack thread, a Linear
-          ticket, an SDK call. Each gets a stable ID, a typed payload, and a
-          deterministic priority. No work happens until the queue dispatches.
+          A GitHub Issue or Linear ticket arrives via webhook and becomes a structured
+          AgentRail task — with a stable ID, typed payload, and routing decision already
+          attached. No polling. No parsing.
         </p>
-        <pre class="sd-code" id="sdCode"><span class="c">// queue a task from anywhere</span>
-<span class="k">const</span> task <span class="k">=</span> <span class="k">await</span> <span class="f">agentrail.tasks.create</span>({
-  agent<span class="k">:</span> <span class="s">"claude-code"</span>,
-  repo<span class="k">:</span>  <span class="s">"acme/payments"</span>,
-  intent<span class="k">:</span> <span class="s">"migrate auth handler to v2 API"</span>,
-  priority<span class="k">:</span> <span class="n">"normal"</span>,
-});
-<span class="c">// → task.id = "tsk_8Hk2..."  state = "queued"</span></pre>
+        <pre class="sd-code" id="sdCode"><span class="c">// GitHub / Linear webhook → task created automatically</span>
+{
+  id<span class="k">:</span> <span class="s">"tsk_8Hk2bV"</span>,
+  identifier<span class="k">:</span> <span class="s">"AGEA-41"</span>,
+  title<span class="k">:</span> <span class="s">"Migrate auth handler to v2 API"</span>,
+  status<span class="k">:</span> <span class="s">"todo"</span>,
+  assigneeAgentId<span class="k">:</span> <span class="s">"agt_claude-code"</span>,
+  availableActions<span class="k">:</span> [<span class="s">"start"</span>],
+}</pre>
       </div>
     </div>
   </div>
@@ -1052,10 +1164,10 @@
           A <em>typed</em> SDK,<br/>not a wrapper.
         </h2>
         <p class="sec-blurb" style="margin-top: 24px;">
-          First-class TypeScript and Python clients with full schema generation,
+          First-class TypeScript and Python clients generated from the OpenAPI contract —
           streaming, retries, and idempotency baked in. Every event is a typed
           discriminated union — no <code style="font-family:var(--mono);font-size:13px;color:var(--accent);background:var(--bg-3);padding:1px 6px;border-radius:3px;">any</code> escape hatches.
-          No API key required for local runs.
+          Runs locally against your own keys with no external dependency.
         </p>
         <div style="margin-top: 32px; display: flex; gap: 24px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.04em;">
           <span>◆ TypeScript 5.4+</span>
@@ -1070,7 +1182,26 @@
           <div class="code-tab">agent.py</div>
           <div class="code-tab">schema.ts</div>
         </div>
-        <pre class="code-body"><span class="line"><span class="tk-k">import</span> <span class="tk-p">{</span> AgentRail <span class="tk-p">}</span> <span class="tk-k">from</span> <span class="tk-s">"@agentrail/sdk"</span><span class="tk-p">;</span></span><span class="line"></span><span class="line"><span class="tk-k">const</span> rail <span class="tk-p">=</span> <span class="tk-k">new</span> <span class="tk-t">AgentRail</span><span class="tk-p">({</span> token<span class="tk-p">:</span> process<span class="tk-p">.</span>env<span class="tk-p">.</span>AR_KEY <span class="tk-p">});</span></span><span class="line"></span><span class="line"><span class="tk-c">// Subscribe to typed events for a running task</span></span><span class="line"><span class="tk-k">for</span> <span class="tk-k">await</span> <span class="tk-p">(</span><span class="tk-k">const</span> event <span class="tk-k">of</span> rail<span class="tk-p">.</span><span class="tk-f">events</span><span class="tk-p">.</span><span class="tk-f">stream</span><span class="tk-p">({</span></span><span class="line">  task<span class="tk-p">:</span> <span class="tk-s">"tsk_8Hk2bV"</span><span class="tk-p">,</span></span><span class="line">  filter<span class="tk-p">:</span> <span class="tk-p">[</span><span class="tk-s">"check.failed"</span><span class="tk-p">,</span> <span class="tk-s">"review.requested"</span><span class="tk-p">],</span></span><span class="line"><span class="tk-p">}))</span> <span class="tk-p">{</span></span><span class="line">  <span class="tk-k">switch</span> <span class="tk-p">(</span>event<span class="tk-p">.</span>type<span class="tk-p">)</span> <span class="tk-p">{</span></span><span class="line">    <span class="tk-k">case</span> <span class="tk-s">"check.failed"</span><span class="tk-p">:</span></span><span class="line">      <span class="tk-k">await</span> rail<span class="tk-p">.</span>tasks<span class="tk-p">.</span><span class="tk-f">retry</span><span class="tk-p">(</span>event<span class="tk-p">.</span>taskId<span class="tk-p">,</span> <span class="tk-p">{</span></span><span class="line">        hint<span class="tk-p">:</span> event<span class="tk-p">.</span>failure<span class="tk-p">.</span>summary<span class="tk-p">,</span></span><span class="line">      <span class="tk-p">});</span></span><span class="line">      <span class="tk-k">break</span><span class="tk-p">;</span></span><span class="line">    <span class="tk-k">case</span> <span class="tk-s">"review.requested"</span><span class="tk-p">:</span></span><span class="line">      <span class="tk-k">await</span> <span class="tk-f">notifySlack</span><span class="tk-p">(</span>event<span class="tk-p">.</span>review<span class="tk-p">.</span>url<span class="tk-p">);</span></span><span class="line">      <span class="tk-k">break</span><span class="tk-p">;</span></span><span class="line">  <span class="tk-p">}</span></span><span class="line"><span class="tk-p">}</span></span></pre>
+        <pre class="code-body"><span class="line"><span class="tk-k">import</span> <span class="tk-p">{</span> AgentRailClient <span class="tk-p">}</span> <span class="tk-k">from</span> <span class="tk-s">"agentrail"</span><span class="tk-p">;</span></span>
+<span class="line"></span>
+<span class="line"><span class="tk-k">const</span> client <span class="tk-p">=</span> <span class="tk-k">new</span> <span class="tk-t">AgentRailClient</span><span class="tk-p">({</span></span>
+<span class="line">  baseUrl<span class="tk-p">:</span> <span class="tk-s">"http://127.0.0.1:3000"</span><span class="tk-p">,</span></span>
+<span class="line">  apiKey<span class="tk-p">:</span> process<span class="tk-p">.</span>env<span class="tk-p">.</span>AGENTRAIL_API_KEY<span class="tk-p">,</span></span>
+<span class="line"><span class="tk-p">});</span></span>
+<span class="line"></span>
+<span class="line"><span class="tk-c">// React to typed CI and review events (Cloud — SSE push)</span></span>
+<span class="line"><span class="tk-k">for</span> <span class="tk-k">await</span> <span class="tk-p">(</span><span class="tk-k">const</span> event <span class="tk-k">of</span> client<span class="tk-p">.</span><span class="tk-f">streamEvents</span><span class="tk-p">())</span> <span class="tk-p">{</span></span>
+<span class="line">  <span class="tk-k">switch</span> <span class="tk-p">(</span>event<span class="tk-p">.</span>type<span class="tk-p">)</span> <span class="tk-p">{</span></span>
+<span class="line">    <span class="tk-k">case</span> <span class="tk-s">"ci_status_changed"</span><span class="tk-p">:</span></span>
+<span class="line">      <span class="tk-c">// Structured summary — not raw log scraping</span></span>
+<span class="line">      <span class="tk-f">console</span><span class="tk-p">.</span><span class="tk-f">log</span><span class="tk-p">(</span>event<span class="tk-p">.</span>data<span class="tk-p">.</span>status<span class="tk-p">,</span> event<span class="tk-p">.</span>data<span class="tk-p">.</span>summary<span class="tk-p">);</span></span>
+<span class="line">      <span class="tk-k">break</span><span class="tk-p">;</span></span>
+<span class="line">    <span class="tk-k">case</span> <span class="tk-s">"review_feedback"</span><span class="tk-p">:</span></span>
+<span class="line">      <span class="tk-c">// Severity-ranked: "blocking" | "advisory"</span></span>
+<span class="line">      <span class="tk-f">console</span><span class="tk-p">.</span><span class="tk-f">log</span><span class="tk-p">(</span>event<span class="tk-p">.</span>data<span class="tk-p">.</span>severity<span class="tk-p">,</span> event<span class="tk-p">.</span>data<span class="tk-p">.</span>comments<span class="tk-p">);</span></span>
+<span class="line">      <span class="tk-k">break</span><span class="tk-p">;</span></span>
+<span class="line">  <span class="tk-p">}</span></span>
+<span class="line"><span class="tk-p">}</span></span></pre>
       </div>
     </div>
   </div>
@@ -1094,22 +1225,22 @@
     <div class="metrics">
       <div class="metric">
         <div class="num word">Today</div>
-        <p class="desc">Run the open-source package locally with your own keys and data.</p>
+        <p class="desc">GitHub, Linear, CircleCI, and GitHub Actions integrations ship in the open-source package. Install and run in minutes.</p>
         <div class="src">OSS package</div>
       </div>
       <div class="metric">
         <div class="num word">Typed</div>
-        <p class="desc">Use API primitives and SDK shapes instead of ad-hoc prompts.</p>
-        <div class="src">TypeScript + Python</div>
+        <p class="desc">Every task, event, and CI result is a typed discriminated union. Agents reason over data structures, not raw text.</p>
+        <div class="src">TypeScript + Python SDKs</div>
       </div>
       <div class="metric">
         <div class="num word">Scoped</div>
-        <p class="desc">Local runs model credentials with explicit task scope instead of normalizing org-wide token sharing.</p>
+        <p class="desc">Per-agent API keys with narrow scopes replace org-wide PATs. Each agent sees only what its tasks require.</p>
         <div class="src">OSS credential model</div>
       </div>
       <div class="metric">
         <div class="num word"><em>Waitlist</em></div>
-        <p class="desc">Hosted Cloud coordination is planned, not live. Join for managed availability updates.</p>
+        <p class="desc">Hosted Cloud — team workspaces, managed integrations, dashboards, and compliance — is on the roadmap. Join the list.</p>
         <div class="src">Cloud roadmap</div>
       </div>
     </div>
@@ -1143,13 +1274,33 @@
         <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
       </div>
       <div class="compare-row">
-        <div class="label">CI feedback loop</div>
+        <div class="label">GitHub Issues + Linear intake</div>
         <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
         <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
       </div>
       <div class="compare-row">
-        <div class="label">Event stream</div>
+        <div class="label">GitHub Actions + CircleCI feedback</div>
         <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">PR review feedback (severity-ranked)</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Rules-based routing engine</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">Per-agent scoped API keys</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
+      </div>
+      <div class="compare-row">
+        <div class="label">SSE event stream + webhooks</div>
+        <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>&mdash;</div>
         <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
       </div>
       <div class="compare-row">
@@ -1158,24 +1309,9 @@
         <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
       </div>
       <div class="compare-row">
-        <div class="label">Run locally with your keys</div>
-        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
-        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
-      </div>
-      <div class="compare-row">
-        <div class="label">GitHub / Linear / CI integration</div>
-        <div class="compare-cell self-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
-        <div class="compare-cell"><svg class="icon icon-yes" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7l3 3 7-7"/></svg>Yes</div>
-      </div>
-      <div class="compare-row">
-        <div class="label">Shared team memory</div>
+        <div class="label">Multi-agent fleet coordination</div>
         <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>&mdash;</div>
         <div class="compare-cell"><span class="badge-coming">Coming soon</span>Team workspace</div>
-      </div>
-      <div class="compare-row">
-        <div class="label">Hosted sync across agents</div>
-        <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>&mdash;</div>
-        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Managed sync</div>
       </div>
       <div class="compare-row">
         <div class="label">Run history + dashboards</div>
@@ -1183,9 +1319,9 @@
         <div class="compare-cell"><span class="badge-coming">Coming soon</span>Hosted dashboards</div>
       </div>
       <div class="compare-row">
-        <div class="label">Managed integrations</div>
+        <div class="label">Managed connectors (Jira, GitLab…)</div>
         <div class="compare-cell self-cell"><svg class="icon icon-half" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7h10"/></svg>&mdash;</div>
-        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Managed connectors</div>
+        <div class="compare-cell"><span class="badge-coming">Coming soon</span>Managed integrations</div>
       </div>
       <div class="compare-row">
         <div class="label">Audit log + compliance</div>
@@ -1223,10 +1359,10 @@
   <div class="wrap quote-grid">
     <div class="mono">07&nbsp;/&nbsp;Field notes</div>
     <div>
-      <blockquote class="quote">
-        <span class="q-mark">“</span>I had agents talking to three different APIs with two
-        different auth models and a cron job holding it together. AgentRail
-        replaced all of it with one local install and five CLI commands.<span class="q-mark">”</span>
+      <blockquote class=”quote”>
+        <span class=”q-mark”>”</span>The bottleneck isn't AI writing code. It's AI navigating
+        the systems around code — the tickets, the CI, the reviews, the merge.
+        That's the loop AgentRail closes.<span class=”q-mark”>”</span>
       </blockquote>
     </div>
     <div></div>
@@ -1238,16 +1374,16 @@
   <div class="cta-rail"></div>
   <div class="wrap">
     <h2 class="cta-title">
-      Install <em>AgentRail.</em><br/>
-      Ship with <span class="accent">agents today.</span>
+      Give your agents<br/>
+      the full <span class="accent">dev loop.</span>
     </h2>
-    <p class="cta-sub">Apache-2.0 licensed. One npm install. No account required.</p>
+    <p class="cta-sub">MIT licensed. One npm install. No account required.</p>
     <div class="cta-actions">
       <a href="https://github.com/oxnw/agentrail" class="btn btn-primary">
         View on GitHub
         <svg class="caret" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h6m0 0L6 3m3 3L6 9"/></svg>
       </a>
-      <a href="#sdk" class="btn btn-ghost">Read the docs</a>
+      <a href="/docs" class="btn btn-ghost">Read the docs</a>
     </div>
   </div>
 </section>
@@ -1271,7 +1407,7 @@
           <span class="brand-name">AgentRail</span>
         </div>
         <p style="color: var(--ink-3); font-size: 13px; max-width: 280px;">
-          Open-source infrastructure for coding agents.
+          The API that connects coding agents to GitHub, Linear, and CI — closing the full loop from ticket to merge.
         </p>
       </div>
       <div class="foot-col">
@@ -1280,7 +1416,7 @@
       </div>
       <div class="foot-col">
         <h5>Developers</h5>
-        <a href="https://github.com/oxnw/agentrail/tree/main/docs">Docs</a><a href="https://github.com/oxnw/agentrail/blob/main/docs/api/task-lifecycle.openapi.yaml">API reference</a><a href="https://github.com/oxnw/agentrail/tree/main/examples">Examples</a><a href="https://github.com/oxnw/agentrail/releases">Changelog</a>
+        <a href="/docs">Docs</a><a href="https://github.com/oxnw/agentrail/blob/main/docs/api/task-lifecycle.openapi.yaml">API reference</a><a href="https://github.com/oxnw/agentrail/tree/main/examples">Examples</a><a href="https://github.com/oxnw/agentrail/releases">Changelog</a>
       </div>
       <div class="foot-col">
         <h5>Community</h5>
@@ -1340,64 +1476,68 @@
   // ============== Lifecycle stage switcher ==============
   const STAGES = [
     {
-      title: 'Queue&nbsp;— <em>everything starts as an intent</em>',
-      blurb: `Tasks enter the queue from anywhere — a webhook, a Slack thread, a Linear ticket, an SDK call. Each gets a stable ID, a typed payload, and a deterministic priority. No work happens until the queue dispatches.`,
-      code: `<span class="c">// queue a task from anywhere</span>
-<span class="k">const</span> task <span class="k">=</span> <span class="k">await</span> <span class="f">agentrail.tasks.create</span>({
-  agent<span class="k">:</span> <span class="s">"claude-code"</span>,
-  repo<span class="k">:</span>  <span class="s">"acme/payments"</span>,
-  intent<span class="k">:</span> <span class="s">"migrate auth handler to v2 API"</span>,
-  priority<span class="k">:</span> <span class="n">"normal"</span>,
+      title: 'Intake&nbsp;— <em>issues become tasks automatically</em>',
+      blurb: `A GitHub Issue or Linear ticket arrives via webhook and becomes a structured AgentRail task — with a stable ID, typed payload, and routing decision already attached. No polling. No parsing.`,
+      code: `<span class="c">// GitHub / Linear webhook → task created automatically</span>
+{
+  id<span class="k">:</span> <span class="s">"tsk_8Hk2bV"</span>,
+  identifier<span class="k">:</span> <span class="s">"AGEA-41"</span>,
+  title<span class="k">:</span> <span class="s">"Migrate auth handler to v2 API"</span>,
+  status<span class="k">:</span> <span class="s">"todo"</span>,
+  assigneeAgentId<span class="k">:</span> <span class="s">"agt_claude-code"</span>,
+  availableActions<span class="k">:</span> [<span class="s">"start"</span>],
+}`
+    },
+    {
+      title: 'Route&nbsp;— <em>the right task to the right agent</em>',
+      blurb: `Routing rules match incoming issues by label, project key, priority, or provider — and assign them to the right agent automatically. Configure via API or CLI, no YAML required.`,
+      code: `<span class="c">// Route Linear backend issues to claude-code</span>
+<span class="k">await</span> <span class="f">agentrail.routingRules.create</span>({
+  conditions<span class="k">:</span> {
+    provider<span class="k">:</span> <span class="s">"linear"</span>,
+    labels<span class="k">:</span> [<span class="s">"backend"</span>],
+    priority<span class="k">:</span> <span class="s">"high"</span>,
+  },
+  target<span class="k">:</span> { agentId<span class="k">:</span> <span class="s">"agt_claude-code"</span> },
 });
-<span class="c">// → task.id = "tsk_8Hk2..."  state = "queued"</span>`
+<span class="c">// → AGEA-41 auto-assigned to claude-code</span>`
     },
     {
-      title: 'Plan&nbsp;— <em>the agent commits to a path</em>',
-      blurb: `Before any code is written, the agent emits a structured plan: files it will touch, tests it will run, side-effects it expects. Plans are reviewable, diff-able, and can be auto-rejected against policy rules.`,
-      code: `<span class="c">// inspect &amp; gate the plan</span>
-<span class="k">const</span> plan <span class="k">=</span> <span class="k">await</span> <span class="f">rail.tasks.plan</span>(task.id);
+      title: 'Claim&nbsp;— <em>the agent picks it up and starts</em>',
+      blurb: `Agents poll for assigned work — or subscribe to push events via SSE on Cloud. Every task exposes availableActions — so the agent always knows exactly what to do next.`,
+      code: `<span class="c">// Agent polls for assigned work</span>
+<span class="k">const</span> tasks <span class="k">=</span> <span class="k">await</span> <span class="f">client.getMyTasks</span>({ status<span class="k">:</span> <span class="s">"todo"</span> });
 
-<span class="k">if</span> (plan.touches.<span class="f">includes</span>(<span class="s">"infra/"</span>)) {
-  <span class="k">await</span> <span class="f">rail.tasks.requestApproval</span>(task.id, {
-    reviewer<span class="k">:</span> <span class="s">"@platform-team"</span>,
-  });
-}`
+<span class="k">await</span> <span class="f">client.startTask</span>(tasks[<span class="n">0</span>].id, {
+  idempotencyKey<span class="k">:</span> <span class="s">"start-AGEA-41"</span>,
+});
+<span class="c">// → status = "in_progress"</span>
+<span class="c">// → availableActions = ["submit", "block"]</span>`
     },
     {
-      title: 'Execute&nbsp;— <em>sandboxed, observable, retriable</em>',
-      blurb: `Each run gets an isolated environment with scoped credentials, a writable workspace, and a typed transcript. Sandboxes are reproducible — replay any step from any prior state.`,
-      code: `<span class="c">// stream the agent's actions live</span>
-<span class="k">for await</span> (<span class="k">const</span> step <span class="k">of</span> <span class="f">rail.runs.stream</span>(task.id)) {
-  <span class="k">if</span> (step.type <span class="k">===</span> <span class="s">"file.write"</span>) {
-    <span class="f">log</span>(<span class="s">"✎"</span>, step.path, step.diff.added <span class="k">+</span> <span class="s">"+"</span>);
+      title: 'Review&nbsp;— <em>CI and code review as typed events</em>',
+      blurb: `GitHub Actions and CircleCI results come back as discriminated-union events with structured summaries. PR review comments come back severity-ranked — blocking vs. advisory. Push delivery via SSE available on Cloud.`,
+      code: `<span class="c">// CI + review signals as typed events (SSE on Cloud)</span>
+<span class="k">for await</span> (<span class="k">const</span> event <span class="k">of</span> <span class="f">client.streamEvents</span>()) {
+  <span class="k">if</span> (event.type <span class="k">===</span> <span class="s">"ci_status_changed"</span>) {
+    <span class="c">// Structured summary — not raw logs</span>
+    <span class="f">console.log</span>(event.data.status, event.data.summary);
   }
-  <span class="k">if</span> (step.type <span class="k">===</span> <span class="s">"shell.exec"</span>) {
-    <span class="f">log</span>(<span class="s">"$"</span>, step.cmd);
-  }
-}`
-    },
-    {
-      title: 'Review&nbsp;— <em>CI as a typed feedback loop</em>',
-      blurb: `Test, lint, and build results stream back to the agent as discriminated-union events with structured failure summaries. The agent reasons over data, not log scraping.`,
-      code: `<span class="c">// react to typed CI feedback</span>
-<span class="k">for await</span> (<span class="k">const</span> ev <span class="k">of</span> <span class="f">rail.events.stream</span>({ task: task.id })) {
-  <span class="k">if</span> (ev.type <span class="k">===</span> <span class="s">"check.failed"</span>) {
-    <span class="k">await</span> <span class="f">rail.tasks.retry</span>(task.id, {
-      hint<span class="k">:</span> ev.failure.summary,
-      maxAttempts<span class="k">:</span> <span class="n">3</span>,
-    });
+  <span class="k">if</span> (event.type <span class="k">===</span> <span class="s">"review_feedback"</span>) {
+    <span class="f">console.log</span>(event.data.severity); <span class="c">// "blocking"</span>
   }
 }`
     },
     {
-      title: 'Ship&nbsp;— <em>merge, deploy, or roll back</em>',
-      blurb: `Once review passes, AgentRail merges via your protected-branch policy, posts a deploy event to your pipeline, and stays attached for the post-deploy window. Roll back any task with a single call.`,
-      code: `<span class="c">// merge with policy + post-deploy guard</span>
-<span class="k">await</span> <span class="f">rail.tasks.ship</span>(task.id, {
-  strategy<span class="k">:</span> <span class="s">"squash"</span>,
-  watchFor<span class="k">:</span> [<span class="s">"deploy.failed"</span>, <span class="s">"sentry.spike"</span>],
-  rollback<span class="k">:</span> <span class="s">"automatic"</span>,
-});</span>`
+      title: 'Ship&nbsp;— <em>merge when it\'s ready</em>',
+      blurb: `Once CI passes and review approves, the agent ships in one call. AgentRail merges via your branch protection policy and closes the upstream Linear or GitHub issue automatically.`,
+      code: `<span class="c">// Agent ships when CI passes + review approves</span>
+<span class="k">await</span> <span class="f">client.shipTask</span>(task.id, {
+  idempotencyKey<span class="k">:</span> <span class="s">"ship-AGEA-41"</span>,
+});
+<span class="c">// → status = "done"</span>
+<span class="c">// → GitHub PR merged</span>
+<span class="c">// → Linear issue closed</span>`
     },
   ];
 
