@@ -20,7 +20,6 @@ function makePayload(overrides = {}) {
     capabilityTags: ["api-design"],
     ownershipTags: ["control-plane"],
     repoAllowlist: ["oxnw/agentrail"],
-    providerIdentityMappings: [{ provider: "github" as const, subject: "cto-github" }],
     maxConcurrentTasks: 5,
     sourceRef: "AGEA-99",
     changeReason: "seed",

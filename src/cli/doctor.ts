@@ -1,6 +1,15 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  configPathForHome,
+  currentAgentEnvPathForHome,
+  operatorEnvPathForHome,
+  primaryRepoFromConfig,
+  readSetupConfigFromHome,
+  resolveAgentRailHome,
+} from "./agentrail-home.ts";
+
 interface Writer {
   write(chunk: string | Uint8Array): boolean;
 }
@@ -14,21 +23,25 @@ export interface DoctorFlags {
   setupApiKey?: string;
   configPath?: string;
   envFile?: string;
+  skipRoutingCheck?: boolean;
 }
 
 export interface RunDoctorOptions {
   cwd: string;
   stdout: Writer;
   stderr: Writer;
+  silent?: boolean;
 }
 
 interface SetupConfigLike {
   server?: {
     baseUrl?: string;
   };
-  targetRepo?: {
-    allowlist?: string[];
-  };
+  repos?: Array<{
+    path: string;
+    slug: string;
+    defaultBranch: string;
+  }>;
 }
 
 interface DoctorCheck {
@@ -130,6 +143,9 @@ export function parseDoctorArgs(argv: string[]): DoctorFlags {
       case "--env-file":
         flags.envFile = nextValue(argv, ++index, arg);
         break;
+      case "--skip-routing-check":
+        flags.skipRoutingCheck = true;
+        break;
       default:
         throw new Error(`Unknown flag "${arg}".`);
     }
@@ -140,7 +156,7 @@ export function parseDoctorArgs(argv: string[]): DoctorFlags {
 
 export async function runDoctor(
   argv: string[],
-  { cwd, stdout, stderr }: RunDoctorOptions,
+  { cwd, stdout, stderr, silent = false }: RunDoctorOptions,
 ): Promise<number> {
   const flags = parseDoctorArgs(argv);
 
@@ -148,7 +164,7 @@ export async function runDoctor(
     stdout.write(
       [
         "Usage:",
-        "  agentrail doctor [--base-url <url>] [--api-key <key>] [--agent-id <id>] [--repo <owner/repo>] [--setup-api-key <key>]",
+        "  agentrail doctor [--base-url <url>] [--api-key <key>] [--agent-id <id>] [--repo <owner/repo>] [--setup-api-key <key>] [--env-file <path>] [--skip-routing-check]",
         "",
       ].join("\n"),
     );
@@ -161,9 +177,11 @@ export async function runDoctor(
     return 1;
   }
 
-  const report = await runDoctorChecks(inputs);
-  const writer = report.ok ? stdout : stderr;
-  writer.write(renderDoctorReport(report));
+  const report = await runDoctorChecks(inputs, flags);
+  if (!silent) {
+    const writer = report.ok ? stdout : stderr;
+    writer.write(renderDoctorReport(report));
+  }
   return report.ok ? 0 : 1;
 }
 
@@ -174,9 +192,13 @@ async function resolveDoctorInputs({
   cwd: string;
   flags: DoctorFlags;
 }): Promise<DoctorInputs | { error: string }> {
-  const config = await readSetupConfig(path.resolve(cwd, flags.configPath ?? ".agentrail/config.json"));
+  const homePath = resolveAgentRailHome({ cwd, explicitHome: null });
+  const config = flags.configPath
+    ? await readSetupConfig(path.resolve(cwd, flags.configPath))
+    : await readSetupConfigFromHome(homePath);
   const envFileValues = await readAgentEnvFiles({
     cwd,
+    homePath,
     explicitEnvFile: flags.envFile,
   });
 
@@ -195,14 +217,13 @@ async function resolveDoctorInputs({
       ?? process.env.AGENTRAIL_REPO_ALLOWLIST
       ?? envFileValues.AGENTRAIL_REPO_ALLOWLIST,
   );
-  const configAllowlist = Array.isArray(config?.targetRepo?.allowlist)
-    ? config.targetRepo.allowlist.filter((value): value is string => typeof value === "string" && value.length > 0)
-    : [];
-  const expectedRepo = repoAllowlist[0] ?? configAllowlist[0] ?? null;
+  const expectedRepo = repoAllowlist[0] ?? primaryRepoFromConfig(config)?.slug ?? null;
   const setupApiKey = flags.setupApiKey
+    ?? process.env.AGENTRAIL_OPERATOR_KEY
     ?? process.env.AGENTRAIL_SETUP_API_KEY
     ?? process.env.AGENTRAIL_OPERATOR_API_KEY
     ?? process.env.AGENTRAIL_ADMIN_API_KEY
+    ?? envFileValues.AGENTRAIL_OPERATOR_KEY
     ?? envFileValues.AGENTRAIL_SETUP_API_KEY
     ?? null;
 
@@ -212,7 +233,7 @@ async function resolveDoctorInputs({
   if (!agentId) missing.push("AGENTRAIL_AGENT_ID");
   if (missing.length > 0) {
     return {
-      error: `agentrail doctor requires ${missing.join(", ")} in flags, process env, or .agentrail/agent.env.`,
+      error: `agentrail doctor requires ${missing.join(", ")} in flags, process env, or ~/.agentrail/agent.env.`,
     };
   }
 
@@ -225,7 +246,7 @@ async function resolveDoctorInputs({
   };
 }
 
-async function runDoctorChecks(inputs: DoctorInputs): Promise<{
+async function runDoctorChecks(inputs: DoctorInputs, flags: DoctorFlags): Promise<{
   ok: boolean;
   checks: DoctorCheck[];
   baseUrl: string;
@@ -291,34 +312,40 @@ async function runDoctorChecks(inputs: DoctorInputs): Promise<{
       ? `${inputs.agentId} is active and repo-eligible for ${inputs.expectedRepo ?? "the configured setup repo"}.`
       : inputs.setupApiKey
         ? `Agent profile ${inputs.agentId} is missing, inactive, or does not allow ${inputs.expectedRepo ?? "the configured repo"}.`
-        : "Set AGENTRAIL_SETUP_API_KEY to verify routing profile state.",
+        : "Set AGENTRAIL_OPERATOR_KEY to verify routing profile state.",
   });
   failedCheckId = failedCheckId ?? (profileOk ? null : "profile");
 
-  const routing = inputs.setupApiKey
-    ? await getJson<RuleSetResponse>({
-      baseUrl: inputs.baseUrl,
-      route: "/operator/routing/rule-sets/current",
-      bearerToken: inputs.setupApiKey,
-    })
-    : null;
-  const routingOk = Boolean(
-    inputs.setupApiKey
-    && routing?.status === 200
-    && routing.json?.data?.rules?.some((rule) => ruleMatchesDoctorExpectation({
-      rule,
-      agentId: inputs.agentId,
-      expectedRepo: inputs.expectedRepo,
-    })),
-  );
+  const routing = flags.skipRoutingCheck
+    ? null
+    : inputs.setupApiKey
+      ? await getJson<RuleSetResponse>({
+        baseUrl: inputs.baseUrl,
+        route: "/operator/routing/rule-sets/current",
+        bearerToken: inputs.setupApiKey,
+      })
+      : null;
+  const routingOk = flags.skipRoutingCheck
+    ? true
+    : Boolean(
+      inputs.setupApiKey
+      && routing?.status === 200
+      && routing.json?.data?.rules?.some((rule) => ruleMatchesDoctorExpectation({
+        rule,
+        agentId: inputs.agentId,
+        expectedRepo: inputs.expectedRepo,
+      })),
+    );
   checks.push({
     id: "routing",
     ok: routingOk,
-    summary: routingOk
+    summary: flags.skipRoutingCheck
+      ? "Routing check skipped by flag."
+      : routingOk
       ? `Current routing rule set includes an enabled rule targeting ${inputs.agentId}${inputs.expectedRepo ? ` for ${inputs.expectedRepo}` : ""}.`
       : inputs.setupApiKey
         ? `Current routing rule set does not target ${inputs.agentId}${inputs.expectedRepo ? ` for ${inputs.expectedRepo}` : ""}.`
-        : "Set AGENTRAIL_SETUP_API_KEY to verify routing rule state.",
+        : "Set AGENTRAIL_OPERATOR_KEY to verify routing rule state.",
   });
   failedCheckId = failedCheckId ?? (routingOk ? null : "routing");
 
@@ -503,7 +530,7 @@ function renderRepairCommand(inputs: DoctorInputs): string {
   const idempotencyAgentToken = encodeURIComponent(inputs.agentId);
   return [
     `curl -s -X POST ${shellSingleQuote(`${inputs.baseUrl}/operator/setup/verification-task`)} \\`,
-    '  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \\',
+    '  -H "authorization: Bearer $AGENTRAIL_OPERATOR_KEY" \\',
     '  -H "content-type: application/json" \\',
     `  -H ${shellSingleQuote(`idempotency-key: setup-verification:${idempotencyAgentToken}:v1`)} \\`,
     `  -d ${shellSingleQuote(payload)}`,
@@ -571,29 +598,33 @@ async function readSetupConfig(configPath: string): Promise<SetupConfigLike | nu
 
 async function readAgentEnvFiles({
   cwd,
+  homePath,
   explicitEnvFile,
 }: {
   cwd: string;
+  homePath: string;
   explicitEnvFile?: string;
 }): Promise<Record<string, string>> {
   const candidates = [
     explicitEnvFile ? path.resolve(cwd, explicitEnvFile) : null,
-    path.join(cwd, ".agentrail", "agent.env"),
+    currentAgentEnvPathForHome(homePath),
+    operatorEnvPathForHome(homePath),
   ].filter((value): value is string => Boolean(value));
 
+  const merged: Record<string, string> = {};
   for (const filePath of candidates) {
     try {
       const content = await readFile(filePath, "utf8");
       const parsed = parseEnvFile(content);
       if (Object.keys(parsed).length > 0) {
-        return parsed;
+        Object.assign(merged, parsed);
       }
     } catch {
       continue;
     }
   }
 
-  return {};
+  return merged;
 }
 
 function parseEnvFile(content: string): Record<string, string> {

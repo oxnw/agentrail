@@ -3,6 +3,8 @@ AGENTS.md
 .env
 .env.*
 !.env.example
+.agentrail/
+.agentrail.legacy/
 .idea/
 .vscode/
 browser-artifacts/
@@ -33,6 +35,8 @@ docs/release-sdk-publishing.md
 docs/mvp-completeness-scorecard.md
 docs/security/release-hygiene.md
 docs/testing/
+docs/architecture/cli-api-inventory.md
+docs/architecture/setup-flow.md
 
 # Internal release-prep artifacts
 verify-browser.mjs

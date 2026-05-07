@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 const DEFAULT_RATE_LIMIT = {
   windowSeconds: 60,
   maxRequests: 600
 } as const;
 
-const SUPPORTED_SCOPES = new Set([
+export const SUPPORTED_SCOPES = new Set([
   "auth:admin",
   "ci:read",
   "events:read",
@@ -156,6 +158,13 @@ export interface CreateKeyPayload {
 }
 
 export interface RotateKeyPayload {
+  agent?: {
+    displayName?: string;
+    role?: string;
+    externalIdentities?: Array<{ provider: string; subject: string }>;
+  };
+  scopes?: string[];
+  rateLimit?: { windowSeconds?: number; maxRequests?: number };
   expiresAt?: string | null;
 }
 
@@ -197,11 +206,13 @@ export interface IdempotencyEntry {
 
 export interface AgentAuthStoreOptions {
   now?: () => Date;
+  storagePath?: string;
 }
 
 export interface UsageResponseData {
   keyId: string;
   agent: AgentIdentity;
+  scopes: string[];
   status: string;
   lastUsedAt: string | null;
   totals: { accepted: number; denied: number };
@@ -237,6 +248,10 @@ function stableStringify(value: unknown): string {
 
 function createId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(10).toString("hex")}`;
+}
+
+function clone<T>(value: T): T {
+  return structuredClone(value);
 }
 
 function generateApiKey(): { apiKey: string; keyHash: string } {
@@ -342,6 +357,40 @@ function normalizeAgent(agent: unknown): AgentIdentity {
   };
 }
 
+function normalizeAgentPatch(agent: unknown, existingAgent: AgentIdentity): AgentIdentity {
+  if (agent === undefined) {
+    return clone(existingAgent);
+  }
+  if (!agent || typeof agent !== "object" || Array.isArray(agent)) {
+    throw new ValidationError("`agent` must be an object when provided.");
+  }
+  const patch = agent as Record<string, unknown>;
+  const normalized = clone(existingAgent);
+
+  if (patch.displayName !== undefined) {
+    if (typeof patch.displayName !== "string" || patch.displayName.length === 0) {
+      throw new ValidationError("`agent.displayName` must be a non-empty string.");
+    }
+    normalized.displayName = patch.displayName;
+  }
+  if (patch.role !== undefined) {
+    if (typeof patch.role !== "string" || patch.role.length === 0) {
+      throw new ValidationError("`agent.role` must be a non-empty string.");
+    }
+    normalized.role = patch.role;
+  }
+  if (patch.externalIdentities !== undefined) {
+    normalized.externalIdentities = normalizeAgent({
+      id: existingAgent.id,
+      displayName: normalized.displayName,
+      role: normalized.role,
+      externalIdentities: patch.externalIdentities,
+    }).externalIdentities;
+  }
+
+  return normalized;
+}
+
 interface NormalizedCreate {
   agent: AgentIdentity;
   scopes: string[];
@@ -363,6 +412,9 @@ function normalizeCreateKeyRequest(payload: CreateKeyPayload | unknown): Normali
 }
 
 interface NormalizedRotate {
+  agent: AgentIdentity;
+  scopes: string[];
+  rateLimit: RateLimit;
   expiresAt: string | null;
 }
 
@@ -372,8 +424,55 @@ function normalizeRotateKeyRequest(payload: RotateKeyPayload | unknown, existing
   }
   const p = payload as Record<string, unknown>;
   return {
+    agent: normalizeAgentPatch(p.agent, existingKey.agent),
+    scopes: p.scopes === undefined ? [...existingKey.scopes] : normalizeScopes(p.scopes),
+    rateLimit: p.rateLimit === undefined ? { ...existingKey.rateLimit } : normalizeRateLimit(p.rateLimit),
     expiresAt: normalizeExpiresAt(p.expiresAt ?? existingKey.expiresAt)
   };
+}
+
+interface PersistedState {
+  keys?: ApiKeyRecord[];
+  idempotencyEntries?: Array<[string, IdempotencyEntry]>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function warnInvalidState(storagePath: string | undefined, reason: string): void {
+  if (!storagePath) return;
+  process.emitWarning(`Ignoring invalid AgentAuthStore state at ${storagePath}: ${reason}`);
+}
+
+function loadState(storagePath: string | undefined): PersistedState {
+  if (!storagePath || !existsSync(storagePath)) return {};
+  try {
+    const content = readFileSync(storagePath, "utf8");
+    if (!content.trim()) return {};
+    const parsed = JSON.parse(content) as unknown;
+    if (isRecord(parsed) && (parsed.keys === undefined || Array.isArray(parsed.keys)) && (parsed.idempotencyEntries === undefined || Array.isArray(parsed.idempotencyEntries))) {
+      return parsed as PersistedState;
+    }
+    warnInvalidState(storagePath, "state object shape is unsupported");
+    return {};
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      warnInvalidState(storagePath, error.message);
+      return {};
+    }
+    throw error;
+  }
+}
+
+function persistState(storagePath: string | undefined, keys: ApiKeyRecord[], idempotencyEntries: Map<string, IdempotencyEntry>): void {
+  if (!storagePath) return;
+  mkdirSync(path.dirname(storagePath), { recursive: true });
+  const state: PersistedState = {
+    keys,
+    idempotencyEntries: [...idempotencyEntries.entries()],
+  };
+  writeFileSync(storagePath, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
 function createUsageState(): UsageState {
@@ -448,15 +547,18 @@ function toKeyResponse(key: ApiKeyRecord, apiKey: string): ApiKeyResponse {
 
 export class AgentAuthStore {
   private now: () => Date;
+  private storagePath: string | undefined;
   private keys: ApiKeyRecord[];
   private keyHashes: Map<string, ApiKeyRecord>;
   private idempotencyEntries: Map<string, IdempotencyEntry>;
 
-  constructor({ now = () => new Date() }: AgentAuthStoreOptions = {}) {
+  constructor({ now = () => new Date(), storagePath }: AgentAuthStoreOptions = {}) {
     this.now = now;
-    this.keys = [];
-    this.keyHashes = new Map();
-    this.idempotencyEntries = new Map();
+    this.storagePath = storagePath;
+    const state = loadState(storagePath);
+    this.keys = Array.isArray(state.keys) ? state.keys.map(key => clone(key)) : [];
+    this.keyHashes = new Map(this.keys.map(key => [key.keyHash, key]));
+    this.idempotencyEntries = new Map(Array.isArray(state.idempotencyEntries) ? state.idempotencyEntries : []);
   }
 
   canBootstrap(): boolean {
@@ -494,24 +596,25 @@ export class AgentAuthStore {
     this.keyHashes.set(keyHash, key);
     const response = toKeyResponse(key, apiKey);
     this.idempotencyEntries.set(entryKey, { requestFingerprint, response });
+    this.persist();
     return structuredClone(response);
   }
 
   rotateKey(keyId: string, payload: RotateKeyPayload, idempotencyKey: string): ApiKeyResponse {
     validateIdempotencyKey(idempotencyKey);
-    const existingKey = this.findKey(keyId);
-    if (existingKey.status !== "active") {
-      throw new ConflictError("Agent API key is not active.", { keyId, currentStatus: existingKey.status });
-    }
-    const normalizedRequest = normalizeRotateKeyRequest(payload, existingKey);
-    const requestFingerprint = stableStringify(normalizedRequest);
     const entryKey = `rotate:${keyId}:${idempotencyKey}`;
     const existingEntry = this.idempotencyEntries.get(entryKey);
+    const existingKey = this.findKey(keyId);
+    const normalizedRequest = normalizeRotateKeyRequest(payload, existingKey);
+    const requestFingerprint = stableStringify(normalizedRequest);
     if (existingEntry) {
       if (existingEntry.requestFingerprint !== requestFingerprint) {
         throw new ConflictError("Idempotency-Key has already been used with a different request payload.", { idempotencyKey });
       }
       return structuredClone(existingEntry.response);
+    }
+    if (existingKey.status !== "active") {
+      throw new ConflictError("Agent API key is not active.", { keyId, currentStatus: existingKey.status });
     }
     const { apiKey, keyHash } = generateApiKey();
     const rotatedAt = this.now().toISOString();
@@ -521,9 +624,9 @@ export class AgentAuthStore {
     const rotatedKey: ApiKeyRecord = {
       id: createId("akey"),
       keyHash,
-      agent: structuredClone(existingKey.agent),
-      scopes: [...existingKey.scopes],
-      rateLimit: { ...existingKey.rateLimit },
+      agent: normalizedRequest.agent,
+      scopes: normalizedRequest.scopes,
+      rateLimit: normalizedRequest.rateLimit,
       status: "active",
       createdAt: rotatedAt,
       expiresAt: normalizedRequest.expiresAt,
@@ -536,6 +639,7 @@ export class AgentAuthStore {
     this.keyHashes.set(keyHash, rotatedKey);
     const response = toKeyResponse(rotatedKey, apiKey);
     this.idempotencyEntries.set(entryKey, { requestFingerprint, response });
+    this.persist();
     return structuredClone(response);
   }
 
@@ -550,14 +654,23 @@ export class AgentAuthStore {
     }
     if (key.expiresAt && new Date(key.expiresAt).getTime() <= this.now().getTime()) {
       recordDenied(key, "expired_key");
+      this.persist();
       throw new UnauthorizedError("Agent API key has expired.", { keyId: key.id });
     }
     if (!scopeAllows(key.scopes, requiredScope)) {
       recordDenied(key, "insufficient_scope");
+      this.persist();
       throw new ScopeDeniedError(requiredScope, key.scopes);
     }
-    applyRateLimit(key, this.now());
-    recordAccepted(key, requiredScope, operation, this.now());
+    const now = this.now();
+    try {
+      applyRateLimit(key, now);
+    } catch (error) {
+      this.persist();
+      throw error;
+    }
+    recordAccepted(key, requiredScope, operation, now);
+    this.persist();
     return { keyId: key.id, agent: structuredClone(key.agent), scopes: [...key.scopes] };
   }
 
@@ -568,6 +681,7 @@ export class AgentAuthStore {
       data: {
         keyId: key.id,
         agent: structuredClone(key.agent),
+        scopes: [...key.scopes],
         status: key.status,
         lastUsedAt: key.lastUsedAt,
         totals: { ...key.usage.totals },
@@ -585,6 +699,10 @@ export class AgentAuthStore {
       },
       availableActions
     };
+  }
+
+  private persist(): void {
+    persistState(this.storagePath, this.keys, this.idempotencyEntries);
   }
 
   findKey(keyId: string): ApiKeyRecord {

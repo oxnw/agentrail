@@ -1,48 +1,51 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const args = parseArgs(process.argv.slice(2));
-const mode = args.mode ?? "live";
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-if (mode !== "live") {
-  throw new Error(`Unsupported mode "${mode}". Use --mode live.`);
-}
+if (isMain) {
+  const args = parseArgs(process.argv.slice(2));
+  const mode = args.mode ?? "live";
 
-const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-sandbox-smoke-"));
+  if (mode !== "live") {
+    throw new Error(`Unsupported mode "${mode}". Use --mode live.`);
+  }
 
-try {
-  const report = await runLiveSmoke(tempDir);
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-} finally {
-  await rm(tempDir, { recursive: true, force: true });
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-sandbox-smoke-"));
+
+  try {
+    const report = await runLiveSmoke(tempDir);
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function runLiveSmoke(tempDir) {
-  const required = [
-    "GITHUB_TOKEN",
-    "AGENTRAIL_SANDBOX_ISSUE_NUMBER",
-    "AGENTRAIL_SANDBOX_HEAD_BRANCH",
-    "AGENTRAIL_SANDBOX_PULL_NUMBER",
-  ];
-  const missing = required.filter((name) => !process.env[name]);
+  const {
+    owner,
+    repo,
+    issueNumber,
+    pullNumber,
+    headBranch,
+    baseBranch,
+    allowShip,
+    expectedHeadSha
+  } = await resolveLiveConfig({ env: process.env });
+
+  const missing = ["GITHUB_TOKEN"].filter((name) => !process.env[name]);
   if (missing.length > 0) {
     throw new Error(`Live sandbox smoke is missing required env vars: ${missing.join(", ")}`);
   }
 
-  const owner = process.env.AGENTRAIL_SANDBOX_OWNER ?? "oxnw";
-  const repo = process.env.AGENTRAIL_SANDBOX_REPO ?? "agentrail-e2e-sandbox";
-  const issueNumber = numberEnv("AGENTRAIL_SANDBOX_ISSUE_NUMBER");
-  const pullNumber = numberEnv("AGENTRAIL_SANDBOX_PULL_NUMBER");
   const taskId = process.env.AGENTRAIL_SANDBOX_TASK_ID ?? "tsk_LIVESANDBOX01";
   const agentId = process.env.AGENTRAIL_SANDBOX_AGENT_ID ?? "agt_sandbox_agent";
-  const headBranch = process.env.AGENTRAIL_SANDBOX_HEAD_BRANCH;
-  const baseBranch = process.env.AGENTRAIL_SANDBOX_BASE_BRANCH ?? "main";
   const port = resolvePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const taskStorePath = path.join(tempDir, "tasks.json");
@@ -54,8 +57,8 @@ async function runLiveSmoke(tempDir) {
     pullNumber,
     branch: headBranch,
     baseBranch,
-    ...(process.env.AGENTRAIL_SANDBOX_HEAD_SHA
-      ? { headSha: process.env.AGENTRAIL_SANDBOX_HEAD_SHA }
+    ...(expectedHeadSha
+      ? { headSha: expectedHeadSha }
       : {}),
   };
 
@@ -113,15 +116,15 @@ async function runLiveSmoke(tempDir) {
     steps.push("read_review_feedback");
 
     let ship = null;
-    if (process.env.AGENTRAIL_SANDBOX_ALLOW_SHIP === "true") {
+    if (allowShip) {
       ship = await client.shipTask(
         taskId,
         {
           mode: "merge_only",
           targetEnvironment: "staging",
           prNumber: pullNumber,
-          ...(process.env.AGENTRAIL_SANDBOX_EXPECTED_HEAD_SHA
-            ? { expectedHeadSha: process.env.AGENTRAIL_SANDBOX_EXPECTED_HEAD_SHA }
+          ...(expectedHeadSha
+            ? { expectedHeadSha }
             : {}),
         },
         `sandbox-live-ship-${issueNumber}`,
@@ -185,6 +188,63 @@ function buildLiveTaskRecord({ taskId, agentId, owner, repo, issueNumber }) {
     createdAt: now,
     version: 1,
     source: { provider: "github", owner, repo, issueNumber },
+  };
+}
+
+export async function resolveLiveConfig({ env = process.env } = {}) {
+  const scenarioConfig = await resolveScenarioEnv({ env });
+  const owner = env.AGENTRAIL_SANDBOX_OWNER ?? scenarioConfig.owner ?? "oxnw";
+  const repo = env.AGENTRAIL_SANDBOX_REPO ?? scenarioConfig.repo ?? "agentrail-e2e-sandbox";
+  const baseBranch = env.AGENTRAIL_SANDBOX_BASE_BRANCH ?? scenarioConfig.baseBranch ?? "main";
+  const issueNumber = integerFromUnknown(env.AGENTRAIL_SANDBOX_ISSUE_NUMBER ?? scenarioConfig.issueNumber, "AGENTRAIL_SANDBOX_ISSUE_NUMBER");
+  const pullNumber = integerFromUnknown(env.AGENTRAIL_SANDBOX_PULL_NUMBER ?? scenarioConfig.pullNumber, "AGENTRAIL_SANDBOX_PULL_NUMBER");
+  const headBranch = env.AGENTRAIL_SANDBOX_HEAD_BRANCH ?? scenarioConfig.headBranch;
+  if (!headBranch) {
+    throw new Error("Live sandbox smoke is missing required env vars: AGENTRAIL_SANDBOX_HEAD_BRANCH");
+  }
+  const allowShip = parseBooleanEnv(env.AGENTRAIL_SANDBOX_ALLOW_SHIP, scenarioConfig.allowShip ?? false);
+  const expectedHeadSha = env.AGENTRAIL_SANDBOX_EXPECTED_HEAD_SHA ?? scenarioConfig.expectedHeadSha ?? null;
+
+  return { owner, repo, issueNumber, pullNumber, headBranch, baseBranch, allowShip, expectedHeadSha };
+}
+
+export async function resolveScenarioEnv({ env = process.env } = {}) {
+  const scenarioId = env.AGENTRAIL_SANDBOX_SCENARIO_ID;
+  if (!scenarioId) {
+    return {};
+  }
+
+  const manifestPath = env.AGENTRAIL_SANDBOX_MANIFEST_PATH;
+  if (!manifestPath) {
+    throw new Error("AGENTRAIL_SANDBOX_MANIFEST_PATH is required when AGENTRAIL_SANDBOX_SCENARIO_ID is set.");
+  }
+
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const scenario = manifest?.scenarios?.find?.((candidate) => candidate.id === scenarioId);
+  if (!scenario) {
+    throw new Error(`Sandbox scenario ${scenarioId} was not found in ${manifestPath}.`);
+  }
+
+  const live = scenario.live ?? {};
+  if (scenario.kind === "scratch") {
+    return {
+      owner: live.owner,
+      repo: live.repo,
+      baseBranch: scenario.baseBranch,
+      allowShip: scenario.allowShip,
+      expectedHeadSha: live.expectedHeadSha ?? null
+    };
+  }
+
+  return {
+    owner: live.owner,
+    repo: live.repo,
+    issueNumber: live.issueNumber,
+    pullNumber: live.pullNumber,
+    headBranch: live.headBranch,
+    baseBranch: scenario.baseBranch,
+    allowShip: scenario.allowShip,
+    expectedHeadSha: live.expectedHeadSha ?? null
   };
 }
 
@@ -304,6 +364,24 @@ function numberEnv(name) {
     throw new Error(`${name} must be an integer.`);
   }
   return value;
+}
+
+function integerFromUnknown(value, label) {
+  const normalized = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isInteger(normalized)) {
+    throw new Error(`Live sandbox smoke is missing required env vars: ${label}`);
+  }
+  return normalized;
+}
+
+function parseBooleanEnv(value, fallback) {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return fallback;
 }
 
 function assertEqual(actual, expected, label) {

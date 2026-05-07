@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createServer } from "./app.ts";
@@ -13,6 +15,7 @@ const port = Number.parseInt(process.env.AGENTRAIL_PORT || process.env.PORT || "
 const publicBaseUrl =
   process.env.AGENTRAIL_PUBLIC_BASE_URL || `http://${host}:${port}`;
 const storagePath = process.env.AGENTRAIL_EVENT_STORE_PATH || undefined;
+const authStorePath = process.env.AGENTRAIL_AGENT_AUTH_STORE_PATH || undefined;
 
 const fallbackMode = (process.env.AGENTRAIL_FALLBACK_MODE ?? "false").toLowerCase() === "true";
 
@@ -44,7 +47,7 @@ export function startServer() {
       publicBaseUrl
     });
 
-    const authStore = new AgentAuthStore({ now });
+    const authStore = new AgentAuthStore({ now, storagePath: authStorePath });
 
     server = createServer({
       store: eventStore,
@@ -75,24 +78,32 @@ export function startServer() {
 
 function loadDotEnv() {
   try {
-    const content = readFileIfExists(".env");
-    if (!content) return;
-
-    for (const rawLine of content.split("\n")) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("#")) continue;
-
-      const separatorIndex = line.indexOf("=");
-      if (separatorIndex === -1) continue;
-
-      const key = line.slice(0, separatorIndex).trim();
-      const value = line.slice(separatorIndex + 1).trim();
-      if (key && process.env[key] === undefined) {
-        process.env[key] = stripQuotes(value);
-      }
-    }
+    const agentrailHome = process.env.AGENTRAIL_HOME || path.join(os.homedir(), ".agentrail");
+    loadEnvFile(path.join(agentrailHome, "server.env"));
+    loadEnvFile(path.join(agentrailHome, "provider.env"));
+    loadEnvFile(".agentrail/server.env");
+    loadEnvFile(".env");
   } catch {
     // .env loading is convenience-only; environment variables still work.
+  }
+}
+
+function loadEnvFile(filePath: string) {
+  const content = readFileIfExists(filePath);
+  if (!content) return;
+
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex === -1) continue;
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line.slice(separatorIndex + 1).trim();
+    if (key && process.env[key] === undefined) {
+      process.env[key] = stripQuotes(value);
+    }
   }
 }
 

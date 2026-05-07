@@ -12,7 +12,6 @@ export interface RoutingTarget {
 export interface RoutingConditions {
   repositories?: string[];
   labelsAny?: string[];
-  providerAssigneesAny?: string[];
   projects?: string[];
   issueTypes?: string[];
   priorities?: string[];
@@ -77,7 +76,6 @@ const ROUTING_TARGET_TYPES = new Set(["agent", "triage_queue"]);
 const ROUTING_CONDITION_FIELDS = [
   "repositories",
   "labelsAny",
-  "providerAssigneesAny",
   "projects",
   "issueTypes",
   "priorities",

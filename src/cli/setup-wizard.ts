@@ -1,6 +1,5 @@
 import {
   buildInitCommand,
-  buildSetupPlan,
   createSetupConfig,
   type CreateSetupConfigOptions,
   type DetectedRepoContext,
@@ -9,7 +8,8 @@ import {
   type SetupConfig,
   type SetupMode,
 } from "./setup-config.ts";
-import type { PromptSession } from "./prompt.ts";
+import { resolveAgentRailHome } from "./agentrail-home.ts";
+import { PromptCancelledError, type PromptSession } from "./prompt.ts";
 
 export interface InitFlags {
   help?: boolean;
@@ -51,23 +51,27 @@ export async function runSetupWizard({
   writeLine,
 }: RunSetupWizardOptions): Promise<SetupWizardResult> {
   const detectedAllowlist = detectedRepo.remoteSlug ?? detectedRepo.repoPath;
+  const detectedRepoUrl = toGitHubUrl(detectedAllowlist);
   const detectedBaseUrl = flags.baseUrl ?? "http://127.0.0.1:3000";
-  await prompt.message(`Local git repo detected: ${detectedRepo.repoPath}`);
+  const homePath = resolveAgentRailHome({ cwd, explicitHome: null });
+  await prompt.message(`AgentRail home: ${homePath}`);
+  await prompt.message(`Detected repo you can connect: ${detectedRepo.repoPath}`);
+  if (detectedRepo.remoteSlug) {
+    await prompt.message(`GitHub repo detected: ${detectedRepoUrl} • default branch: ${detectedRepo.defaultBranch}`);
+  }
   const repoPath = flags.repo ?? resolvePromptValue(
     await prompt.input({
-      message: "Target GitHub repo",
+      message: "Which local repo should AgentRail connect first?",
       defaultValue: detectedRepo.repoPath,
     }),
     detectedRepo.repoPath,
   );
   const repoAllowlist = flags.repoAllowlist ?? [
-    resolvePromptValue(
-      await prompt.input({
-        message: "GitHub remote repository:",
-        defaultValue: detectedAllowlist,
-      }),
-      detectedAllowlist,
-    ),
+    await promptForRepoAllowlist({
+      prompt,
+      detectedRepoUrl,
+      fallback: detectedAllowlist,
+    }),
   ];
   const defaultBranch = flags.defaultBranch ?? resolvePromptValue(
     await prompt.input({
@@ -78,7 +82,7 @@ export async function runSetupWizard({
   );
   const baseUrl = flags.baseUrl ?? resolvePromptValue(
     await prompt.input({
-      message: "Local API base URL",
+      message: "Local API base URL for AgentRail",
       defaultValue: detectedBaseUrl,
     }),
     detectedBaseUrl,
@@ -105,13 +109,19 @@ export async function runSetupWizard({
     defaultBranch,
     markdownExport,
   });
-  const planLines = buildSetupPlan(config);
-
   await prompt.note({
-    title: "Before you confirm",
+    title: "Review setup plan",
     body: [
-      "What setup wizard will do:",
-      ...planLines.map((line) => `- ${line}`),
+      "AgentRail is ready to create its local home and connect your first repo.",
+      "",
+      "Setup choices:",
+      `- AgentRail home: ${homePath}`,
+      `- First connected local repo: ${repoPath}`,
+      `- GitHub repo: ${toGitHubUrl(repoAllowlist[0] ?? detectedAllowlist)}`,
+      `- Default branch: ${defaultBranch}`,
+      `- Local API base URL: ${baseUrl}`,
+      `- Provider mode: ${providerMode}`,
+      `- Markdown export: ${markdownExport ? "enabled" : "disabled"}`,
       "",
       "Nothing is written until you answer yes.",
     ].join("\n"),
@@ -120,7 +130,7 @@ export async function runSetupWizard({
   const action = flags.printOnly
     ? "print_only"
     : await prompt.confirm({
-      message: "Complete setup and write local files?",
+      message: "Write setup files and continue?",
       defaultValue: true,
     })
       ? "write"
@@ -128,13 +138,16 @@ export async function runSetupWizard({
 
   if (action === "write") {
     await prompt.note({
-      title: "Next steps",
+      title: "What happens next",
       body: [
-        "Add tokens to .agentrail/agent.env file in this repository",
-        "Template at .agentrail/agent.env.example",
-        "Setup is only ready after agent registration and a passing `agentrail doctor` run.",
+        "Init creates `~/.agentrail/operator.env` so local admin commands can run without a manual curl step.",
+        "Real agent env files are written later under `~/.agentrail/agents/<agentId>.env`.",
+        "If no local agents exist yet, the wizard will offer first-agent creation before you leave setup.",
+        "You can rerun `agentrail init` safely to refresh your global AgentRail home.",
         "",
-        "Happy building!",
+        "Use `agentrail provider connect github` or `agentrail provider connect circleci` when you are ready to connect live providers.",
+        "When the API is running, `agentrail doctor` is the final verification step.",
+        "Use `./agentrail server start` whenever you want the local API running outside the wizard.",
       ].join("\n"),
     });
   }
@@ -143,12 +156,70 @@ export async function runSetupWizard({
     action,
     config,
     command: buildInitCommand(config),
-    planLines,
+    planLines: [],
   };
 }
 
 function resolvePromptValue(value: string, fallback: string): string {
   return value.trim() || fallback;
+}
+
+async function promptForRepoAllowlist({
+  prompt,
+  detectedRepoUrl,
+  fallback,
+}: {
+  prompt: PromptSession;
+  detectedRepoUrl: string;
+  fallback: string;
+}): Promise<string> {
+  while (true) {
+    const rawValue = resolvePromptValue(
+      await prompt.input({
+        message: "Primary GitHub repo URL",
+        defaultValue: detectedRepoUrl,
+      }),
+      fallback,
+    );
+
+    try {
+      return normalizeRepoInput(rawValue);
+    } catch (error) {
+      if (error instanceof PromptCancelledError) {
+        throw error;
+      }
+      await prompt.message(error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+function normalizeRepoInput(value: string): string {
+  const trimmed = value.trim();
+  if (/^https?:\/\//iu.test(trimmed)) {
+    const url = new URL(trimmed);
+    if (url.hostname !== "github.com") {
+      throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
+    }
+    const parts = url.pathname.replace(/^\/+|\/+$/gu, "").split("/");
+    if (parts.length < 2 || !parts[0] || !parts[1]) {
+      throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
+    }
+    return `${parts[0]}/${parts[1]}`;
+  }
+  if (/^[^/\s]+\/[^/\s]+$/u.test(trimmed)) {
+    return trimmed;
+  }
+  throw new Error("Use a GitHub repo URL like https://github.com/owner/repo.");
+}
+
+function toGitHubUrl(value: string): string {
+  if (/^https?:\/\//iu.test(value)) {
+    return value;
+  }
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(value)) {
+    return `https://github.com/${value}`;
+  }
+  return value;
 }
 
 export function acceptedDefaultsFromFlags(flags: InitFlags): boolean {

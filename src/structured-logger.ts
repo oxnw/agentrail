@@ -2,9 +2,6 @@
  * Structured observability logger for AgentRail dogfood operations.
  */
 
-const format = (process.env.AGENTRAIL_LOG_FORMAT ?? "text").toLowerCase();
-const enabled = (process.env.AGENTRAIL_OBSERVABILITY ?? "true") !== "false";
-
 export interface LogFields {
   operation?: string;
   agentId?: string;
@@ -29,12 +26,12 @@ export function createOperationTimer(fields: LogFields): Timer {
 
   return {
     finish(extra: LogFields = {}) {
-      if (!enabled) return;
+      if (!isEnabled()) return;
       const durationMs = Date.now() - start;
       emit({ level: "info", ...fields, ...extra, durationMs });
     },
     error(extra: LogFields = {}) {
-      if (!enabled) return;
+      if (!isEnabled()) return;
       const durationMs = Date.now() - start;
       emit({ level: "error", ...fields, ...extra, durationMs });
     }
@@ -42,7 +39,7 @@ export function createOperationTimer(fields: LogFields): Timer {
 }
 
 export function logEvent(fields: LogFields): void {
-  if (!enabled) return;
+  if (!isEnabled()) return;
   emit({ level: "info", ...fields });
 }
 
@@ -56,7 +53,7 @@ function emit(entry: Partial<LogRecord>): void {
   const ts = new Date().toISOString();
   const record: LogRecord = { ts, level: "info", ...entry };
 
-  if (format === "json") {
+  if (getFormat() === "json") {
     process.stderr.write(JSON.stringify(record) + "\n");
     return;
   }
@@ -77,4 +74,12 @@ function emit(entry: Partial<LogRecord>): void {
   ].filter(Boolean);
 
   process.stderr.write(parts.join(" ") + "\n");
+}
+
+function isEnabled(): boolean {
+  return (process.env.AGENTRAIL_OBSERVABILITY ?? "true") !== "false";
+}
+
+function getFormat(): string {
+  return (process.env.AGENTRAIL_LOG_FORMAT ?? "text").toLowerCase();
 }

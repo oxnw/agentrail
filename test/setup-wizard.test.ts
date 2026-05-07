@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { Writable } from "node:stream";
 import test from "node:test";
 
 import { runCli } from "../src/cli/index.ts";
@@ -18,16 +22,21 @@ const detectedRepo: DetectedRepoContext = {
 };
 
 test("runCli starts the guided setup wizard in TTY mode by default", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
-  const writes: Array<{ repoRoot: string; config: SetupConfig }> = [];
+  const writes: Array<{ homePath?: string; repoRoot?: string; config: SetupConfig }> = [];
   const prompt = new ScriptedPromptSession([
     { kind: "input", value: "/tmp/custom-agentrail" },
-    { kind: "input", value: "custom/agentrail" },
+    { kind: "input", value: "https://github.com/custom/agentrail" },
     { kind: "input", value: "develop" },
     { kind: "input", value: "http://127.0.0.1:4100" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: false },
   ]);
 
   const exitCode = await runCli(["init"], {
@@ -38,32 +47,47 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
     stderr,
     detectRepoContext: async () => detectedRepo,
     createPrompt: () => prompt,
-    writeSetupFiles: async ({ repoRoot, config }) => {
-      writes.push({ repoRoot, config });
+    writeSetupFiles: async ({ homePath, repoRoot, config }) => {
+      writes.push({ homePath, repoRoot, config });
       return {
         writtenPaths: [
-          `${repoRoot}/.agentrail/config.json`,
-          `${repoRoot}/.agentrail/agent.env.example`,
-          `${repoRoot}/.agentrail/README.md`,
+          `${homePath}/config.json`,
+          `${homePath}/agent.env.example`,
+          `${homePath}/server.env`,
+          `${homePath}/README.md`,
         ],
       };
     },
   });
 
+  if (previousHome === undefined) {
+    delete process.env.AGENTRAIL_HOME;
+  } else {
+    process.env.AGENTRAIL_HOME = previousHome;
+  }
+  await rm(agentrailHome, { recursive: true, force: true });
+
   assert.equal(exitCode, 0);
-  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "confirm", "confirm"]);
-  assert.equal(prompt.notes[0]?.title, "Before you confirm");
-  assert.match(prompt.notes[0]?.body ?? "", /What setup wizard will do:/);
-  assert.match(prompt.notes[0]?.body ?? "", /Write \.agentrail\/config\.json/);
-  assert.match(prompt.notes[0]?.body ?? "", /Prepare local API config for http:\/\/127\.0\.0\.1:4100/);
-  assert.equal(prompt.messages[0], "Local git repo detected: /tmp/agentrail");
-  assert.equal(prompt.notes[1]?.title, "Next steps");
-  assert.match(prompt.notes[1]?.body ?? "", /Add tokens to \.agentrail\/agent\.env file in this repository/);
-  assert.match(prompt.notes[1]?.body ?? "", /Template at \.agentrail\/agent\.env\.example/);
-  assert.match(prompt.notes[1]?.body ?? "", /passing `agentrail doctor` run/i);
-  assert.match(prompt.notes[1]?.body ?? "", /Happy building!/);
-  assert.equal(prompt.interactions[0]?.message, "Target GitHub repo");
-  assert.equal(prompt.interactions[1]?.message, "GitHub remote repository:");
+  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "confirm", "confirm", "confirm", "confirm"]);
+  assert.equal(prompt.notes[0]?.title, "Review setup plan");
+  assert.match(prompt.notes[0]?.body ?? "", /AgentRail is ready to create its local home and connect your first repo\./);
+  assert.match(prompt.notes[0]?.body ?? "", /Setup choices:/);
+  assert.match(prompt.notes[0]?.body ?? "", /GitHub repo: https:\/\/github\.com\/custom\/agentrail/);
+  assert.match(prompt.notes[0]?.body ?? "", /Provider mode: real/);
+  assert.match(prompt.notes[0]?.body ?? "", /Local API base URL: http:\/\/127\.0\.0\.1:4100/);
+  assert.equal(prompt.messages[0], `AgentRail home: ${agentrailHome}`);
+  assert.equal(prompt.messages[1], "Detected repo you can connect: /tmp/agentrail");
+  assert.equal(prompt.messages[2], "GitHub repo detected: https://github.com/oxnw/agentrail • default branch: main");
+  assert.equal(prompt.notes[1]?.title, "What happens next");
+  assert.match(prompt.notes[1]?.body ?? "", /`~\/\.agentrail\/operator\.env`/);
+  assert.match(prompt.notes[1]?.body ?? "", /`~\/\.agentrail\/agents\/<agentId>\.env`/);
+  assert.match(prompt.notes[1]?.body ?? "", /offer first-agent creation/i);
+  assert.match(prompt.notes[1]?.body ?? "", /agentrail provider connect github/i);
+  assert.match(prompt.notes[1]?.body ?? "", /final verification step/i);
+  assert.match(prompt.notes[1]?.body ?? "", /refresh your global AgentRail home/i);
+  assert.match(prompt.notes[1]?.body ?? "", /`\.\/agentrail server start`/);
+  assert.equal(prompt.interactions[0]?.message, "Which local repo should AgentRail connect first?");
+  assert.equal(prompt.interactions[1]?.message, "Primary GitHub repo URL");
   assert.doesNotMatch(stdout.toString(), /AgentRail local setup/i);
   assert.doesNotMatch(stdout.toString(), /Local git repo detected:/);
   assert.doesNotMatch(stdout.toString(), /Review setup plan/i);
@@ -73,19 +97,22 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.doesNotMatch(stdout.toString(), /Equivalent command:/);
   assert.equal(stderr.toString(), "");
   assert.equal(writes.length, 1);
-  assert.equal(writes[0]?.repoRoot, "/tmp/custom-agentrail");
-  assert.deepEqual(writes[0]?.config.targetRepo.allowlist, ["custom/agentrail"]);
-  assert.equal(writes[0]?.config.targetRepo.defaultBranch, "develop");
+  assert.equal(writes[0]?.homePath, agentrailHome);
+  assert.deepEqual(writes[0]?.config.repos.map((repo) => repo.slug), ["custom/agentrail"]);
+  assert.equal(writes[0]?.config.repos[0]?.defaultBranch, "develop");
   assert.equal(writes[0]?.config.server.baseUrl, "http://127.0.0.1:4100");
   assert.equal(writes[0]?.config.providers.github.mode, "real");
 });
 
 test("runCli lets the user cancel instead of writing files at the final confirmation step", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const prompt = new ScriptedPromptSession([
     { kind: "input", value: detectedRepo.repoPath },
-    { kind: "input", value: detectedRepo.remoteSlug ?? detectedRepo.repoPath },
+    { kind: "input", value: `https://github.com/${detectedRepo.remoteSlug}` },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
     { kind: "confirm", value: false },
@@ -107,19 +134,72 @@ test("runCli lets the user cancel instead of writing files at the final confirma
     },
   });
 
+  if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+  else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(agentrailHome, { recursive: true, force: true });
+
   assert.equal(exitCode, 1);
   assert.equal(didWrite, false);
   assert.match(stderr.toString(), /Setup cancelled\./);
   assert.equal(prompt.notes.length, 1);
-  assert.equal(prompt.notes[0]?.title, "Before you confirm");
+  assert.equal(prompt.notes[0]?.title, "Review setup plan");
 });
 
-test("runCli print-only mode does not show file-write next steps", async () => {
+test("runCli re-prompts when the GitHub repo input is not a valid owner/repo or GitHub URL", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const prompt = new ScriptedPromptSession([
     { kind: "input", value: detectedRepo.repoPath },
-    { kind: "input", value: detectedRepo.remoteSlug ?? detectedRepo.repoPath },
+    { kind: "input", value: "random text" },
+    { kind: "input", value: "custom/agentrail" },
+    { kind: "input", value: detectedRepo.defaultBranch },
+    { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: false },
+  ]);
+
+  const exitCode = await runCli(["init"], {
+    cwd: detectedRepo.repoPath,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stdout,
+    stderr,
+    detectRepoContext: async () => detectedRepo,
+    createPrompt: () => prompt,
+    writeSetupFiles: async () => {
+      throw new Error("writeSetupFiles should not run after cancellation");
+    },
+  });
+
+  if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+  else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(agentrailHome, { recursive: true, force: true });
+
+  assert.equal(exitCode, 1);
+  assert.deepEqual(
+    prompt.interactions.filter((interaction) => interaction.message === "Primary GitHub repo URL").length,
+    2,
+  );
+  assert.deepEqual(prompt.messages, [
+    `AgentRail home: ${agentrailHome}`,
+    "Detected repo you can connect: /tmp/agentrail",
+    "GitHub repo detected: https://github.com/oxnw/agentrail • default branch: main",
+    "Use a GitHub repo URL like https://github.com/owner/repo.",
+  ]);
+});
+
+test("runCli print-only mode does not show file-write next steps", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const prompt = new ScriptedPromptSession([
+    { kind: "input", value: detectedRepo.repoPath },
+    { kind: "input", value: `https://github.com/${detectedRepo.remoteSlug}` },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
     { kind: "confirm", value: false },
@@ -140,17 +220,24 @@ test("runCli print-only mode does not show file-write next steps", async () => {
     },
   });
 
+  if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+  else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(agentrailHome, { recursive: true, force: true });
+
   assert.equal(exitCode, 0);
   assert.equal(didWrite, false);
   assert.match(stdout.toString(), /Equivalent command:/);
   assert.match(stdout.toString(), /No files were written\./);
   assert.equal(stderr.toString(), "");
   assert.equal(prompt.notes.length, 1);
-  assert.equal(prompt.notes[0]?.title, "Before you confirm");
+  assert.equal(prompt.notes[0]?.title, "Review setup plan");
   assert.doesNotMatch(prompt.notes.map((note) => note.title).join("\n"), /Next steps/);
 });
 
 test("runCli requires explicit flags in non-TTY mode", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
 
@@ -163,6 +250,10 @@ test("runCli requires explicit flags in non-TTY mode", async () => {
     detectRepoContext: async () => detectedRepo,
   });
 
+  if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+  else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(agentrailHome, { recursive: true, force: true });
+
   assert.equal(exitCode, 1);
   assert.equal(stdout.toString(), "");
   assert.match(stderr.toString(), /non-tty setup requires explicit flags or --yes/i);
@@ -171,6 +262,9 @@ test("runCli requires explicit flags in non-TTY mode", async () => {
 });
 
 test("runCli rejects unsafe --yes defaults", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
 
@@ -186,16 +280,23 @@ test("runCli rejects unsafe --yes defaults", async () => {
     }),
   });
 
+  if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+  else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(agentrailHome, { recursive: true, force: true });
+
   assert.equal(exitCode, 1);
   assert.equal(stdout.toString(), "");
   assert.match(stderr.toString(), /--yes is only allowed for safe local defaults/i);
-  assert.match(stderr.toString(), /gitignore/i);
+  assert.match(stderr.toString(), /live GitHub or CircleCI providers/i);
 });
 
 test("runCli validates --yes safe defaults against the target repo", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
-  const writes: Array<{ repoRoot: string; config: SetupConfig }> = [];
+  const writes: Array<{ homePath?: string; repoRoot?: string; config: SetupConfig }> = [];
   const detectedByPath = new Map<string, DetectedRepoContext>([
     [
       "/tmp/invocation",
@@ -237,36 +338,41 @@ test("runCli validates --yes safe defaults against the target repo", async () =>
       if (!detected) throw new Error(`Unexpected repo detection path: ${cwd}`);
       return detected;
     },
-    writeSetupFiles: async ({ repoRoot, config }) => {
-      writes.push({ repoRoot, config });
+    writeSetupFiles: async ({ homePath, repoRoot, config }) => {
+      writes.push({ homePath, repoRoot, config });
       return {
         writtenPaths: [
-          `${repoRoot}/.agentrail/config.json`,
-          `${repoRoot}/.agentrail/agent.env.example`,
-          `${repoRoot}/.agentrail/README.md`,
+          `${homePath}/config.json`,
+          `${homePath}/agent.env.example`,
+          `${homePath}/server.env`,
+          `${homePath}/README.md`,
         ],
       };
     },
   });
 
+  if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+  else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(agentrailHome, { recursive: true, force: true });
+
   assert.equal(exitCode, 0);
   assert.equal(stderr.toString(), "");
   assert.equal(writes.length, 1);
-  assert.equal(writes[0]?.repoRoot, "/tmp/safe-target");
+  assert.equal(writes[0]?.homePath, agentrailHome);
 });
 
 test("createPromptSession wraps Clack with AgentRail branding", async () => {
   const calls: Array<[string, unknown]> = [];
+  const output = createMemoryWriter();
   const session = createPromptSession({
-    output: createMemoryWriter() as never,
+    output,
     clack: {
-      intro(title) {
-        calls.push(["intro", title]);
-      },
+      intro() {},
       select: async (options) => {
         calls.push(["select", options]);
         return "real" as any;
       },
+      multiselect: async () => [],
       confirm: async () => true,
       text: async () => "",
       note() {},
@@ -281,25 +387,29 @@ test("createPromptSession wraps Clack with AgentRail branding", async () => {
     message: "GitHub remote",
     defaultValue: "real",
     choices: [
-      { value: "real", label: "Real GitHub and CircleCI" },
+      { value: "real", label: "Real GitHub and CircleCI", hint: "Use live providers", disabled: false },
     ],
   });
 
   assert.equal(value, "real");
-  assert.equal(calls[0][0], "intro");
-  assert.match(String(calls[0][1]), /Local setup wizard/i);
-  assert.match(String(calls[0][1]), /\n/);
-  assert.equal(calls[1][0], "select");
-  assert.equal((calls[1][1] as { message: string }).message, "GitHub remote");
+  assert.match(output.toString(), /Local Setup/i);
+  assert.match(output.toString(), /Set up local files, access, and your first agent\./i);
+  assert.match(output.toString(), /█|╔|╗/);
+  assert.equal(calls[0][0], "select");
+  assert.equal((calls[0][1] as { message: string }).message, "GitHub remote");
+  assert.deepEqual((calls[0][1] as { options: unknown[] }).options, [
+    { value: "real", label: "Real GitHub and CircleCI", hint: "Use live providers", disabled: false },
+  ]);
 });
 
 test("createPromptSession forwards explanatory notes to Clack", async () => {
   const calls: Array<[string, unknown, unknown]> = [];
   const session = createPromptSession({
-    output: createMemoryWriter() as never,
+    output: createMemoryWriter(),
     clack: {
       intro() {},
       select: async () => "real" as any,
+      multiselect: async () => [],
       confirm: async () => true,
       text: async () => "",
       note(message, title) {
@@ -323,10 +433,11 @@ test("createPromptSession forwards explanatory notes to Clack", async () => {
 test("createPromptSession forwards inline messages to Clack log.message", async () => {
   const calls: Array<[string, unknown, unknown]> = [];
   const session = createPromptSession({
-    output: createMemoryWriter() as never,
+    output: createMemoryWriter(),
     clack: {
       intro() {},
       select: async () => "real" as any,
+      multiselect: async () => [],
       confirm: async () => true,
       text: async () => "",
       note() {},
@@ -351,10 +462,11 @@ test("createPromptSession forwards inline messages to Clack log.message", async 
 test("createPromptSession passes detected defaults through the Clack text placeholder path", async () => {
   const calls: Array<[string, unknown]> = [];
   const session = createPromptSession({
-    output: createMemoryWriter() as never,
+    output: createMemoryWriter(),
     clack: {
       intro() {},
       select: async () => "real" as any,
+      multiselect: async () => [],
       confirm: async () => true,
       text: async (options) => {
         calls.push(["text", options]);
@@ -383,10 +495,11 @@ test("createPromptSession converts Clack cancellation into a typed error", async
   const cancelToken = Symbol("cancel");
   const calls: Array<[string, unknown]> = [];
   const session = createPromptSession({
-    output: createMemoryWriter() as never,
+    output: createMemoryWriter(),
     clack: {
       intro() {},
       select: async () => cancelToken,
+      multiselect: async () => [],
       confirm: async () => true,
       text: async () => "",
       note() {},
@@ -411,28 +524,67 @@ test("createPromptSession converts Clack cancellation into a typed error", async
   assert.match(String(calls[0][1]), /cancelled/i);
 });
 
-function createMemoryWriter() {
-  const chunks: string[] = [];
+test("createPromptSession forwards multiselect choices and defaults to Clack", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const session = createPromptSession({
+    output: createMemoryWriter(),
+    clack: {
+      intro() {},
+      select: async () => "real" as any,
+      multiselect: async (options) => {
+        calls.push(["multiselect", options]);
+        return ["tasks:read", "tasks:write"] as any;
+      },
+      confirm: async () => true,
+      text: async () => "",
+      note() {},
+      cancel() {},
+      isCancel() {
+        return false;
+      },
+    } satisfies ClackPromptsLike,
+  });
 
-  return {
-    write(value: string | Uint8Array) {
-      chunks.push(typeof value === "string" ? value : Buffer.from(value).toString("utf8"));
-      return true;
+  const values = await session.multiselect({
+    message: "Choose scopes",
+    defaultValues: ["tasks:read"],
+    required: false,
+    choices: [
+      { value: "tasks:read", label: "tasks:read", hint: "Read tasks" },
+      { value: "tasks:write", label: "tasks:write", hint: "Write tasks" },
+    ],
+  });
+
+  assert.deepEqual(values, ["tasks:read", "tasks:write"]);
+  assert.equal(calls[0][0], "multiselect");
+  assert.equal((calls[0][1] as { message: string }).message, "Choose scopes");
+  assert.deepEqual((calls[0][1] as { initialValues?: string[] }).initialValues, ["tasks:read"]);
+});
+
+function createMemoryWriter(): Writable & { toString(): string } {
+  const chunks: string[] = [];
+  const writer = new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      callback();
     },
+  });
+
+  return Object.assign(writer, {
     toString() {
       return chunks.join("");
     },
-  };
+  });
 }
 
 class ScriptedPromptSession implements PromptSession {
   readonly calls: string[] = [];
-  readonly interactions: Array<{ kind: "select" | "confirm" | "input"; message?: string; defaultValue?: string | boolean }> = [];
+  readonly interactions: Array<{ kind: "select" | "multiselect" | "confirm" | "input"; message?: string; defaultValue?: string | boolean | string[] }> = [];
   readonly notes: Array<{ title?: string; body: string }> = [];
   readonly messages: string[] = [];
-  readonly #steps: Array<{ kind: "select" | "confirm" | "input"; value: string | boolean }>;
+  readonly #steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input"; value: string | boolean | string[] }>;
 
-  constructor(steps: Array<{ kind: "select" | "confirm" | "input"; value: string | boolean }>) {
+  constructor(steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input"; value: string | boolean | string[] }>) {
     this.#steps = [...steps];
   }
 
@@ -451,6 +603,26 @@ class ScriptedPromptSession implements PromptSession {
     const values = options.choices.map((choice) => choice.value);
     assert.ok(values.includes(String(step.value)));
     return String(step.value);
+  }
+
+  async multiselect(options: {
+    message: string;
+    choices: PromptChoice[];
+    defaultValues?: string[];
+    required?: boolean;
+  }): Promise<string[]> {
+    this.calls.push("multiselect");
+    this.interactions.push({
+      kind: "multiselect",
+      message: options.message,
+      defaultValue: options.defaultValues,
+    });
+    const step = this.#next("multiselect");
+    assert.ok(Array.isArray(step.value), `multiselect step value must be an array, got ${typeof step.value}`);
+    const values = step.value.map(String);
+    const allowed = new Set(options.choices.map((choice) => choice.value));
+    values.forEach((value) => assert.ok(allowed.has(value)));
+    return values;
   }
 
   async confirm(options: { message?: string; defaultValue?: boolean } = {}): Promise<boolean> {
@@ -487,7 +659,7 @@ class ScriptedPromptSession implements PromptSession {
     assert.equal(this.#steps.length, 0);
   }
 
-  #next(kind: "select" | "confirm" | "input") {
+  #next(kind: "select" | "multiselect" | "confirm" | "input") {
     const step = this.#steps.shift();
     assert.ok(step, `expected scripted ${kind} step`);
     assert.equal(step.kind, kind);
