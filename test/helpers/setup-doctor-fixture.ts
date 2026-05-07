@@ -11,6 +11,7 @@ import { RoutingControlPlane } from "../../src/intake-routing-control-plane.ts";
 import { RoutingRuleStore } from "../../src/routing-rule-store.ts";
 import { TaskEventStore } from "../../src/task-event-store.ts";
 import { createSetupConfig, type DetectedRepoContext } from "../../src/cli/setup-config.ts";
+import { currentAgentEnvPathForHome, operatorEnvPathForHome, recipePathForHome } from "../../src/cli/agentrail-home.ts";
 import { writeSetupFiles } from "../../src/cli/setup-files.ts";
 
 const now = () => new Date("2026-05-06T00:00:00Z");
@@ -115,12 +116,14 @@ export async function seedSetupVerificationTask({
 
 export async function writeDoctorRepo({
   repoRoot,
+  homePath = repoRoot,
   baseUrl,
   agentApiKey,
   agentId,
   repoAllowlist = ["oxnw/agentrail"],
 }: {
   repoRoot: string;
+  homePath?: string;
   baseUrl: string;
   agentApiKey: string;
   agentId: string;
@@ -144,19 +147,19 @@ export async function writeDoctorRepo({
   });
 
   await writeSetupFiles({
-    repoRoot,
+    homePath,
     config,
   });
-  await mkdir(path.join(repoRoot, ".agentrail"), { recursive: true });
+  await mkdir(homePath, { recursive: true });
   await writeFile(
-    path.join(repoRoot, ".agentrail", "agent.env"),
+    currentAgentEnvPathForHome(homePath),
     [
       `AGENTRAIL_BASE_URL=${baseUrl}`,
       `AGENTRAIL_API_KEY=${agentApiKey}`,
       `AGENTRAIL_AGENT_ID=${agentId}`,
       "AGENTRAIL_AGENT_RUNNER=codex",
       `AGENTRAIL_REPO_ALLOWLIST=${repoAllowlist.join(",")}`,
-      `AGENTRAIL_AGENT_RECIPE_PATH=${path.join(repoRoot, "docs", "agent-recipes.md")}`,
+      `AGENTRAIL_AGENT_RECIPE_PATH=${recipePathForHome(homePath)}`,
       "",
     ].join("\n"),
     { mode: 0o600 },
@@ -247,7 +250,6 @@ async function seedAgentProfile({
       capabilityTags: ["code", "tests", "api"],
       ownershipTags: [],
       repoAllowlist,
-      providerIdentityMappings: [{ provider: "github", subject: "codex" }],
       maxConcurrentTasks: 1,
       sourceRef: "AGEA-121",
       changeReason: "Seed setup doctor test profile.",

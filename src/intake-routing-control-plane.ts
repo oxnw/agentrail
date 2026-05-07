@@ -19,7 +19,6 @@ export interface ProviderIssueSnapshot {
   title: string;
   bodyDigest: string;
   labels: string[];
-  providerAssignees: string[];
   project?: string | null;
   issueType: "bug" | "feature" | "architecture" | "design" | "documentation" | "maintenance" | "unknown";
   priority: "low" | "medium" | "high" | "critical";
@@ -30,11 +29,6 @@ export interface ProviderIssueSnapshot {
   };
 }
 
-export interface ProviderIdentityMapping {
-  provider: string;
-  subject: string;
-}
-
 export interface AgentProfileReplaceRequest {
   displayName: string;
   role: string;
@@ -42,7 +36,6 @@ export interface AgentProfileReplaceRequest {
   capabilityTags: string[];
   ownershipTags: string[];
   repoAllowlist: string[];
-  providerIdentityMappings: ProviderIdentityMapping[];
   maxConcurrentTasks: number;
   sourceRef: string;
   changeReason: string;
@@ -56,7 +49,6 @@ export interface AgentProfile {
   capabilityTags: string[];
   ownershipTags: string[];
   repoAllowlist: string[];
-  providerIdentityMappings: ProviderIdentityMapping[];
   maxConcurrentTasks: number;
   source: "agent_created" | "operator_admin" | "skill_assignment_sync" | "config_file_import";
   sourceRef: string;
@@ -73,7 +65,6 @@ export interface RoutingTarget {
 export interface RoutingConditions {
   repositories?: string[];
   labelsAny?: string[];
-  providerAssigneesAny?: string[];
   projects?: string[];
   issueTypes?: string[];
   priorities?: string[];
@@ -259,7 +250,6 @@ function isStringArray(value: unknown): value is string[] {
 const ROUTING_CONDITION_FIELDS = [
   "repositories",
   "labelsAny",
-  "providerAssigneesAny",
   "projects",
   "issueTypes",
   "priorities",
@@ -280,7 +270,6 @@ const SNAPSHOT_FIELDS = new Set([
   "title",
   "bodyDigest",
   "labels",
-  "providerAssignees",
   "project",
   "issueType",
   "priority",
@@ -301,12 +290,10 @@ const AGENT_PROFILE_FIELDS = new Set([
   "capabilityTags",
   "ownershipTags",
   "repoAllowlist",
-  "providerIdentityMappings",
   "maxConcurrentTasks",
   "sourceRef",
   "changeReason",
 ]);
-const PROVIDER_IDENTITY_MAPPING_FIELDS = new Set(["provider", "subject"]);
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: Set<string>): boolean {
   return Object.keys(value).every(key => allowed.has(key));
@@ -406,11 +393,10 @@ export class RoutingControlPlane {
   }
 
   getAgentProfile(agentId: string): AgentProfile | null {
-    if (this.agentProfileStore) {
-      const profile = this.agentProfileStore.getAgentProfile(agentId);
-      return profile ? clone(profile) : null;
-    }
-    return this.profiles.has(agentId) ? clone(this.profiles.get(agentId)!) : null;
+    const profile = this.agentProfileStore
+      ? this.agentProfileStore.getAgentProfile(agentId)
+      : this.profiles.has(agentId) ? clone(this.profiles.get(agentId)!) : null;
+    return profile ? clone(profile) : null;
   }
 
   replaceAgentProfile(agentId: string, payload: AgentProfileReplaceRequest, updatedBy: string, idempotencyKey?: string): AgentProfile {
@@ -442,7 +428,6 @@ export class RoutingControlPlane {
       capabilityTags: clone(payload.capabilityTags),
       ownershipTags: clone(payload.ownershipTags),
       repoAllowlist: clone(payload.repoAllowlist),
-      providerIdentityMappings: clone(payload.providerIdentityMappings),
       maxConcurrentTasks: payload.maxConcurrentTasks,
       source: "operator_admin",
       sourceRef: payload.sourceRef,
@@ -639,37 +624,6 @@ export class RoutingControlPlane {
       };
     }
 
-    const providerMapping = this.resolveProviderAssigneeMapping(snapshot);
-    if (providerMapping.kind === "assigned") {
-      return {
-        decision: this.buildDecision({
-          outcome: "assigned",
-          target: { type: "agent", id: providerMapping.agentId },
-          assignmentSource: "provider_assignee_mapping",
-          confidence: 0.9,
-          matchedRules: [],
-          summary: `Provider assignee mapping matched ${providerMapping.subject} to ${providerMapping.agentId}.`,
-          conflictReasons: [],
-        }),
-        inputDigest,
-      };
-    }
-
-    if (providerMapping.kind === "conflict") {
-      return {
-        decision: this.buildDecision({
-          outcome: "conflict",
-          target: { type: "triage_queue", id: ruleSet.classifier.fallbackTriageQueueId },
-          assignmentSource: "manual_triage",
-          confidence: 0,
-          matchedRules: [],
-          summary: "Provider assignee mapping was ambiguous and requires triage.",
-          conflictReasons: ["provider_assignee_mapping_conflict"],
-        }),
-        inputDigest,
-      };
-    }
-
     const assignmentSource: TaskAssignmentSource = "manual_triage";
     const summary = ruleSet.classifier.enabled
       ? `No deterministic route matched; classifier fallback is not implemented, so the task was sent to triage ${ruleSet.classifier.fallbackTriageQueueId}.`
@@ -719,9 +673,6 @@ export class RoutingControlPlane {
     if (conditions.labelsAny?.length && !matchesAny(conditions.labelsAny, snapshot.labels)) {
       return false;
     }
-    if (conditions.providerAssigneesAny?.length && !matchesAny(conditions.providerAssigneesAny, snapshot.providerAssignees)) {
-      return false;
-    }
     if (conditions.projects?.length) {
       const project = snapshot.project ?? "";
       if (!conditions.projects.some(candidate => lower(candidate) === lower(project))) {
@@ -741,34 +692,6 @@ export class RoutingControlPlane {
       return false;
     }
     return true;
-  }
-
-  private resolveProviderAssigneeMapping(snapshot: ProviderIssueSnapshot):
-    | { kind: "none" }
-    | { kind: "assigned"; agentId: string; subject: string }
-    | { kind: "conflict" } {
-    const repo = repoKey(snapshot);
-    const matches = new Map<string, string>();
-
-    for (const profile of this.listAgentProfiles()) {
-      if (!this.isAgentEligibleForSnapshot(profile, repo, snapshot.providerIssueId)) continue;
-      for (const mapping of profile.providerIdentityMappings) {
-        if (lower(mapping.provider) !== lower(snapshot.provider)) continue;
-        const matchedSubject = snapshot.providerAssignees.find(subject => lower(subject) === lower(mapping.subject));
-        if (matchedSubject) {
-          matches.set(profile.agentId, matchedSubject);
-        }
-      }
-    }
-
-    if (matches.size === 1) {
-      const [agentId, subject] = [...matches.entries()][0]!;
-      return { kind: "assigned", agentId, subject };
-    }
-    if (matches.size > 1) {
-      return { kind: "conflict" };
-    }
-    return { kind: "none" };
   }
 
   private buildDecision({
@@ -824,12 +747,12 @@ export class RoutingControlPlane {
     const routeAvailableActions = assigneeAgentId ? ["start"] : [];
     const displayName = assigneeAgentId
       ? this.getAgentProfile(assigneeAgentId)?.displayName ?? assigneeAgentId
-      : `Triage ${triageQueueId}`;
+      : triageQueueId ? `Triage ${triageQueueId}` : "Unassigned";
     const commonFields = {
       title: snapshot.title,
       description: `Provider snapshot ${snapshot.providerIssueId}\nBody digest: ${snapshot.bodyDigest}`,
       priority: snapshot.priority,
-      assignee: { id: assigneeAgentId ?? triageQueueId ?? "triage", name: displayName },
+      assignee: { id: assigneeAgentId ?? triageQueueId ?? "unassigned", name: displayName },
       assigneeAgentId,
       triageQueueId,
       assignmentSource: decision.assignment.assignmentSource,
@@ -848,7 +771,6 @@ export class RoutingControlPlane {
         baseBranch: snapshot.repository.defaultBranch,
         issueNumber: this.extractIssueNumber(snapshot.providerIssueId),
         labels: clone(snapshot.labels),
-        assignees: clone(snapshot.providerAssignees),
         deliveryId: snapshot.sourceVersion,
         receivedAt: this.now().toISOString(),
       },
@@ -889,7 +811,7 @@ export class RoutingControlPlane {
     if (profile.status !== "active") {
       return false;
     }
-    if (!Array.isArray(profile.repoAllowlist) || !Array.isArray(profile.providerIdentityMappings)) {
+    if (!Array.isArray(profile.repoAllowlist)) {
       return false;
     }
     if (profile.repoAllowlist.length > 0 && !profile.repoAllowlist.some(candidate => lower(candidate) === lower(repo))) {
@@ -932,9 +854,9 @@ export class RoutingControlPlane {
 
   private listAgentProfiles(): AgentProfile[] {
     if (this.agentProfileStore) {
-      return this.agentProfileStore.listProfiles().map(clone);
+      return this.agentProfileStore.listProfiles().map((profile) => clone(profile));
     }
-    return [...this.profiles.values()].map(clone);
+    return [...this.profiles.values()].map((profile) => clone(profile));
   }
 
   private validateSnapshot(snapshot: ProviderIssueSnapshot) {
@@ -996,7 +918,6 @@ export class RoutingControlPlane {
     }
     const arrayLimits = {
       labels: 50,
-      providerAssignees: 20,
       ownershipTags: 20,
       capabilityTags: 20,
     } as const;
@@ -1198,21 +1119,6 @@ export class RoutingControlPlane {
           availableActions: ["retry"],
         });
       }
-    }
-    if (
-      !Array.isArray(payload.providerIdentityMappings) ||
-      payload.providerIdentityMappings.length > 20 ||
-      !payload.providerIdentityMappings.every(mapping =>
-        isRecord(mapping) &&
-        hasOnlyKeys(mapping, PROVIDER_IDENTITY_MAPPING_FIELDS) &&
-        isNonEmptyString(mapping.provider) &&
-        ROUTING_PROVIDERS.has(mapping.provider) &&
-        isNonEmptyString(mapping.subject)
-      )
-    ) {
-      throw new TaskLifecycleError(400, "validation_error", "Routing agent profile `providerIdentityMappings` must contain provider/subject mappings.", {
-        availableActions: ["retry"],
-      });
     }
   }
 }

@@ -23,7 +23,7 @@ export const TASK_SOURCE_STRING_FIELDS = [
 ] as const;
 
 export const TASK_SOURCE_NUMBER_FIELDS = ["issueNumber", "pullNumber"] as const;
-export const TASK_SOURCE_ARRAY_FIELDS = ["reviewers", "labels", "assignees"] as const;
+export const TASK_SOURCE_ARRAY_FIELDS = ["reviewers", "labels"] as const;
 
 const TASK_SOURCE_FIELD_SET = new Set<string>([
   ...TASK_SOURCE_STRING_FIELDS,

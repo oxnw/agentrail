@@ -14,14 +14,20 @@ import {
 
 test("agentrail doctor passes after the full local onboarding smoke seeds profile, routing, and setup task state", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-onboarding-e2e-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
+  const previousHome = process.env.AGENTRAIL_HOME;
   let harness: SetupDoctorHarness | null = null;
+  process.env.AGENTRAIL_HOME = homePath;
 
   t.after(async () => {
     restoreSetupApiKey(previousSetupApiKey);
     await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
     await harness?.close();
   });
 
@@ -30,6 +36,7 @@ test("agentrail doctor passes after the full local onboarding smoke seeds profil
 
   await writeDoctorRepo({
     repoRoot,
+    homePath,
     baseUrl: harness.baseUrl,
     agentApiKey: harness.agentApiKey,
     agentId: harness.agentId,

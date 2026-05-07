@@ -90,7 +90,7 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 
 - `provider`: `github`, later `linear`, `jira`, or `gitlab`.
 - `providerIssueId`, `repository`, `title`, `bodyDigest`, `labels`,
-  `providerAssignees`, `project`, `issueType`, `priority`.
+  `project`, `issueType`, `priority`.
 - `ownershipTags` and `capabilityTags` derived from provider metadata or repo
   config.
 - `sourceVersion` for idempotent webhook/sync replay.
@@ -106,7 +106,7 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 `AgentProfile`
 
 - `agentId`, `role`, `capabilityTags`, `ownershipTags`, `repoAllowlist`,
-  `providerIdentityMappings`, `maxConcurrentTasks`, and `status`.
+  `maxConcurrentTasks`, and `status`.
 - Profiles are operator-managed and separate from the worker task API.
 - Profiles are created or updated by authorized control-plane operators during
   agent creation, hiring, skill assignment, or ownership changes. The likely
@@ -126,8 +126,7 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 `TaskAssignment`
 
 - `assigneeAgentId` or `triageQueueId`.
-- `assignmentSource`: `deterministic_rule`, `classifier`, `manual_triage`, or
-  `provider_assignee_mapping`.
+- `assignmentSource`: `deterministic_rule`, `classifier`, or `manual_triage`.
 - `assignedAt`, `assignedBy`, `routingDecisionId`.
 
 ## Routing Order
@@ -135,7 +134,7 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 1. Normalize the provider issue snapshot and compute `inputDigest`.
 2. Load the active rule set and eligible agent profiles.
 3. Evaluate deterministic rules in order:
-   repo, labels, GitHub assignee mapping, project, issue type, priority,
+   repo, labels, project, issue type, priority,
    ownership tags, and capability tags.
 4. If exactly one deterministic target wins, assign with that rule's
    confidence.
@@ -147,6 +146,69 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 8. If classifier confidence is below threshold or candidates tie, send to
    triage.
 9. Persist the decision and routing explanation before emitting task updates.
+
+## Follow-Up: Role, Skills, And Ownership Semantics
+
+This is a follow-up note for the next routing-engine pass. The current data
+model already has `role`, `capabilityTags`, and `ownershipTags`, but the
+meaning of those fields should be tightened so setup, audit, and routing all
+use the same mental model.
+
+Use the fields this way:
+
+- `role`: the agent's broad operating lane. This should be narrow and stable
+  over time, and answer "what kind of agent is this?" Examples:
+  `coding_agent`, `review_agent`, `docs_agent`, `infra_devops_agent`, and
+  `release_agent`.
+- `capabilityTags`: the kinds of work the agent can usually handle well. These
+  are soft capability signals such as `frontend`, `backend`, `api`, `tests`,
+  `docs`, `infra`, `devops`, `security`, `data`, `mobile`, `review`, and
+  `release`.
+- `ownershipTags`: the domain or surface area where this agent should be
+  preferred when several agents could do the work. These are things like
+  `billing`, `auth`, `integrations`, `deployments`, `ci`, `web`, or `api`.
+
+The routing engine should not treat `role`, `capabilityTags`, and
+`ownershipTags` as brittle blockers in the common case. They should usually
+improve ranking and explanation, not prevent assignment outright.
+
+The intended routing split is:
+
+- hard constraints:
+  `repoAllowlist`, permissions, agent status, and capacity;
+- soft routing signals:
+  `role`, `capabilityTags`, `ownershipTags`, provider identity mappings, and
+  later historical performance if the product adds it.
+
+The intended fallback behavior is:
+
+1. Prefer exact or strong matches first.
+2. Allow acceptable near-matches when no better agent exists.
+3. Escalate to triage when no candidate clears a minimum confidence threshold.
+
+Example:
+
+- a billing task should strongly prefer an agent with `ownershipTags` including
+  `billing`;
+- if no billing owner exists, a backend coding agent may still be a valid
+  lower-confidence fallback;
+- if only clearly unrelated candidates remain, the engine should escalate to
+  triage instead of forcing a bad assignment.
+
+This means setup metadata should make AgentRail smarter, not more fragile.
+Incomplete setup should reduce confidence, not automatically make the system
+unusable.
+
+### Follow-Up Implementation Work
+
+- tighten the supported role taxonomy used by setup and routing;
+- tighten the supported skill/capability taxonomy used by setup and routing;
+- keep domain-specific concepts such as `billing` and `integrations` in
+  `ownershipTags`, not in capability tags;
+- update scoring so `role`, `capabilityTags`, and `ownershipTags` affect
+  ranking and explanation before triage;
+- document the confidence threshold that decides when the engine should stop
+  guessing and escalate.
 
 ## Rule Config Source
 
@@ -173,12 +235,7 @@ rule set revision.
 agent identity is created or hired, then updated through a routing/admin API or
 trusted infrastructure sync. Capability tags can be derived from approved skill
 assignments, agent role, and operator-entered ownership. Repo allowlists and
-ownership tags come from the operator, not from provider assignees alone.
-
-GitHub assignees can map to an `AgentProfile` through
-`providerIdentityMappings`, but GitHub does not own the profile. If the GitHub
-assignee does not map to an active profile, the rule may use other deterministic
-signals or send the issue to triage.
+ownership tags come from the operator, not from provider assignment alone.
 
 Only keys with `routing:admin` can write profiles. `routing:read` can inspect
 them for audit/debugging. Worker task keys do not include profile write scope.
@@ -199,13 +256,8 @@ The mapping is:
   adapter identities;
 - each AgentRail API key authenticates as exactly one `agentId`, so a worker
   cannot use a key to read tasks assigned to another agent;
-- provider subjects such as GitHub assignees map into an AgentRail `agentId`
-  through `AgentProfile.providerIdentityMappings`;
-- a provider subject should map to at most one active AgentProfile in a
-  workspace. If two active profiles claim the same provider subject, routing
-  treats that as a conflict and sends the task to triage;
-- multiple provider subjects may map to the same AgentRail `agentId` when one
-  worker has aliases across providers.
+- provider-side assignee data stays in GitHub, Linear, Jira, or GitLab; local
+  OSS AgentRail does not maintain provider-to-agent identity mappings.
 
 In short: providers and runtimes are aliases; `agentId` is the routing and task
 ownership key.

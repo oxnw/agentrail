@@ -22,7 +22,7 @@ export function detectRepoContext(cwd: string): DetectedRepoContext {
 
 function runGit(args: string[]): string | null {
   try {
-    return execFileSync("git", args, { encoding: "utf8" }).trim() || null;
+    return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
   } catch {
     return null;
   }

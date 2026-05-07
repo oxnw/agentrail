@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { operatorEnvPathForHome, readSetupConfigFromHome, resolveAgentRailHome } from "./agentrail-home.ts";
+
 interface Writer {
   write(chunk: string | Uint8Array): boolean;
 }
@@ -80,10 +82,14 @@ export async function runTaskSourceRepair(
     return 1;
   }
 
-  const config = await readSetupConfig(path.resolve(cwd, flags.configPath ?? ".agentrail/config.json"));
+  const homePath = resolveAgentRailHome({ cwd, explicitHome: null });
+  const config = flags.configPath
+    ? await readSetupConfig(path.resolve(cwd, flags.configPath))
+    : await readSetupConfigFromHome(homePath);
   const baseUrl = flags.baseUrl ?? process.env.AGENTRAIL_BASE_URL ?? config?.server?.baseUrl;
   const setupApiKey =
     flags.setupApiKey
+    ?? await readOperatorKey(homePath)
     ?? process.env.AGENTRAIL_SETUP_API_KEY
     ?? process.env.AGENTRAIL_OPERATOR_API_KEY
     ?? process.env.AGENTRAIL_ADMIN_API_KEY
@@ -155,6 +161,16 @@ export async function runTaskSourceRepair(
     ].join("\n"),
   );
   return 0;
+}
+
+async function readOperatorKey(homePath: string): Promise<string | null> {
+  try {
+    const content = await readFile(operatorEnvPathForHome(homePath), "utf8");
+    const match = content.match(/^AGENTRAIL_OPERATOR_KEY=(.+)$/m);
+    return match?.[1]?.trim() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function readSetupConfig(configPath: string): Promise<SetupConfigLike | null> {

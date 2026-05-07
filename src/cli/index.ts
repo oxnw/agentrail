@@ -4,7 +4,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { runDoctor } from "./doctor.ts";
+import { runAgentCreate, runAgentUpdate } from "./agent-management.ts";
+import { primaryRepoFromConfig, resolveAgentRailHome } from "./agentrail-home.ts";
+import { runConfigCommand, runRepoCommand, runServerStart } from "./global-management.ts";
+import { ensureLocalOperatorBootstrap, hasExistingLocalAgents, withTemporaryLocalServer } from "./local-bootstrap.ts";
 import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
+import { runProviderCommand } from "./provider-management.ts";
 import { detectRepoContext } from "./repo-detection.ts";
 import { buildInitCommand, createSetupConfig, validateSafeDefaults, type DetectedRepoContext } from "./setup-config.ts";
 import { writeSetupFiles, type WriteSetupFilesResult } from "./setup-files.ts";
@@ -29,7 +34,8 @@ export interface RunCliOptions {
   detectRepoContext?: (cwd: string) => DetectedRepoContext | Promise<DetectedRepoContext>;
   createPrompt?: () => PromptSession;
   writeSetupFiles?: (options: {
-    repoRoot: string;
+    homePath?: string;
+    repoRoot?: string;
     config: ReturnType<typeof createSetupConfig>;
   }) => Promise<WriteSetupFilesResult>;
 }
@@ -58,6 +64,53 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
         cwd,
         stdout,
         stderr,
+      });
+    }
+
+    if (command === "server" && args[0] === "start") {
+      return await runServerStart({ stdout });
+    }
+
+    if (command === "repo") {
+      return await runRepoCommand(args, { cwd, stdout, stderr });
+    }
+
+    if (command === "config") {
+      return await runConfigCommand(args, { cwd, stdout, stderr });
+    }
+
+    if (command === "provider") {
+      return await runProviderCommand(args, {
+        cwd,
+        stdinIsTTY,
+        stdoutIsTTY,
+        stdout,
+        stderr,
+        createPrompt: options.createPrompt,
+      });
+    }
+
+    if (command === "agent" && args[0] === "create") {
+      return await runAgentCreate(args.slice(1), {
+        cwd,
+        stdinIsTTY,
+        stdoutIsTTY,
+        stdout,
+        stderr,
+        detectRepoContext: detectRepo,
+        createPrompt: options.createPrompt,
+      });
+    }
+
+    if (command === "agent" && args[0] === "update") {
+      return await runAgentUpdate(args.slice(1), {
+        cwd,
+        stdinIsTTY,
+        stdoutIsTTY,
+        stdout,
+        stderr,
+        detectRepoContext: detectRepo,
+        createPrompt: options.createPrompt,
       });
     }
 
@@ -103,7 +156,14 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
         return await finalizeInit({
           action: result.action,
           config: result.config,
+          cwd,
+          stdinIsTTY,
+          stdoutIsTTY,
           stdout,
+          stderr,
+          prompt,
+          createPrompt: options.createPrompt,
+          detectRepo,
           writeFiles,
         });
       } finally {
@@ -131,7 +191,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
     });
 
     if (flags.yes) {
-      const targetRepo = await Promise.resolve(detectRepo(config.targetRepo.path));
+      const targetRepo = await Promise.resolve(detectRepo(config.repos[0]?.path ?? repo.repoPath));
       const validation = validateSafeDefaults(config, targetRepo);
       if (!validation.ok) {
         stderr.write("--yes is only allowed for safe local defaults.\n");
@@ -145,7 +205,14 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
     return await finalizeInit({
       action: flags.printOnly ? "print_only" : "write",
       config,
+      cwd,
+      stdinIsTTY,
+      stdoutIsTTY,
       stdout,
+      stderr,
+      prompt: null,
+      createPrompt: options.createPrompt,
+      detectRepo,
       writeFiles,
     });
   } catch (error) {
@@ -162,14 +229,29 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
 async function finalizeInit({
   action,
   config,
+  cwd,
+  stdinIsTTY,
+  stdoutIsTTY,
   stdout,
+  stderr,
+  prompt,
+  createPrompt,
+  detectRepo,
   writeFiles,
 }: {
   action: "write" | "print_only";
   config: ReturnType<typeof createSetupConfig>;
+  cwd: string;
+  stdinIsTTY: boolean;
+  stdoutIsTTY: boolean;
   stdout: Writer;
+  stderr: Writer;
+  prompt: PromptSession | null;
+  createPrompt?: () => PromptSession;
+  detectRepo: (cwd: string) => DetectedRepoContext | Promise<DetectedRepoContext>;
   writeFiles: (options: {
-    repoRoot: string;
+    homePath?: string;
+    repoRoot?: string;
     config: ReturnType<typeof createSetupConfig>;
   }) => Promise<WriteSetupFilesResult>;
 }): Promise<number> {
@@ -180,12 +262,94 @@ async function finalizeInit({
   }
 
   await writeFiles({
-    repoRoot: config.targetRepo.path,
+    homePath: resolveAgentRailHome({ cwd, explicitHome: null }),
     config,
   });
-  const envPath = path.join(config.targetRepo.path, ".agentrail", "agent.env");
-  const envExamplePath = path.join(config.targetRepo.path, ".agentrail", "agent.env.example");
+
+  const homePath = resolveAgentRailHome({ cwd, explicitHome: null });
+
+  const operatorBootstrap = await ensureLocalOperatorBootstrap({
+    homePath,
+    config,
+  });
+
+  if (operatorBootstrap) {
+    const operatorEnvLabel = operatorBootstrap.operatorEnvPath;
+    if (prompt) {
+      await prompt.message(`Wrote ${operatorEnvLabel}`);
+    } else {
+      stdout.write(`Wrote ${operatorEnvLabel}\n`);
+    }
+  }
+
+  if (prompt && operatorBootstrap && !await hasExistingLocalAgents({ homePath, config })) {
+    const shouldCreateFirstAgent = await prompt.confirm({
+      message: "No local agents found. Create your first agent now?",
+      defaultValue: true,
+    });
+    if (shouldCreateFirstAgent) {
+      const primaryRepo = primaryRepoFromConfig(config);
+      const firstAgentExitCode = await withTemporaryLocalServer({
+        homePath,
+        config,
+        validateExistingBaseUrl: validateProvisioningServer,
+        handler: async ({ baseUrl }) => runAgentCreate([
+          "--setup-api-key",
+          operatorBootstrap.operatorKey,
+          "--base-url",
+          baseUrl,
+          "--set-default-env",
+        ], {
+          cwd: primaryRepo?.path ?? cwd,
+          stdinIsTTY,
+          stdoutIsTTY,
+          stdout,
+          stderr,
+          detectRepoContext: detectRepo,
+          createPrompt: prompt ? () => prompt : createPrompt,
+          bootstrapSummaryMode: true,
+        }),
+      });
+      if (firstAgentExitCode !== 0) {
+        return firstAgentExitCode;
+      }
+    }
+  }
+
+  if (prompt) {
+    const shouldConnectGitHub = await prompt.confirm({
+      message: "Connect GitHub now?",
+      defaultValue: false,
+    });
+    if (shouldConnectGitHub) {
+      const providerExitCode = await runProviderCommand(["connect", "github"], {
+        cwd,
+        stdinIsTTY,
+        stdoutIsTTY,
+        stdout,
+        stderr,
+        createPrompt: prompt ? () => prompt : createPrompt,
+      });
+      if (providerExitCode !== 0) {
+        return providerExitCode;
+      }
+    }
+  }
+
   return 0;
+}
+
+async function validateProvisioningServer(baseUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(new URL("operator/routing/agent-profiles/agt_operator", `${baseUrl.replace(/\/+$/, "")}/`), {
+      headers: {
+        accept: "application/json",
+      },
+    });
+    return response.status !== 404;
+  } catch {
+    return false;
+  }
 }
 
 function hasExplicitNonInteractiveFlags(flags: InitFlags): boolean {
@@ -283,6 +447,17 @@ function writeUsage(output: Writer) {
     "Usage:",
     "  agentrail init [flags]",
     "  agentrail doctor [flags]",
+    "  agentrail server start",
+    "  agentrail repo add [flags]",
+    "  agentrail repo list",
+    "  agentrail repo remove --repo <owner/repo>",
+    "  agentrail config show",
+    "  agentrail config set --base-url <url> [--provider-mode <mode>] [--markdown-export|--no-markdown-export]",
+    "  agentrail provider connect <github|circleci>",
+    "  agentrail provider list",
+    "  agentrail provider test <github|circleci>",
+    "  agentrail agent create [flags]",
+    "  agentrail agent update [flags]",
     "  agentrail task source repair --task-id <tsk_...> --file <json> [flags]",
     "",
     "Flags:",

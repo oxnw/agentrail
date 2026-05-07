@@ -6,18 +6,18 @@ runtime.
 It uses the shipped CLI pieces that exist today:
 
 - `agentrail init` to write `.agentrail` scaffolding.
-- Public auth/routing/setup endpoints to bootstrap the first agent identity,
-  profile, rule set, and setup smoke task.
+- Public auth/routing/setup endpoints to create the first agent identity,
+  profile, rule set, and setup check task.
 - `agentrail doctor` as the success gate.
 
-This closes the routing bootstrap described in
+This closes the routing setup work described in
 [AGEA-95](/AGEA/issues/AGEA-95) and makes the setup story clearer per
 [AGEA-93](/AGEA/issues/AGEA-93). It is still local/self-managed OSS, not the
-planned AgentRail Cloud team control plane.
+planned AgentRail Cloud team setup service.
 
-The examples below use `node src/cli/index.ts` so they work directly from this
-repository checkout. That is the same CLI surface exposed as `agentrail` when
-the package is installed as a binary.
+The examples below use `./agentrail ...` so they work directly from this
+repository checkout after `npm install`. That is the same CLI surface exposed
+as `agentrail` when the package is installed as a binary.
 
 ## Prerequisites
 
@@ -32,14 +32,14 @@ the package is installed as a binary.
 git clone https://github.com/oxnw/agentrail.git
 cd agentrail
 npm install
-node src/cli/index.ts init --mode server --provider-mode disabled --repo "$PWD"
+./agentrail init --mode server --provider-mode disabled --repo "$PWD"
 cp .env.example .env
 cp examples/self-hosted-task-store.json .agentrail.tasks.json
 ```
 
 `agentrail init` writes `.agentrail/config.json`,
 `.agentrail/agent.env.example`, and `.agentrail/README.md`, but it does not
-mint secrets or claim setup is finished.
+create agent credentials or claim setup is finished.
 
 ## 2. Start The Local API
 
@@ -60,14 +60,26 @@ AgentRail API listening on http://127.0.0.1:3000
 
 Leave this terminal running.
 
-## 3. Bootstrap Operator And Agent Keys
+## 3. Create Operator And Agent Keys
 
-In a second terminal, bootstrap the first operator/setup key:
+Before running the commands below, keep these two keys separate:
+
+- `AGENTRAIL_OPERATOR_KEY`: an admin key for setup tasks. It is used to create
+  agent keys, write routing profiles, update routing rules, and create the
+  setup verification task. Humans and setup scripts use this key.
+- `AGENTRAIL_API_KEY`: the runtime key for one agent. It is used by that agent
+  to call endpoints like `/tasks/mine`, submit work, read CI status, and read
+  review feedback. The agent process uses this key.
+
+You create the operator key first because AgentRail needs one admin-capable key
+before it can create and configure the first working agent.
+
+In a second terminal, create the first operator key:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
   -H "content-type: application/json" \
-  -H "idempotency-key: bootstrap-local-setup-admin" \
+  -H "idempotency-key: create-local-setup-admin" \
   -d '{
     "agent": {
       "id": "agt_setup_operator",
@@ -87,15 +99,24 @@ Copy the returned `data.apiKey` value into your shell:
 
 ```bash
 export AGENTRAIL_BASE_URL=http://127.0.0.1:3000
-export AGENTRAIL_SETUP_API_KEY=<paste-the-operator-data.apiKey-here>
+export AGENTRAIL_OPERATOR_KEY=<paste-the-operator-data.apiKey-here>
 export AGENTRAIL_AGENT_ID=agt_codex_local
 ```
+
+What you just did:
+
+- created the first admin-capable key for this local AgentRail server
+- stored it in `AGENTRAIL_OPERATOR_KEY` so the next setup calls can authenticate
+- chose `agt_codex_local` as the id for the first coding agent
+
+Keep `AGENTRAIL_OPERATOR_KEY` private. It can change routing and create other
+keys.
 
 Create the scoped agent key that the coding agent will use:
 
 ```bash
 curl -s -X POST "$AGENTRAIL_BASE_URL/agent-api-keys" \
-  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \
+  -H "authorization: Bearer $AGENTRAIL_OPERATOR_KEY" \
   -H "content-type: application/json" \
   -H "idempotency-key: create-agent-key:$AGENTRAIL_AGENT_ID:v1" \
   -d '{
@@ -121,13 +142,22 @@ Copy that second `data.apiKey` value too:
 export AGENTRAIL_API_KEY=<paste-the-agent-data.apiKey-here>
 ```
 
-## 4. Seed Profile, Routing, And Setup Smoke State
+What you just did:
+
+- created the runtime key for the first coding agent
+- limited that key to agent work scopes such as reading tasks and submitting work
+- stored it in `AGENTRAIL_API_KEY` so the agent process can use it later
+
+Keep `AGENTRAIL_API_KEY` private too, but note the difference: this key should
+be used by the agent runtime, not by a human changing setup state.
+
+## 4. Create Profile, Routing, And Setup Check State
 
 Create the first `AgentProfile`:
 
 ```bash
 curl -s -X PUT "$AGENTRAIL_BASE_URL/operator/routing/agent-profiles/$AGENTRAIL_AGENT_ID" \
-  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \
+  -H "authorization: Bearer $AGENTRAIL_OPERATOR_KEY" \
   -H "content-type: application/json" \
   -H "idempotency-key: profile:$AGENTRAIL_AGENT_ID:v1" \
   -d '{
@@ -137,12 +167,9 @@ curl -s -X PUT "$AGENTRAIL_BASE_URL/operator/routing/agent-profiles/$AGENTRAIL_A
     "capabilityTags": ["code", "tests", "api"],
     "ownershipTags": [],
     "repoAllowlist": ["oxnw/agentrail"],
-    "providerIdentityMappings": [
-      { "provider": "github", "subject": "codex" }
-    ],
     "maxConcurrentTasks": 1,
     "sourceRef": "quick-start",
-    "changeReason": "Seed local onboarding profile."
+    "changeReason": "Create the first local setup profile."
   }'
 ```
 
@@ -150,15 +177,15 @@ Create the first routing rule set:
 
 ```bash
 curl -s -X PUT "$AGENTRAIL_BASE_URL/operator/routing/rule-sets/current" \
-  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \
+  -H "authorization: Bearer $AGENTRAIL_OPERATOR_KEY" \
   -H "content-type: application/json" \
   -H "idempotency-key: rule-set:$AGENTRAIL_AGENT_ID:v1" \
   -d '{
     "sourceRef": "quick-start",
-    "changeReason": "Seed local onboarding routing state.",
+    "changeReason": "Create the first local routing rule.",
     "rules": [
       {
-        "id": "quick-start-bootstrap",
+        "id": "quick-start-first-agent",
         "name": "Route the setup repo to the first local agent",
         "enabled": true,
         "priority": 100,
@@ -183,11 +210,11 @@ curl -s -X PUT "$AGENTRAIL_BASE_URL/operator/routing/rule-sets/current" \
   }'
 ```
 
-Create the deterministic setup verification task:
+Create the setup verification task:
 
 ```bash
 curl -s -X POST "$AGENTRAIL_BASE_URL/operator/setup/verification-task" \
-  -H "authorization: Bearer $AGENTRAIL_SETUP_API_KEY" \
+  -H "authorization: Bearer $AGENTRAIL_OPERATOR_KEY" \
   -H "content-type: application/json" \
   -H "idempotency-key: setup-verification:$AGENTRAIL_AGENT_ID:v1" \
   -d '{
@@ -198,8 +225,12 @@ curl -s -X POST "$AGENTRAIL_BASE_URL/operator/setup/verification-task" \
 
 ## 5. Fill `.agentrail/agent.env`
 
-`agentrail agent create/connect` will automate this later. For the current OSS
-path, fill the generated env file once:
+`agentrail agent create` now automates this path. For the manual OSS flow,
+fill the generated env file once if you are not using the CLI:
+
+When you use `agentrail agent create`, AgentRail generates the key for you and
+asks what the agent should be allowed to do. The normal CLI path offers
+permission presets first, with an advanced mode for custom scopes.
 
 ```bash
 touch .agentrail/agent.env
@@ -214,11 +245,19 @@ AGENTRAIL_AGENT_RECIPE_PATH=/path/to/agentrail/docs/agent-recipes.md
 EOF
 ```
 
+This file is what the coding agent will actually load at runtime:
+
+- `AGENTRAIL_API_KEY` tells the agent who it is when it talks to AgentRail
+- `AGENTRAIL_AGENT_ID` must match the id used when you created the agent key
+- `AGENTRAIL_REPO_ALLOWLIST` tells the agent which repo this local setup is for
+- `AGENTRAIL_AGENT_RECIPE_PATH` points at the shared operating instructions for
+  the agent runner
+
 ## 6. Run `agentrail doctor`
 
 ```bash
-AGENTRAIL_SETUP_API_KEY="$AGENTRAIL_SETUP_API_KEY" \
-node src/cli/index.ts doctor
+AGENTRAIL_OPERATOR_KEY="$AGENTRAIL_OPERATOR_KEY" \
+./agentrail doctor
 ```
 
 Success means:
@@ -230,7 +269,7 @@ Success means:
 - `GET /tasks/mine?status=in_progress&limit=1` returned the setup task, for
   example `LOCAL-SETUP-AGT-CODEX-LOCAL`.
 
-If doctor fails because no assigned work is visible, rerun the setup smoke task
+If doctor fails because no assigned work is visible, rerun the setup check task
 endpoint from step 4 and fix the missing profile/rule/task state before you
 start the coding agent.
 

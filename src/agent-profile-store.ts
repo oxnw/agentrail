@@ -4,11 +4,6 @@ import path from "node:path";
 
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 
-export interface ProviderIdentityMapping {
-  provider: string;
-  subject: string;
-}
-
 export interface AgentProfileReplaceRequest {
   displayName: string;
   role: string;
@@ -16,7 +11,6 @@ export interface AgentProfileReplaceRequest {
   capabilityTags: string[];
   ownershipTags: string[];
   repoAllowlist: string[];
-  providerIdentityMappings: ProviderIdentityMapping[];
   maxConcurrentTasks: number;
   sourceRef: string;
   changeReason: string;
@@ -30,7 +24,6 @@ export interface AgentProfile {
   capabilityTags: string[];
   ownershipTags: string[];
   repoAllowlist: string[];
-  providerIdentityMappings: ProviderIdentityMapping[];
   maxConcurrentTasks: number;
   source: "agent_created" | "operator_admin" | "skill_assignment_sync" | "config_file_import";
   sourceRef: string;
@@ -52,7 +45,6 @@ interface PersistedState {
 const MAX_IDEMPOTENCY_ENTRIES = 1000;
 const PROFILE_STATUSES = new Set(["active", "paused", "disabled"]);
 const PROFILE_SOURCES = new Set(["agent_created", "operator_admin", "skill_assignment_sync", "config_file_import"]);
-const PROFILE_PROVIDERS = new Set(["github", "linear", "jira", "gitlab"]);
 
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
@@ -181,7 +173,6 @@ export class AgentProfileStore {
       capabilityTags: clone(payload.capabilityTags),
       ownershipTags: clone(payload.ownershipTags),
       repoAllowlist: clone(payload.repoAllowlist),
-      providerIdentityMappings: clone(payload.providerIdentityMappings),
       maxConcurrentTasks: payload.maxConcurrentTasks,
       source: "operator_admin",
       sourceRef: payload.sourceRef,
@@ -260,20 +251,6 @@ export class AgentProfileStore {
         availableActions: ["retry"],
       });
     }
-    if (
-      !Array.isArray(payload.providerIdentityMappings) ||
-      payload.providerIdentityMappings.length > 20 ||
-      !payload.providerIdentityMappings.every(mapping =>
-        isRecord(mapping) &&
-        isNonEmptyString(mapping.provider) &&
-        PROFILE_PROVIDERS.has(mapping.provider) &&
-        isNonEmptyString(mapping.subject)
-      )
-    ) {
-      throw new TaskLifecycleError(400, "validation_error", "Routing agent profile `providerIdentityMappings` must contain provider/subject mappings.", {
-        availableActions: ["retry"],
-      });
-    }
   }
 }
 
@@ -282,13 +259,6 @@ function normalizeProfile(value: unknown): AgentProfile | null {
   if (!isNonEmptyString(value.agentId) || !isNonEmptyString(value.displayName) || !isNonEmptyString(value.role)) return null;
   if (typeof value.status !== "string" || !PROFILE_STATUSES.has(value.status)) return null;
   if (!isStringArray(value.capabilityTags) || !isStringArray(value.ownershipTags) || !isStringArray(value.repoAllowlist)) return null;
-  if (!Array.isArray(value.providerIdentityMappings)) return null;
-  if (!value.providerIdentityMappings.every(mapping =>
-    isRecord(mapping) &&
-    typeof mapping.provider === "string" &&
-    PROFILE_PROVIDERS.has(mapping.provider) &&
-    typeof mapping.subject === "string"
-  )) return null;
   if (!Number.isInteger(value.maxConcurrentTasks)) return null;
   if (typeof value.source !== "string" || !PROFILE_SOURCES.has(value.source)) return null;
   if (!isNonEmptyString(value.sourceRef) || !isNonEmptyString(value.updatedBy) || !isNonEmptyString(value.updatedAt)) return null;
@@ -301,7 +271,6 @@ function normalizeProfile(value: unknown): AgentProfile | null {
     capabilityTags: clone(value.capabilityTags),
     ownershipTags: clone(value.ownershipTags),
     repoAllowlist: clone(value.repoAllowlist),
-    providerIdentityMappings: clone(value.providerIdentityMappings as ProviderIdentityMapping[]),
     maxConcurrentTasks: Number(value.maxConcurrentTasks),
     source: value.source as AgentProfile["source"],
     sourceRef: value.sourceRef,

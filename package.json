@@ -11,6 +11,7 @@
     "node": ">=22.6.0"
   },
   "scripts": {
+    "agentrail": "node src/cli/index.ts",
     "start": "node src/server.ts",
     "smoke:sdk:typescript": "node scripts/smoke-test-sdk-packages.mjs --typescript",
     "smoke:sdk:python": "node scripts/smoke-test-sdk-packages.mjs --python",
@@ -28,6 +29,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@clack/prompts": "^1.3.0"
+    "@clack/prompts": "^1.3.0",
+    "oh-my-logo": "^0.4.0"
   }
 }

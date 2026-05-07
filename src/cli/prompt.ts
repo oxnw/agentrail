@@ -1,9 +1,12 @@
 import * as clack from "@clack/prompts";
+import { render } from "oh-my-logo";
 import type { Readable, Writable } from "node:stream";
 
 export interface PromptChoice {
   label: string;
   value: string;
+  hint?: string;
+  disabled?: boolean;
 }
 
 export interface ClackPromptsLike {
@@ -20,6 +23,19 @@ export interface ClackPromptsLike {
     input?: Readable;
     output?: Writable;
   }): Promise<T | symbol>;
+  multiselect<T>(opts: {
+    message: string;
+    options: Array<{
+      value: T;
+      label?: string;
+      hint?: string;
+      disabled?: boolean;
+    }>;
+    initialValues?: T[];
+    required?: boolean;
+    input?: Readable;
+    output?: Writable;
+  }): Promise<T[] | symbol>;
   confirm(opts: {
     message: string;
     initialValue?: boolean;
@@ -51,15 +67,7 @@ export class PromptCancelledError extends Error {
   }
 }
 
-const AGENTRAIL_INTRO = [
-  "\u001b[1;32m     _    ____ _____ _   _ _____ ____      _    ___ _     \u001b[0m",
-  "\u001b[1;32m    / \\\\  / ___| ____| \\\\ | |_   _|  _ \\\\    / \\\\  |_ _| |    \u001b[0m",
-  "\u001b[1;32m   / _ \\\\| |  _|  _| |  \\\\| | | | | |_) |  / _ \\\\  | || |    \u001b[0m",
-  "\u001b[1;32m  / ___ \\\\ |_| | |___| |\\\\  | | | |  _ <  / ___ \\\\ | || |___ \u001b[0m",
-  "\u001b[1;32m /_/   \\\\_\\\\____|_____|_| \\\\_| |_| |_| \\\\_\\\\/_/   \\\\_\\\\___|_____|\u001b[0m",
-  "\u001b[32m\nLocal setup wizard\u001b[0m",
-]
-.join("\n") + "\n"
+const AGENTRAIL_INTRO = buildAgentRailIntro();
 
 export interface PromptSession {
   select(options: {
@@ -67,6 +75,12 @@ export interface PromptSession {
     choices: PromptChoice[];
     defaultValue?: string;
   }): Promise<string>;
+  multiselect(options: {
+    message: string;
+    choices: PromptChoice[];
+    defaultValues?: string[];
+    required?: boolean;
+  }): Promise<string[]>;
   note(options: {
     title?: string;
     body: string;
@@ -93,11 +107,19 @@ export function createPromptSession({
   clack?: ClackPromptsLike;
 } = {}): PromptSession {
   let hasStarted = false;
+  let introPromise: Promise<void> | null = null;
 
-  function ensureIntro() {
+  async function ensureIntro() {
     if (hasStarted) return;
-    hasStarted = true;
-    clackPrompts.intro(AGENTRAIL_INTRO, { input, output });
+    if (introPromise) {
+      await introPromise;
+      return;
+    }
+    introPromise = (async () => {
+      hasStarted = true;
+      output.write(await AGENTRAIL_INTRO);
+    })();
+    await introPromise;
   }
 
   function unwrapValue<T>(value: T | symbol): T {
@@ -111,13 +133,32 @@ export function createPromptSession({
 
   return {
     async select({ message, choices, defaultValue }) {
-      ensureIntro();
+      await ensureIntro();
       return unwrapValue(await clackPrompts.select({
         message,
         initialValue: defaultValue,
         options: choices.map((choice) => ({
           value: choice.value,
           label: choice.label,
+          hint: choice.hint,
+          disabled: choice.disabled,
+        })),
+        input,
+        output,
+      }));
+    },
+
+    async multiselect({ message, choices, defaultValues = [], required = true }) {
+      await ensureIntro();
+      return unwrapValue(await clackPrompts.multiselect({
+        message,
+        initialValues: defaultValues,
+        required,
+        options: choices.map((choice) => ({
+          value: choice.value,
+          label: choice.label,
+          hint: choice.hint,
+          disabled: choice.disabled,
         })),
         input,
         output,
@@ -125,7 +166,7 @@ export function createPromptSession({
     },
 
     async note({ title, body }) {
-      ensureIntro();
+      await ensureIntro();
       if (typeof clackPrompts.note === "function") {
         clackPrompts.note(body, title, { input, output });
         return;
@@ -135,7 +176,7 @@ export function createPromptSession({
     },
 
     async message(body) {
-      ensureIntro();
+      await ensureIntro();
       if (clackPrompts.log?.message) {
         clackPrompts.log.message(body, { symbol: "\u001b[32m|\u001b[0m" });
         return;
@@ -145,7 +186,7 @@ export function createPromptSession({
     },
 
     async confirm({ message = "Continue?", defaultValue = true } = {}) {
-      ensureIntro();
+      await ensureIntro();
       return unwrapValue(await clackPrompts.confirm({
         message,
         initialValue: defaultValue,
@@ -157,7 +198,7 @@ export function createPromptSession({
     },
 
     async input({ message = "Value", defaultValue = "" } = {}) {
-      ensureIntro();
+      await ensureIntro();
       return unwrapValue(await clackPrompts.text({
         message,
         defaultValue: defaultValue || undefined,
@@ -171,4 +212,28 @@ export function createPromptSession({
       return;
     },
   };
+}
+
+async function buildAgentRailIntro(): Promise<string> {
+  try {
+    const logo = await render("AGENTRAIL", {
+      palette: ["#9be564", "#37d67a", "#00b894"],
+      font: "ANSI Shadow",
+      direction: "diagonal",
+    });
+    return [
+      logo.trimEnd(),
+      "",
+      "\u001b[1;38;5;120mLocal Setup\u001b[0m",
+      "\u001b[38;5;151mSet up local files, access, and your first agent.\u001b[0m",
+      "",
+    ].join("\n");
+  } catch {
+    return [
+      "\u001b[1;32mAGENTRAIL\u001b[0m",
+      "\u001b[1;38;5;120mLocal Setup\u001b[0m",
+      "\u001b[38;5;151mSet up local files, access, and your first agent.\u001b[0m",
+      "",
+    ].join("\n");
+  }
 }

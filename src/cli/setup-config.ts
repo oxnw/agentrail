@@ -1,5 +1,7 @@
 import path from "node:path";
 
+import type { ConnectedRepo } from "./agentrail-home.ts";
+
 export type SetupMode = "server";
 export type ProviderMode = "real" | "disabled";
 export type PersistenceKind = "file" | "memory";
@@ -13,7 +15,7 @@ export interface DetectedRepoContext {
 }
 
 export interface SetupConfig {
-  version: 1;
+  version: 2;
   setup: {
     interactionMode: InteractionMode;
     acceptedDefaults: boolean;
@@ -27,9 +29,13 @@ export interface SetupConfig {
   persistence:
     | {
       kind: "file";
-      engine: "sqlite";
+      engine: "file";
       eventStorePath: string;
-      statePath: string;
+      taskStorePath: string;
+      authStorePath: string;
+      agentProfileStorePath: string;
+      routingRuleStorePath: string;
+      routingAuditStorePath: string;
     }
     | {
       kind: "memory";
@@ -52,11 +58,7 @@ export interface SetupConfig {
       webhookSecretEnv: string;
     };
   };
-  targetRepo: {
-    path: string;
-    allowlist: string[];
-    defaultBranch: string;
-  };
+  repos: ConnectedRepo[];
 }
 
 export interface CreateSetupConfigOptions {
@@ -74,6 +76,7 @@ export interface CreateSetupConfigOptions {
   repoAllowlist?: string[];
   defaultBranch?: string;
   markdownExport?: boolean;
+  agentrailHome?: string;
 }
 
 export interface SafetyValidation {
@@ -114,7 +117,7 @@ export function createSetupConfig({
   const resolvedPersistence = persistence ?? "file";
 
   return {
-    version: 1,
+    version: 2,
     setup: {
       interactionMode,
       acceptedDefaults,
@@ -128,14 +131,18 @@ export function createSetupConfig({
       }
       : {
         kind: "file",
-        engine: "sqlite",
-        eventStorePath: ".agentrail/events.ndjson",
-        statePath: ".agentrail/state.sqlite",
+        engine: "file",
+        eventStorePath: "stores/events.ndjson",
+        taskStorePath: "stores/tasks.json",
+        authStorePath: "stores/agent-auth.json",
+        agentProfileStorePath: "stores/agent-profiles.json",
+        routingRuleStorePath: "stores/routing-rules.json",
+        routingAuditStorePath: "stores/routing-audit.json",
       },
     exports: {
       markdown: {
         enabled: markdownExport,
-        path: ".agentrail/notes",
+        path: "notes",
       },
     },
     providers: {
@@ -149,11 +156,11 @@ export function createSetupConfig({
         webhookSecretEnv: "CIRCLECI_WEBHOOK_SECRET",
       },
     },
-    targetRepo: {
+    repos: [{
       path: repoRoot,
-      allowlist,
+      slug: allowlist[0] ?? detectedRepo.remoteSlug ?? repoRoot,
       defaultBranch: branch,
-    },
+    }],
   };
 }
 
@@ -172,10 +179,6 @@ export function validateSafeDefaults(
     reasons.push("`--yes` cannot be used when live GitHub or CircleCI providers would be enabled.");
   }
 
-  if (!detectedRepo.gitIgnoreHasAgentrail) {
-    reasons.push("`--yes` requires `.agentrail/` to be ignored by git in the target repo `.gitignore`.");
-  }
-
   return {
     ok: reasons.length === 0,
     reasons,
@@ -189,9 +192,9 @@ export function buildInitCommand(config: SetupConfig): string {
     `--base-url ${config.server.baseUrl}`,
     `--port ${config.server.port}`,
     `--persistence ${config.persistence.kind}`,
-    `--repo ${quoteShell(config.targetRepo.path, { force: true })}`,
-    `--repo-allowlist ${config.targetRepo.allowlist.map(value => quoteShell(value)).join(",")}`,
-    `--default-branch ${quoteShell(config.targetRepo.defaultBranch)}`,
+    `--repo ${quoteShell(config.repos[0]?.path ?? "", { force: true })}`,
+    `--repo-allowlist ${config.repos.map((repo) => quoteShell(repo.slug)).join(",")}`,
+    `--default-branch ${quoteShell(config.repos[0]?.defaultBranch ?? "main")}`,
   ];
 
   if (config.providers.github.mode !== "real") {
@@ -207,13 +210,15 @@ export function buildInitCommand(config: SetupConfig): string {
 
 export function buildSetupPlan(config: SetupConfig): string[] {
   const steps = [
-    "Write .agentrail/config.json",
-    "Write .agentrail/agent.env.example",
-    "Write .agentrail/README.md",
+    "Write ~/.agentrail/config.json",
+    "Write ~/.agentrail/agent.env.example",
+    "Write ~/.agentrail/server.env",
+    "Write ~/.agentrail/README.md",
+    "Write ~/.agentrail/operator.env",
   ];
 
   if (config.exports.markdown.enabled) {
-    steps.push("Create .agentrail/notes for read-only Markdown snapshots");
+    steps.push("Create ~/.agentrail/notes for read-only Markdown snapshots");
   }
 
   steps.push(`Prepare local API config for ${config.server.baseUrl}`);

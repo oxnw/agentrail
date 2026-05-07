@@ -19,7 +19,7 @@ export interface TaskContext {
 
 export type TaskStatus = "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled";
 export type TaskPriority = "low" | "medium" | "high" | "critical";
-export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "manual_triage" | "provider_assignee_mapping";
+export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "manual_triage";
 
 export interface TaskSource {
   provider: string;
@@ -36,7 +36,6 @@ export interface TaskSource {
   prUrl?: string;
   submissionId?: string;
   labels?: string[];
-  assignees?: string[];
   deliveryId?: string;
   receivedAt?: string;
 }

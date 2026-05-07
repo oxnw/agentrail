@@ -13,14 +13,20 @@ import {
 
 test("agentrail doctor fails when setup state exists but no assigned onboarding task is visible", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-fail-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
+  const previousHome = process.env.AGENTRAIL_HOME;
   let harness: SetupDoctorHarness | null = null;
+  process.env.AGENTRAIL_HOME = homePath;
 
   t.after(async () => {
     restoreSetupApiKey(previousSetupApiKey);
     await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
     await harness?.close();
   });
 
@@ -29,6 +35,7 @@ test("agentrail doctor fails when setup state exists but no assigned onboarding 
 
   await writeDoctorRepo({
     repoRoot,
+    homePath,
     baseUrl: harness.baseUrl,
     agentApiKey: harness.agentApiKey,
     agentId: harness.agentId,
@@ -52,14 +59,20 @@ test("agentrail doctor fails when setup state exists but no assigned onboarding 
 
 test("agentrail doctor does not pass on an unrelated assigned in-progress task", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-unrelated-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
+  const previousHome = process.env.AGENTRAIL_HOME;
   let harness: SetupDoctorHarness | null = null;
+  process.env.AGENTRAIL_HOME = homePath;
 
   t.after(async () => {
     restoreSetupApiKey(previousSetupApiKey);
     await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
     await harness?.close();
   });
 
@@ -82,6 +95,7 @@ test("agentrail doctor does not pass on an unrelated assigned in-progress task",
 
   await writeDoctorRepo({
     repoRoot,
+    homePath,
     baseUrl: harness.baseUrl,
     agentApiKey: harness.agentApiKey,
     agentId: harness.agentId,

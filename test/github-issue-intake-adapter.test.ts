@@ -32,7 +32,8 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(stored!.title, "Fix idempotent ship retry handling");
     assert.strictEqual(stored!.status, "todo");
     assert.strictEqual(stored!.priority, "high");
-    assert.deepStrictEqual(stored!.assignee, { id: "dev-1", name: "dev-1" });
+    assert.deepStrictEqual(stored!.assignee, { id: "unassigned", name: "Unassigned" });
+    assert.strictEqual(stored!.assigneeAgentId, null);
     assert.strictEqual(stored!.links.issue, "https://github.com/oxnw/agentrail/issues/10");
     assert.deepStrictEqual(stored!.acceptanceCriteria, [
       "POST /tasks/{id}/ship is safe to retry.",
@@ -43,12 +44,11 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(stored!.source!.repo, "agentrail");
     assert.strictEqual(stored!.source!.issueNumber, 10);
     assert.deepStrictEqual(stored!.source!.labels, ["bug", "high-priority"]);
-    assert.deepStrictEqual(stored!.source!.assignees, ["dev-1"]);
     assert.strictEqual(stored!.source!.deliveryId, "idemp_01");
     assert.ok(stored!.source!.receivedAt);
   });
 
-  it("defaults assignee when none provided", async () => {
+  it("defaults assignee to unassigned", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
 
@@ -59,7 +59,8 @@ describe("GitHubIssueIntakeAdapter", () => {
     });
 
     const stored = queue.getRawTask(result.taskId);
-    assert.deepStrictEqual(stored!.assignee, { id: "unknown", name: "Unknown" });
+    assert.deepStrictEqual(stored!.assignee, { id: "unassigned", name: "Unassigned" });
+    assert.strictEqual(stored!.assigneeAgentId, null);
   });
 
   it("returns validation error when issueNumber is missing", async () => {
@@ -211,8 +212,8 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(stored!.title, "Updated title");
     assert.strictEqual(stored!.status, "done");
     assert.strictEqual(stored!.priority, "high");
-    assert.deepStrictEqual(stored!.assignee, { id: "bob", name: "bob" });
-    assert.strictEqual(stored!.assigneeAgentId, "bob");
+    assert.deepStrictEqual(stored!.assignee, { id: "unassigned", name: "Unassigned" });
+    assert.strictEqual(stored!.assigneeAgentId, null);
     assert.deepStrictEqual(stored!.source!.labels, ["enhancement", "high-priority"]);
   });
 
@@ -243,13 +244,12 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(stored!.description, "Keep the current task details.\n\n## Acceptance Criteria\n- [ ] Preserve existing task state on sparse updates.");
     assert.strictEqual(stored!.status, "done");
     assert.strictEqual(stored!.priority, "critical");
-    assert.deepStrictEqual(stored!.assignee, { id: "alice", name: "alice" });
+    assert.deepStrictEqual(stored!.assignee, { id: "unassigned", name: "Unassigned" });
     assert.deepStrictEqual(stored!.acceptanceCriteria, [
       "Preserve existing task state on sparse updates.",
     ]);
     assert.strictEqual(stored!.context.project, "oxnw/agentrail");
     assert.deepStrictEqual(stored!.source!.labels, ["critical"]);
-    assert.deepStrictEqual(stored!.source!.assignees, ["alice"]);
   });
 
   it("handles malformed payload gracefully", async () => {

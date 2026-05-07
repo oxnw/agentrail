@@ -39,7 +39,6 @@ function makeSnapshot(overrides: Partial<ProviderIssueSnapshot> = {}): ProviderI
     title: "Define routing behavior",
     bodyDigest: "sha256:test",
     labels: ["architecture", "api"],
-    providerAssignees: ["cto-github-login"],
     project: "Documentation",
     issueType: "architecture",
     priority: "high",
@@ -64,7 +63,6 @@ function seedProfile(
     capabilityTags: ["api-design", "architecture"],
     ownershipTags: ["control-plane"],
     repoAllowlist: ["oxnw/agentrail"],
-    providerIdentityMappings: [{ provider: "github", subject: `${agentId}-github` }],
     maxConcurrentTasks: 5,
     sourceRef: "AGEA-99",
     changeReason: "seed profile for routing tests",
@@ -384,7 +382,6 @@ test("RoutingControlPlane skips agent rules when the target agent is at capacity
   const { routing, taskQueue } = createControlPlane();
   seedProfile(routing, "agt_cto", {
     maxConcurrentTasks: 1,
-    providerIdentityMappings: [{ provider: "github", subject: "cto-github-login" }],
   });
   taskQueue.createTask({
     identifier: "github:oxnw/agentrail:issues/98",
@@ -428,7 +425,6 @@ test("RoutingControlPlane counts active capacity even when recent assigned tasks
 
   seedProfile(routing, "agt_cto", {
     maxConcurrentTasks: 1,
-    providerIdentityMappings: [{ provider: "github", subject: "cto-github-login" }],
   });
   taskQueue.createTask({
     identifier: "github:oxnw/agentrail:issues/active-old",
@@ -646,9 +642,7 @@ test("RoutingControlPlane rejects stale rule set versions during evaluation", as
 
 test("RoutingControlPlane records dry-run evaluations in audit without task actions", async () => {
   const { routing } = createControlPlane();
-  seedProfile(routing, "agt_cto", {
-    providerIdentityMappings: [{ provider: "github", subject: "cto-github-login" }],
-  });
+  seedProfile(routing, "agt_cto");
   seedRuleSet(routing, [
     {
       id: "rule_architecture_to_cto",
@@ -875,18 +869,16 @@ test("RoutingControlPlane rejects agent profile payloads outside the published c
 
   const invalidProfiles = [
     {
-      ...{
-        displayName: "Bad Profile",
-        role: "engineer",
-        status: "active",
-        capabilityTags: [],
-        ownershipTags: [],
-        repoAllowlist: [],
-        providerIdentityMappings: [{ provider: "bitbucket", subject: "bad-user" }],
-        maxConcurrentTasks: 1,
-        sourceRef: "AGEA-99",
-        changeReason: "malformed profile",
-      },
+      displayName: "Bad Profile",
+      role: "engineer",
+      status: "active",
+      capabilityTags: [],
+      ownershipTags: [],
+      repoAllowlist: [],
+      maxConcurrentTasks: 1,
+      sourceRef: "AGEA-99",
+      changeReason: "malformed profile",
+      unsupportedField: true,
     },
     {
       displayName: "Bad Profile",
@@ -895,8 +887,7 @@ test("RoutingControlPlane rejects agent profile payloads outside the published c
       capabilityTags: [],
       ownershipTags: [],
       repoAllowlist: [],
-      providerIdentityMappings: [{ provider: "github", subject: "bad-user", extra: true }],
-      maxConcurrentTasks: 1,
+      maxConcurrentTasks: -1,
       sourceRef: "AGEA-99",
       changeReason: "malformed profile",
     },
@@ -907,7 +898,6 @@ test("RoutingControlPlane rejects agent profile payloads outside the published c
       capabilityTags: Array.from({ length: 51 }, (_, index) => `cap-${index}`),
       ownershipTags: [],
       repoAllowlist: [],
-      providerIdentityMappings: [],
       maxConcurrentTasks: 1,
       sourceRef: "AGEA-99",
       changeReason: "malformed profile",
@@ -1093,9 +1083,7 @@ test("RoutingControlPlane rejects rule-set payloads with unsupported response fi
 
 test("RoutingControlPlane exposes audit lookups for recorded decisions", async () => {
   const { routing } = createControlPlane();
-  seedProfile(routing, "agt_cto", {
-    providerIdentityMappings: [{ provider: "github", subject: "cto-github-login" }],
-  });
+  seedProfile(routing, "agt_cto");
   seedRuleSet(routing, [
     {
       id: "rule_architecture_to_cto",

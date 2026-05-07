@@ -66,7 +66,6 @@ paths:
                   title: Define AgentRail intake routing engine and assignment model
                   bodyDigest: sha256:43c3f4e7b09f4f5f3d1e2a0e7d0a2c66
                   labels: [architecture, api, high-priority]
-                  providerAssignees: [cto-github-login]
                   project: Documentation
                   issueType: architecture
                   priority: high
@@ -303,9 +302,6 @@ paths:
                       capabilityTags: [api-design, architecture, security-review]
                       ownershipTags: [control-plane, docs]
                       repoAllowlist: [oxnw/agentrail]
-                      providerIdentityMappings:
-                        - provider: github
-                          subject: cto-github-login
                       maxConcurrentTasks: 3
                       source: operator_admin
                       sourceRef: AGEA-95
@@ -327,8 +323,7 @@ paths:
       summary: Create or replace one routable agent profile
       description: |
         Creates or replaces the routing profile used by the engine for
-        eligibility, ownership, capability, provider assignee mapping, and
-        capacity checks. Safe to retry with the same `Idempotency-Key` and
+        eligibility, ownership, capability, and capacity checks. Safe to retry with the same `Idempotency-Key` and
         identical request body. Worker task keys must not receive this scope.
       parameters:
         - $ref: '#/components/parameters/AgentIdPath'
@@ -348,9 +343,6 @@ paths:
                   capabilityTags: [api-design, architecture, security-review]
                   ownershipTags: [control-plane, docs]
                   repoAllowlist: [oxnw/agentrail]
-                  providerIdentityMappings:
-                    - provider: github
-                      subject: cto-github-login
                   maxConcurrentTasks: 3
                   sourceRef: AGEA-95
                   changeReason: Seed CTO routing profile for architecture/API work.
@@ -372,9 +364,6 @@ paths:
                       capabilityTags: [api-design, architecture, security-review]
                       ownershipTags: [control-plane, docs]
                       repoAllowlist: [oxnw/agentrail]
-                      providerIdentityMappings:
-                        - provider: github
-                          subject: cto-github-login
                       maxConcurrentTasks: 3
                       source: operator_admin
                       sourceRef: AGEA-95
@@ -484,7 +473,6 @@ paths:
                     title: Build hosted waitlist dashboard
                     bodyDigest: sha256:80edb73a5fcf4d71d01fb66b4ec64d98
                     labels: [frontend, dashboard]
-                    providerAssignees: []
                     project: Dashboard
                     issueType: feature
                     priority: medium
@@ -736,7 +724,6 @@ components:
         - title
         - bodyDigest
         - labels
-        - providerAssignees
         - issueType
         - priority
         - ownershipTags
@@ -761,11 +748,6 @@ components:
         labels:
           type: array
           maxItems: 50
-          items:
-            type: string
-        providerAssignees:
-          type: array
-          maxItems: 20
           items:
             type: string
         project:
@@ -818,7 +800,6 @@ components:
         - capabilityTags
         - ownershipTags
         - repoAllowlist
-        - providerIdentityMappings
         - maxConcurrentTasks
         - sourceRef
         - changeReason
@@ -845,11 +826,6 @@ components:
           maxItems: 200
           items:
             type: string
-        providerIdentityMappings:
-          type: array
-          maxItems: 20
-          items:
-            $ref: '#/components/schemas/ProviderIdentityMapping'
         maxConcurrentTasks:
           type: integer
           minimum: 0
@@ -870,7 +846,6 @@ components:
         - capabilityTags
         - ownershipTags
         - repoAllowlist
-        - providerIdentityMappings
         - maxConcurrentTasks
         - source
         - sourceRef
@@ -903,11 +878,6 @@ components:
           maxItems: 200
           items:
             type: string
-        providerIdentityMappings:
-          type: array
-          maxItems: 20
-          items:
-            $ref: '#/components/schemas/ProviderIdentityMapping'
         maxConcurrentTasks:
           type: integer
           minimum: 0
@@ -1118,10 +1088,6 @@ components:
           type: array
           items:
             type: string
-        providerAssigneesAny:
-          type: array
-          items:
-            type: string
         projects:
           type: array
           items:
@@ -1228,7 +1194,7 @@ components:
           type: [string, 'null']
         assignmentSource:
           type: string
-          enum: [deterministic_rule, classifier, manual_triage, provider_assignee_mapping]
+          enum: [deterministic_rule, classifier, manual_triage]
         routingDecisionId:
           type: string
         assignedAt:
