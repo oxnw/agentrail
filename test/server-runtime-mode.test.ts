@@ -170,7 +170,7 @@ async function waitForServerReady(server, output) {
     await Promise.race([
       new Promise((resolve) => {
         const onData = () => {
-          if (output.join("").includes("API listening")) {
+          if (isServerReadyOutput(output.join(""))) {
             server.stdout.off("data", onData);
             resolve(undefined);
           }
@@ -194,6 +194,10 @@ async function waitForServerReady(server, output) {
       server.stdout.off("data", onData);
     }
   }
+}
+
+function isServerReadyOutput(output: string): boolean {
+  return output.includes("API listening") || output.includes("AgentRail API ready at");
 }
 
 test("server mode serves configured durable task store records", async (t) => {
