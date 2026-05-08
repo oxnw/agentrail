@@ -1,0 +1,31 @@
+# Tests
+test/
+
+# Documentation and examples
+docs/
+examples/
+
+# SDKs (published separately)
+sdk/
+adapters/
+
+# Landing page
+landing/
+landing-next/
+
+# CI / infra
+.github/
+.claude/
+Dockerfile
+compose.yaml
+railway.toml
+.env.example
+.spectral.yaml
+openapitools.json
+agentrail
+
+# Dev config
+CONTRIBUTING.md
+SECURITY.md
+tsconfig.json
+scripts/
