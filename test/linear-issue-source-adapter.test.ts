@@ -3,11 +3,57 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
+import { RoutingControlPlane } from "../src/intake-routing-control-plane.ts";
 import { LinearIssueSourceAdapter } from "../src/linear-issue-source-adapter.ts";
 
 describe("LinearIssueSourceAdapter", () => {
   const now = () => new Date("2026-05-06T18:00:00.000Z");
   const makeQueue = () => new AgentTaskQueue({ now });
+
+  const makeLinearIssuePayload = (overrides: Record<string, unknown> = {}) => ({
+    id: "lin_issue_routing",
+    identifier: "ENG-904",
+    url: "https://linear.app/agentrail/issue/ENG-904/routing",
+    title: "Route Linear issue",
+    description: "Route this issue through AgentRail.",
+    state: { id: "state_backlog", name: "Backlog", type: "backlog" },
+    team: { id: "team_01", key: "ENG", name: "Engineering" },
+    labels: { nodes: [{ name: "integration" }] },
+    workspace: { id: "workspace_01", urlKey: "agentrail" },
+    ...overrides,
+  });
+
+  const seedRoutingRuleSet = (
+    routing: RoutingControlPlane,
+    rules: Parameters<RoutingControlPlane["replaceRuleSet"]>[0]["rules"],
+  ) => {
+    routing.replaceRuleSet({
+      sourceRef: "issue-21-test",
+      changeReason: "seed routing for Linear intake tests",
+      rules,
+      classifier: {
+        enabled: false,
+        provider: "internal-router",
+        confidenceThreshold: 0.82,
+        maxCandidates: 3,
+        fallbackTriageQueueId: "triage_engineering",
+      },
+    }, "agt_router");
+  };
+
+  const seedRoutingProfile = (routing: RoutingControlPlane) => {
+    routing.replaceAgentProfile("agt_linear", {
+      displayName: "Linear Agent",
+      role: "engineer",
+      status: "active",
+      capabilityTags: ["linear"],
+      ownershipTags: ["linear"],
+      repoAllowlist: ["agentrail/ENG"],
+      maxConcurrentTasks: 5,
+      sourceRef: "issue-21-test",
+      changeReason: "seed Linear routing agent",
+    }, "agt_router");
+  };
 
   const createMockLinearFetch = (
     calls: Array<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }>,
@@ -86,6 +132,102 @@ describe("LinearIssueSourceAdapter", () => {
     assert.equal(stored.source?.workflowStateType, "started");
     assert.deepEqual(stored.source?.labels, ["integration", "P1"]);
     assert.equal(stored.source?.deliveryId, "linear-delivery-01");
+  });
+
+  it("rejects required routing when no active routing rule set exists", async () => {
+    const queue = makeQueue();
+    const routing = new RoutingControlPlane({ now, taskQueue: queue });
+    const adapter = new LinearIssueSourceAdapter({
+      taskQueue: queue,
+      routingControlPlane: routing,
+      routingMode: "required",
+      now,
+    });
+
+    await assert.rejects(
+      adapter.ingest(makeLinearIssuePayload(), "linear-required-no-rules"),
+      (err: unknown) => typeof err === "object"
+        && err !== null
+        && "statusCode" in err
+        && err.statusCode === 404
+        && "code" in err
+        && err.code === "not_found",
+    );
+    assert.equal(queue.listRawTasks().length, 0);
+  });
+
+  it("routes imported Linear issues to fallback triage when no deterministic rule matches", async () => {
+    const queue = makeQueue();
+    const routing = new RoutingControlPlane({ now, taskQueue: queue });
+    seedRoutingRuleSet(routing, [
+      {
+        id: "rule_unrelated_repo",
+        name: "Unrelated repository",
+        enabled: true,
+        priority: 10,
+        conditions: {
+          repositories: ["other/workspace"],
+        },
+        target: { type: "triage_queue", id: "triage_other" },
+        confidence: 0.5,
+        explanation: "This rule intentionally does not match the Linear issue.",
+      },
+    ]);
+    const adapter = new LinearIssueSourceAdapter({
+      taskQueue: queue,
+      routingControlPlane: routing,
+      routingMode: "required",
+      now,
+    });
+
+    const first = await adapter.ingest(makeLinearIssuePayload(), "linear-required-triage");
+    const replay = await adapter.ingest(makeLinearIssuePayload(), "linear-required-triage");
+
+    assert.equal(first.taskId, replay.taskId);
+    assert.deepEqual(first.routing, { kind: "triage", target: "triage_engineering" });
+    const stored = queue.getRawTask(first.taskId);
+    assert.ok(stored);
+    assert.equal(stored.triageQueueId, "triage_engineering");
+    assert.equal(stored.assignmentSource, "manual_triage");
+    assert.ok(stored.routingDecisionId);
+    assert.ok(routing.getRoutingAudit(stored.routingDecisionId));
+  });
+
+  it("routes imported Linear issues to matching agents with routing audit metadata", async () => {
+    const queue = makeQueue();
+    const routing = new RoutingControlPlane({ now, taskQueue: queue });
+    seedRoutingProfile(routing);
+    seedRoutingRuleSet(routing, [
+      {
+        id: "rule_linear_integration",
+        name: "Linear integration issues",
+        enabled: true,
+        priority: 10,
+        conditions: {
+          repositories: ["agentrail/ENG"],
+          labelsAny: ["integration"],
+        },
+        target: { type: "agent", id: "agt_linear" },
+        confidence: 0.96,
+        explanation: "Linear integration work routes to the Linear agent.",
+      },
+    ]);
+    const adapter = new LinearIssueSourceAdapter({
+      taskQueue: queue,
+      routingControlPlane: routing,
+      routingMode: "required",
+      now,
+    });
+
+    const result = await adapter.ingest(makeLinearIssuePayload(), "linear-required-assigned");
+
+    assert.deepEqual(result.routing, { kind: "assigned", target: "Linear Agent" });
+    const stored = queue.getRawTask(result.taskId);
+    assert.ok(stored);
+    assert.equal(stored.assigneeAgentId, "agt_linear");
+    assert.equal(stored.assignmentSource, "deterministic_rule");
+    assert.ok(stored.routingDecisionId);
+    assert.ok(routing.getRoutingAudit(stored.routingDecisionId));
   });
 
   it("classifies identical repeat Linear intake as unchanged", async () => {

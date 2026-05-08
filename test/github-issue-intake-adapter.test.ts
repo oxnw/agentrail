@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
 import { GitHubIssueIntakeAdapter } from "../src/github-issue-intake-adapter.ts";
+import { RoutingControlPlane } from "../src/intake-routing-control-plane.ts";
 
 describe("GitHubIssueIntakeAdapter", () => {
   const makeQueue = () => new AgentTaskQueue();
@@ -62,6 +63,27 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.ok(stored, "Task should exist");
     assert.deepStrictEqual(stored!.assignee, { id: "unassigned", name: "Unassigned" });
     assert.strictEqual(stored!.assigneeAgentId, null);
+  });
+
+  it("rejects required routing when no active routing rule set exists", async () => {
+    const queue = makeQueue();
+    const routingControlPlane = new RoutingControlPlane({ taskQueue: queue });
+    const adapter = new GitHubIssueIntakeAdapter({
+      taskQueue: queue,
+      routingControlPlane,
+      routingMode: "required",
+    });
+
+    await assert.rejects(
+      adapter.ingest({
+        issueNumber: 12,
+        issueUrl: "https://github.com/oxnw/agentrail/issues/12",
+        issueTitle: "Requires routing",
+        repository: { owner: "oxnw", repo: "agentrail" },
+      }, "github-required-no-rules"),
+      (err: any) => err.statusCode === 404 && err.code === "not_found",
+    );
+    assert.strictEqual(queue.listRawTasks().length, 0);
   });
 
   it("returns validation error when issueNumber is missing", async () => {

@@ -11,6 +11,7 @@ const WEBHOOK_REPLAY_WINDOW_MS = 60_000;
 export interface LinearIssueSourceAdapterConfig {
   taskQueue: AgentTaskQueue;
   routingControlPlane?: RoutingControlPlane | null;
+  routingMode?: "optional" | "required";
   linearApiKey?: string | null;
   webhookSecret?: string | null;
   fetch?: typeof globalThis.fetch;
@@ -111,6 +112,7 @@ function headerValue(headers: Record<string, string | string[] | undefined>, key
 export class LinearIssueSourceAdapter {
   private taskQueue: AgentTaskQueue;
   private routingControlPlane: RoutingControlPlane | null;
+  private routingMode: "optional" | "required";
   private linearApiKey: string | null;
   private webhookSecret: string | null;
   private fetch: typeof globalThis.fetch;
@@ -120,6 +122,7 @@ export class LinearIssueSourceAdapter {
   constructor({
     taskQueue,
     routingControlPlane = null,
+    routingMode = "optional",
     linearApiKey = process.env.LINEAR_API_KEY || null,
     webhookSecret = process.env.LINEAR_WEBHOOK_SECRET || null,
     fetch = globalThis.fetch,
@@ -131,6 +134,7 @@ export class LinearIssueSourceAdapter {
     }
     this.taskQueue = taskQueue;
     this.routingControlPlane = routingControlPlane;
+    this.routingMode = routingMode;
     this.linearApiKey = linearApiKey;
     this.webhookSecret = webhookSecret;
     this.fetch = fetch;
@@ -488,6 +492,11 @@ export class LinearIssueSourceAdapter {
     deliveryId?: string,
   ): Promise<string | null> {
     if (!this.routingControlPlane) {
+      if (this.routingMode === "required") {
+        throw new TaskLifecycleError(503, "misconfigured", "Provider issue routing is required but the routing control plane is not configured.", {
+          availableActions: ["configure_routing"],
+        });
+      }
       return null;
     }
     const project = issue.teamKey ?? issue.teamName ?? issue.workspaceUrlKey ?? "linear";
@@ -517,7 +526,7 @@ export class LinearIssueSourceAdapter {
       }, deliveryId ? `linear-route:${deliveryId}` : undefined);
       return decision.taskId;
     } catch (error) {
-      if (error instanceof TaskLifecycleError && error.statusCode === 404) {
+      if (this.routingMode === "optional" && error instanceof TaskLifecycleError && error.statusCode === 404) {
         return null;
       }
       throw error;

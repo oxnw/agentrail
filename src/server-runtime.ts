@@ -131,12 +131,14 @@ export function buildRuntime({
   const githubIssueIntakeAdapter = new GitHubIssueIntakeAdapter({
     taskQueue: agentQueue,
     routingControlPlane,
+    routingMode: "required",
     repos,
     now,
   });
   const linearIssueSourceAdapter = new LinearIssueSourceAdapter({
     taskQueue: agentQueue,
     routingControlPlane,
+    routingMode: "required",
     linearApiKey,
     webhookSecret: linearWebhookSecret,
     now,

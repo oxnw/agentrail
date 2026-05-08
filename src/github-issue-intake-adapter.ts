@@ -32,6 +32,7 @@ export interface GitHubIssueIntakeResult {
 export interface GitHubIssueIntakeAdapterConfig {
   taskQueue: AgentTaskQueue;
   routingControlPlane?: RoutingControlPlane | null;
+  routingMode?: "optional" | "required";
   repos?: Array<{ slug: string; defaultBranch: string }>;
   now?: () => Date;
 }
@@ -91,12 +92,14 @@ function sha256(value: unknown): string {
 export class GitHubIssueIntakeAdapter {
   private taskQueue: AgentTaskQueue;
   private routingControlPlane: RoutingControlPlane | null;
+  private routingMode: "optional" | "required";
   private repos: Array<{ slug: string; defaultBranch: string }>;
   private now: () => Date;
 
-  constructor({ taskQueue, routingControlPlane = null, repos = [], now = () => new Date() }: GitHubIssueIntakeAdapterConfig) {
+  constructor({ taskQueue, routingControlPlane = null, routingMode = "optional", repos = [], now = () => new Date() }: GitHubIssueIntakeAdapterConfig) {
     this.taskQueue = taskQueue;
     this.routingControlPlane = routingControlPlane;
+    this.routingMode = routingMode;
     this.repos = repos;
     this.now = now;
   }
@@ -329,6 +332,11 @@ export class GitHubIssueIntakeAdapter {
     idempotencyKey?: string;
   }): Promise<string | null> {
     if (!this.routingControlPlane) {
+      if (this.routingMode === "required") {
+        throw new TaskLifecycleError(503, "misconfigured", "Provider issue routing is required but the routing control plane is not configured.", {
+          availableActions: ["configure_routing"],
+        });
+      }
       return null;
     }
     const repoSlug = `${repository.owner}/${repository.repo}`;
@@ -358,7 +366,7 @@ export class GitHubIssueIntakeAdapter {
       }, idempotencyKey ? `github-route:${idempotencyKey}` : undefined);
       return decision.taskId;
     } catch (error) {
-      if (error instanceof TaskLifecycleError && error.statusCode === 404) {
+      if (this.routingMode === "optional" && error instanceof TaskLifecycleError && error.statusCode === 404) {
         return null;
       }
       throw error;
