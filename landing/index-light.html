@@ -304,6 +304,32 @@
   h2.sec-title em { font-family: var(--serif); font-style: italic; font-weight: 300; color: var(--accent); }
   .sec-blurb { font-size: 17px; color: var(--ink-2); max-width: 540px; }
 
+  /* ===== BEFORE/AFTER DIAGRAM ===== */
+  .ba-sec { padding: 100px 0 80px; border-bottom: 1px solid var(--line); }
+  .ba-hd { text-align: center; margin-bottom: 52px; }
+  .ba-hd .eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px; }
+  .ba-hd h2 { font-family: var(--serif); font-size: clamp(26px, 3vw, 38px); font-weight: 400; letter-spacing: -0.02em; line-height: 1.15; color: var(--ink); }
+  .ba-hd h2 em { color: var(--accent); font-style: italic; }
+  .ba-toggle { display: flex; justify-content: center; margin-bottom: 36px; }
+  .ba-pill { display: flex; background: var(--bg-3); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+  .ba-btn { padding: 8px 24px; border-radius: 999px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); transition: all .25s; border: 1px solid transparent; background: none; }
+  .ba-btn.is-b { background: var(--bg); color: var(--warn); border-color: rgba(232,116,31,0.35); box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  .ba-btn.is-a { background: var(--bg); color: var(--accent); border-color: rgba(0,135,90,0.35); box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  .ba-vis { position: relative; border: 1px solid var(--line); border-radius: 16px; background: var(--bg-2); padding: 40px 32px 32px; overflow: hidden; }
+  .ba-vis::before { content: ''; position: absolute; inset: 0; background-image: linear-gradient(to right, rgba(12,20,32,0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(12,20,32,0.03) 1px, transparent 1px); background-size: 40px 40px; pointer-events: none; border-radius: 16px; }
+  .ba-vis svg { position: relative; z-index: 1; display: block; width: 100%; }
+  .g-before, .g-after, .g-ar { transition: opacity 0.45s ease; }
+  .ba-state-before .g-before { opacity: 1; } .ba-state-before .g-after { opacity: 0; } .ba-state-before .g-ar { opacity: 0; }
+  .ba-state-after  .g-before { opacity: 0; } .ba-state-after  .g-after { opacity: 1; } .ba-state-after  .g-ar { opacity: 1; }
+  @keyframes flow-chaos { to { stroke-dashoffset: -20; } }
+  .ba-state-before .g-before line { stroke-dasharray: 4 3; animation: flow-chaos 0.65s linear infinite; }
+  @keyframes bar-glow { 0%,100% { opacity:.07; } 50% { opacity:.17; } }
+  .ba-state-after .ar-glow { animation: bar-glow 2.8s ease-in-out infinite; }
+  .ba-cap-wrap { position: relative; text-align: center; height: 18px; margin-top: 20px; }
+  .ba-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--ink-3); transition: opacity 0.35s; position: absolute; left: 0; right: 0; }
+  .ba-cap-b { opacity: 1; } .ba-cap-a { opacity: 0; }
+  .ba-state-after .ba-cap-b { opacity: 0; } .ba-state-after .ba-cap-a { opacity: 1; }
+
   /* ===== PROBLEM ===== */
   .problem {
     background: linear-gradient(180deg, transparent, rgba(12,20,32,0.025));
@@ -937,6 +963,98 @@
           <h3>CI is a wall, not a feedback&nbsp;loop.</h3>
           <p>Test failures arrive as raw logs ten minutes after the agent moved on. There's no structured signal — the agent can't reason over a wall of text.</p>
         </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== BEFORE / AFTER DIAGRAM ============== -->
+<section class="ba-sec">
+  <div class="wrap">
+    <div class="ba-hd">
+      <p class="eyebrow">The solution</p>
+      <h2>Agents integrate <em>once.</em><br/>AgentRail handles the rest.</h2>
+    </div>
+    <div class="ba-toggle">
+      <div class="ba-pill">
+        <button class="ba-btn is-b" id="ba-btn-b" onclick="setBa('before')">Before</button>
+        <button class="ba-btn" id="ba-btn-a" onclick="setBa('after')">With AgentRail</button>
+      </div>
+    </div>
+    <div class="ba-vis ba-state-before" id="ba-vis">
+      <svg viewBox="0 0 900 270" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" markerWidth="5" markerHeight="5" refX="8" refY="5" orient="auto">
+            <path d="M1,2 L9,5 L1,8 L3,5 Z" fill="#00875a"/>
+          </marker>
+          <marker id="ah-s" viewBox="0 0 10 10" markerWidth="5" markerHeight="5" refX="2" refY="5" orient="auto-start-reverse">
+            <path d="M1,2 L9,5 L1,8 L3,5 Z" fill="#00875a"/>
+          </marker>
+        </defs>
+
+        <!-- BEFORE: spaghetti lines (15) — each agent to each tool -->
+        <g class="g-before" stroke="#e8741f" stroke-width="1" opacity="0.55">
+          <line x1="126" y1="40" x2="126" y2="230"/>
+          <line x1="126" y1="40" x2="450" y2="230"/>
+          <line x1="126" y1="40" x2="774" y2="230"/>
+          <line x1="288" y1="40" x2="126" y2="230"/>
+          <line x1="288" y1="40" x2="450" y2="230"/>
+          <line x1="288" y1="40" x2="774" y2="230"/>
+          <line x1="450" y1="40" x2="126" y2="230"/>
+          <line x1="450" y1="40" x2="450" y2="230"/>
+          <line x1="450" y1="40" x2="774" y2="230"/>
+          <line x1="612" y1="40" x2="126" y2="230"/>
+          <line x1="612" y1="40" x2="450" y2="230"/>
+          <line x1="612" y1="40" x2="774" y2="230"/>
+          <line x1="774" y1="40" x2="126" y2="230"/>
+          <line x1="774" y1="40" x2="450" y2="230"/>
+          <line x1="774" y1="40" x2="774" y2="230"/>
+        </g>
+
+        <!-- AFTER: AgentRail bar -->
+        <g class="g-ar">
+          <rect class="ar-glow" x="60" y="110" width="780" height="44" rx="8" fill="#00875a"/>
+          <rect x="60" y="110" width="780" height="44" rx="8" stroke="#00875a" stroke-width="1.5" fill="rgba(0,135,90,0.09)"/>
+          <text x="450" y="130" text-anchor="middle" font-size="13" font-weight="600" fill="#00875a" font-family="Space Grotesk, sans-serif">AgentRail</text>
+          <text x="450" y="146" text-anchor="middle" font-size="9" fill="#00875a" opacity="0.6" font-family="JetBrains Mono, monospace">lifecycle · routing · structured events</text>
+        </g>
+
+        <!-- AFTER: clean bidirectional arrows -->
+        <g class="g-after" stroke="#00875a" stroke-width="1.5" marker-end="url(#ah)" marker-start="url(#ah-s)">
+          <line x1="126" y1="40" x2="126" y2="108"/>
+          <line x1="288" y1="40" x2="288" y2="108"/>
+          <line x1="450" y1="40" x2="450" y2="108"/>
+          <line x1="612" y1="40" x2="612" y2="108"/>
+          <line x1="774" y1="40" x2="774" y2="108"/>
+          <line x1="126" y1="156" x2="126" y2="228"/>
+          <line x1="450" y1="156" x2="450" y2="228"/>
+          <line x1="774" y1="156" x2="774" y2="228"/>
+        </g>
+
+        <!-- Agent nodes — dark terminal style -->
+        <rect x="90"  y="10" width="72" height="30" rx="6" fill="#0c1420" stroke="#2a3a4d" stroke-width="1"/>
+        <text x="126" y="29" text-anchor="middle" font-size="10" fill="#7a9cb8" font-family="JetBrains Mono, monospace">agt_1</text>
+        <rect x="252" y="10" width="72" height="30" rx="6" fill="#0c1420" stroke="#2a3a4d" stroke-width="1"/>
+        <text x="288" y="29" text-anchor="middle" font-size="10" fill="#7a9cb8" font-family="JetBrains Mono, monospace">agt_2</text>
+        <rect x="414" y="10" width="72" height="30" rx="6" fill="#0c1420" stroke="#2a3a4d" stroke-width="1"/>
+        <text x="450" y="29" text-anchor="middle" font-size="10" fill="#7a9cb8" font-family="JetBrains Mono, monospace">agt_3</text>
+        <rect x="576" y="10" width="72" height="30" rx="6" fill="#0c1420" stroke="#2a3a4d" stroke-width="1"/>
+        <text x="612" y="29" text-anchor="middle" font-size="10" fill="#7a9cb8" font-family="JetBrains Mono, monospace">agt_4</text>
+        <rect x="738" y="10" width="72" height="30" rx="6" fill="#0c1420" stroke="#2a3a4d" stroke-width="1"/>
+        <text x="774" y="29" text-anchor="middle" font-size="10" fill="#7a9cb8" font-family="JetBrains Mono, monospace">agt_5</text>
+
+        <!-- Tool nodes -->
+        <rect x="81"  y="230" width="90" height="30" rx="6" fill="var(--bg)" stroke="var(--line)" stroke-width="1.3"/>
+        <text x="126" y="250" text-anchor="middle" font-size="10" fill="var(--ink-2)" font-family="JetBrains Mono, monospace">GitHub</text>
+        <rect x="405" y="230" width="90" height="30" rx="6" fill="var(--bg)" stroke="var(--line)" stroke-width="1.3"/>
+        <text x="450" y="250" text-anchor="middle" font-size="10" fill="var(--ink-2)" font-family="JetBrains Mono, monospace">Linear</text>
+        <rect x="729" y="230" width="90" height="30" rx="6" fill="var(--bg)" stroke="var(--line)" stroke-width="1.3"/>
+        <text x="774" y="250" text-anchor="middle" font-size="10" fill="var(--ink-2)" font-family="JetBrains Mono, monospace">CircleCI</text>
+      </svg>
+
+      <div class="ba-cap-wrap">
+        <p class="ba-cap ba-cap-b">Integration spaghetti · every agent needs its own connectors · no shared lifecycle state</p>
+        <p class="ba-cap ba-cap-a">One control plane · shared task context · agents integrate once · safer recovery</p>
       </div>
     </div>
   </div>
@@ -1577,6 +1695,15 @@
     auto = (auto + 1) % STAGES.length;
     selectStage(auto);
   }, 3500);
+
+function setBa(state) {
+  const vis = document.getElementById('ba-vis');
+  const btnB = document.getElementById('ba-btn-b');
+  const btnA = document.getElementById('ba-btn-a');
+  vis.className = 'ba-vis ba-state-' + state;
+  btnB.className = 'ba-btn' + (state === 'before' ? ' is-b' : '');
+  btnA.className = 'ba-btn' + (state === 'after'  ? ' is-a' : '');
+}
 </script>
 
 </body>
