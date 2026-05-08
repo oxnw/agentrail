@@ -7,6 +7,7 @@ import { createServer } from "../src/app.ts";
 import { AgentAuthStore } from "../src/agent-auth-store.ts";
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
 import { GitHubIssueIntakeAdapter } from "../src/github-issue-intake-adapter.ts";
+import { RoutingControlPlane } from "../src/intake-routing-control-plane.ts";
 import { LinearIssueSourceAdapter } from "../src/linear-issue-source-adapter.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
@@ -23,22 +24,27 @@ async function listen(server) {
 function createTestServer({
   now,
   createAdapter = null,
+  createRoutingControlPlane = null,
   adapterKey,
   withAuth = false,
 }) {
   const eventStore = new TaskEventStore({ now });
   const taskQueue = new AgentTaskQueue({ now, eventStore });
   const authStore = withAuth ? new AgentAuthStore({ now }) : null;
-  const adapter = typeof createAdapter === "function" ? createAdapter(taskQueue) : null;
+  const routingControlPlane = typeof createRoutingControlPlane === "function"
+    ? createRoutingControlPlane(taskQueue)
+    : null;
+  const adapter = typeof createAdapter === "function" ? createAdapter(taskQueue, routingControlPlane) : null;
   const server = createServer({
     store: eventStore,
     taskLifecycleStore: taskQueue,
     [adapterKey]: adapter,
+    routingControlPlane: routingControlPlane ?? undefined,
     authStore: authStore ?? undefined,
     now,
   });
 
-  return { eventStore, taskQueue, authStore, server };
+  return { eventStore, taskQueue, authStore, routingControlPlane, server };
 }
 
 test("POST /providers/github/intake creates a task and returns 201", async () => {
@@ -262,6 +268,60 @@ test("POST /providers/linear/import imports a Linear issue by identifier", async
     const stored = taskQueue.getRawTask(json.data.taskId);
     assert.ok(stored);
     assert.strictEqual(stored.title, "Imported from Linear API");
+  } finally {
+    server.close();
+  }
+});
+
+test("POST /providers/linear/import rejects when required routing has no active rule set", async () => {
+  const now = () => new Date("2026-05-06T18:00:00Z");
+  const { taskQueue, authStore, server } = createTestServer({
+    now,
+    adapterKey: "linearIntakeAdapter",
+    createRoutingControlPlane: (queue) => new RoutingControlPlane({ taskQueue: queue, now }),
+    createAdapter: (queue, routingControlPlane) => new LinearIssueSourceAdapter({
+      taskQueue: queue,
+      routingControlPlane,
+      routingMode: "required",
+      now,
+      linearApiKey: "lin_api_key_test",
+      fetch: async () => new Response(JSON.stringify({
+        data: {
+          issue: {
+            id: "lin_issue_no_rule_set",
+            identifier: "ENG-778",
+            url: "https://linear.app/agentrail/issue/ENG-778/no-rule-set",
+            title: "Requires routing configuration",
+            description: "Imported through /providers/linear/import",
+            state: { id: "state_backlog", name: "Backlog", type: "backlog" },
+            team: { id: "team_01", key: "ENG", name: "Engineering" },
+            organization: { id: "workspace_01", urlKey: "agentrail" },
+          },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    }),
+    withAuth: true,
+  });
+  const { data: testKey } = authStore.createKey({ name: "test", agent: { id: "agt_test", displayName: "Test Agent", role: "developer", externalIdentities: [] }, scopes: ["tasks:write", "tasks:read"] }, "idemp_linear_import_no_rules");
+  const baseUrl = await listen(server);
+
+  try {
+    const res = await fetch(`${baseUrl}/providers/linear/import`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${testKey.apiKey}`,
+        "idempotency-key": "idemp_01LINEARNORULES",
+      },
+      body: JSON.stringify({ selector: "ENG-778" }),
+    });
+
+    const bodyText = await res.text();
+    assert.strictEqual(res.status, 404, `Expected 404, got ${res.status}: ${bodyText}`);
+    const json = JSON.parse(bodyText);
+    assert.strictEqual(json.error.code, "not_found");
+    assert.strictEqual(json.error.message, "No active routing rule set is configured.");
+    assert.strictEqual(taskQueue.listRawTasks().length, 0);
   } finally {
     server.close();
   }

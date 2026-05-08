@@ -8,6 +8,7 @@ import { runCli } from "../src/cli/index.ts";
 import { ensureLocalOperatorBootstrap } from "../src/cli/local-bootstrap.ts";
 import { createSetupConfig, type DetectedRepoContext } from "../src/cli/setup-config.ts";
 import { writeSetupFiles } from "../src/cli/setup-files.ts";
+import { RoutingRuleStore } from "../src/routing-rule-store.ts";
 import { createMemoryWriter } from "./helpers/memory-writer.ts";
 
 const detectedRepo: DetectedRepoContext = {
@@ -56,6 +57,36 @@ test("agentrail linear import imports one issue through the local provider route
   await writeSetupFiles({ homePath, repoRoot, config });
   await ensureLocalOperatorBootstrap({ homePath, repoRoot, config });
   await writeFile(path.join(homePath, "provider.env"), 'LINEAR_API_KEY="lin_api_key_test"\n', { mode: 0o600 });
+  assert.equal(config.persistence.kind, "file");
+  if (config.persistence.kind !== "file") {
+    throw new Error("Linear management test requires file persistence.");
+  }
+  new RoutingRuleStore({
+    now: () => new Date("2026-05-06T18:00:00.000Z"),
+    storagePath: path.resolve(homePath, config.persistence.routingRuleStorePath),
+  }).replaceRuleSet({
+    sourceRef: "linear-management-test",
+    changeReason: "seed routing for CLI import",
+    rules: [
+      {
+        id: "rule_unrelated_repo",
+        name: "Unrelated repository",
+        enabled: true,
+        priority: 10,
+        conditions: { repositories: ["other/workspace"] },
+        target: { type: "triage_queue", id: "triage_other" },
+        confidence: 0.5,
+        explanation: "This rule intentionally does not match the imported Linear issue.",
+      },
+    ],
+    classifier: {
+      enabled: false,
+      provider: "internal-router",
+      confidenceThreshold: 0.82,
+      maxCandidates: 3,
+      fallbackTriageQueueId: "triage_default",
+    },
+  }, "agt_router");
 
   globalThis.fetch = async (input, init) => {
     const url = String(input);
