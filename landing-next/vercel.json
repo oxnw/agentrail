@@ -1,12 +1,14 @@
 {
-  "rewrites": [
+  "redirects": [
     {
       "source": "/docs",
-      "destination": "https://agentrail.mintlify.app/docs"
+      "destination": "https://agentrail.mintlify.app/docs",
+      "permanent": false
     },
     {
       "source": "/docs/:match*",
-      "destination": "https://agentrail.mintlify.app/docs/:match*"
+      "destination": "https://agentrail.mintlify.app/docs/:match*",
+      "permanent": false
     }
   ]
 }
