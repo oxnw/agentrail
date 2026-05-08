@@ -5,15 +5,15 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { runDoctor } from "./doctor.ts";
-import { runAgentCreate, runAgentUpdate } from "./agent-management.ts";
-import { primaryRepoFromConfig, resolveAgentRailHome } from "./agentrail-home.ts";
+import { parseAgentCreateArgs, runAgentCreate, runAgentUpdate } from "./agent-management.ts";
+import { primaryRepoFromConfig, readSetupConfigFromHome, resolveAgentRailHome } from "./agentrail-home.ts";
 import { runConfigCommand, runRepoCommand, runServerStart } from "./global-management.ts";
 import { runLinearCommand } from "./linear-management.ts";
 import { ensureLocalOperatorBootstrap, hasExistingLocalAgents, withTemporaryLocalServer } from "./local-bootstrap.ts";
 import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
 import { runProviderCommand } from "./provider-management.ts";
 import { detectRepoContext } from "./repo-detection.ts";
-import { buildInitCommand, createSetupConfig, validateSafeDefaults, type DetectedRepoContext } from "./setup-config.ts";
+import { buildInitCommand, createSetupConfig, validateSafeDefaults, type DetectedRepoContext, type SetupConfig } from "./setup-config.ts";
 import { writeSetupFiles, type WriteSetupFilesResult } from "./setup-files.ts";
 import { runTaskSourceRepair } from "./task-source-repair.ts";
 import {
@@ -103,13 +103,13 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
     }
 
     if (command === "agent" && args[0] === "create") {
-      return await runAgentCreate(args.slice(1), {
+      return await runStandaloneAgentCreate(args.slice(1), {
         cwd,
         stdinIsTTY,
         stdoutIsTTY,
         stdout,
         stderr,
-        detectRepoContext: detectRepo,
+        detectRepo,
         createPrompt: options.createPrompt,
       });
     }
@@ -240,6 +240,114 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
   }
 }
 
+async function runStandaloneAgentCreate(argv: string[], {
+  cwd,
+  stdinIsTTY,
+  stdoutIsTTY,
+  stdout,
+  stderr,
+  detectRepo,
+  createPrompt,
+}: {
+  cwd: string;
+  stdinIsTTY: boolean;
+  stdoutIsTTY: boolean;
+  stdout: Writer;
+  stderr: Writer;
+  detectRepo: (cwd: string) => DetectedRepoContext | Promise<DetectedRepoContext>;
+  createPrompt?: () => PromptSession;
+}): Promise<number> {
+  const flags = parseAgentCreateArgs(argv);
+  const runDirect = () => runAgentCreate(argv, {
+      cwd,
+      stdinIsTTY,
+      stdoutIsTTY,
+      stdout,
+      stderr,
+      detectRepoContext: detectRepo,
+      createPrompt,
+    });
+
+  if (flags.help || flags.configPath) {
+    return await runDirect();
+  }
+
+  if (flags.baseUrl && flags.setupApiKey) {
+    return await runDirect();
+  }
+
+  const homePath = resolveAgentRailHome({ cwd, explicitHome: null });
+  const setupConfig = await readSetupConfigFromHome(homePath);
+  if (!isTemporaryLocalAgentCreateConfig(setupConfig)) {
+    return await runDirect();
+  }
+
+  if (flags.baseUrl && !sameServerBaseUrl(flags.baseUrl, setupConfig.server.baseUrl)) {
+    return await runDirect();
+  }
+
+  const operatorBootstrap = await ensureLocalOperatorBootstrap({
+    homePath,
+    config: setupConfig,
+  });
+  if (!operatorBootstrap && !flags.setupApiKey) {
+    return await runDirect();
+  }
+
+  const setupApiKey = flags.setupApiKey ?? operatorBootstrap?.operatorKey;
+  if (!setupApiKey) {
+    return await runDirect();
+  }
+
+  return await withTemporaryLocalServer({
+    homePath,
+    config: setupConfig,
+    validateExistingBaseUrl: (baseUrl) => validateProvisioningServer(baseUrl, setupApiKey),
+    handler: async ({ baseUrl }) => runAgentCreate([
+      ...argv,
+      "--setup-api-key",
+      setupApiKey,
+      "--base-url",
+      baseUrl,
+    ], {
+      cwd,
+      stdinIsTTY,
+      stdoutIsTTY,
+      stdout,
+      stderr,
+      detectRepoContext: detectRepo,
+      createPrompt,
+      agentEnvBaseUrl: setupConfig.server.baseUrl,
+    }),
+  });
+}
+
+function isTemporaryLocalAgentCreateConfig(config: unknown): config is SetupConfig {
+  if (!config || typeof config !== "object") {
+    return false;
+  }
+  const candidate = config as Partial<SetupConfig>;
+  return candidate.persistence?.kind === "file"
+    && typeof candidate.server?.baseUrl === "string"
+    && candidate.server.baseUrl.length > 0;
+}
+
+function sameServerBaseUrl(left: string, right: string): boolean {
+  const normalizedLeft = normalizeComparableBaseUrl(left);
+  const normalizedRight = normalizeComparableBaseUrl(right);
+  return normalizedLeft !== null && normalizedLeft === normalizedRight;
+}
+
+function normalizeComparableBaseUrl(value: string): string | null {
+  const trimmed = value.trim();
+  const candidate = /^https?:\/\//iu.test(trimmed) ? trimmed : `http://${trimmed}`;
+  try {
+    return new URL(candidate).toString().replace(/\/+$/u, "");
+  } catch {
+    return null;
+  }
+}
+
 async function finalizeInit({
   action,
   config,
@@ -324,6 +432,7 @@ async function finalizeInit({
           detectRepoContext: detectRepo,
           createPrompt: prompt ? () => prompt : createPrompt,
           bootstrapSummaryMode: true,
+          agentEnvBaseUrl: config.server.baseUrl,
         }),
       });
       if (firstAgentExitCode !== 0) {

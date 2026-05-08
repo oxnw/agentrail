@@ -64,6 +64,81 @@ test("init creates local operator state and writes local setup env files", async
   assert.match(serverEnv, new RegExp(`AGENTRAIL_AGENT_AUTH_STORE_PATH=${escapeForRegExp(path.join(agentrailHome, "stores", "agent-auth.json"))}`));
 });
 
+test("standalone agent create starts a temporary local server when the configured server is stopped", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-create-temp-server-"));
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  const baseUrl = await reserveClosedLocalBaseUrl();
+  process.env.AGENTRAIL_HOME = agentrailHome;
+  const detectRepoContext = async () => ({
+    repoPath: repoRoot,
+    remoteSlug: "oxnw/agentrail",
+    defaultBranch: "main",
+    gitIgnoreHasAgentrail: true,
+  });
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(agentrailHome, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+  });
+
+  const initExitCode = await runCli([
+    "init",
+    "--yes",
+    "--mode",
+    "server",
+    "--provider-mode",
+    "disabled",
+    "--repo",
+    repoRoot,
+    "--base-url",
+    baseUrl,
+  ], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    detectRepoContext,
+  });
+  assert.equal(initExitCode, 0, stderr.toString());
+
+  const createExitCode = await runCli([
+    "agent",
+    "create",
+    "--agent-id",
+    "agt_temp_create",
+    "--name",
+    "Temp Create",
+    "--runner",
+    "codex",
+    "--scopes",
+    "tasks:read,tasks:write",
+    "--repo-allowlist",
+    "oxnw/agentrail",
+    "--capability-tags",
+    "code,tests",
+    "--set-default-env",
+  ], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    detectRepoContext,
+  });
+
+  assert.equal(createExitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /Created agent Temp Create \(agt_temp_create\)\./);
+
+  const envText = await readFile(path.join(agentrailHome, "agents", "agt_temp_create.env"), "utf8");
+  assert.match(envText, new RegExp(`AGENTRAIL_BASE_URL=${escapeForRegExp(baseUrl)}`));
+});
+
 test("temporary local verification reuses an already-running healthy server", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-init-reuse-server-"));
   const server = http.createServer((request, response) => {
@@ -204,6 +279,21 @@ function createMemoryWriter() {
       return buffer;
     },
   };
+}
+
+async function reserveClosedLocalBaseUrl(): Promise<string> {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(204).end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected TCP address for temporary server.");
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return baseUrl;
 }
 
 function escapeForRegExp(value: string): string {
