@@ -51,7 +51,7 @@ rely on today:
 | Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the OSS server does not yet run a live provider intake worker. | **Legacy:** The removed demo used a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
 | Routing | **Current:** Routing rules, dry-run evaluation, assignment, and audit are implemented as operator/admin contracts; `AGENTRAIL_ROUTING_AUDIT_STORE_PATH` persists decisions and evaluation/intake idempotency replay locally. | **Legacy:** The removed demo skipped routing by starting with a pre-assigned task. | **Planned:** Hosted control-plane deployments evaluate deterministic rules, store `routingReason`, wake the selected agent, and expose managed audit history. |
 | Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented on the default server path. | **Legacy:** Placeholder demo keys are no longer valid on the core runtime. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
-| Local/self-hosted setup | **Current:** `agentrail init` writes local `.agentrail` scaffolding, and `agentrail doctor` verifies health, auth, profile/routing state, and `/tasks/mine` visibility. The middle auth/routing/setup bootstrap still happens through the public HTTP contracts. | **Legacy:** The removed demo runtime used a built-in fixture task instead of explicit task-store configuration. | **Planned:** The setup CLI follows `agentrail init` -> `agentrail server start` -> `agentrail agent create/connect`, writes local `.agentrail` config/env output, creates the agent identity/profile/key/routing state, and verifies `/tasks/mine`. |
+| Local/self-hosted setup | **Current:** `agentrail init` writes local `.agentrail` scaffolding and operator bootstrap state, `agentrail agent create` creates scoped local agent credentials/profile/routing, and `agentrail doctor` verifies health, auth, profile/routing state, and `/tasks/mine` visibility. | **Legacy:** The removed demo runtime used a built-in fixture task instead of explicit task-store configuration. | **Planned:** Hosted setup will wrap the same identity/profile/routing concepts in a managed team onboarding service. |
 | Live task store | **Current:** The server reads durable task records from `AGENTRAIL_TASK_STORE_PATH`, can persist routing audit records through `AGENTRAIL_ROUTING_AUDIT_STORE_PATH`, and never falls back to hidden fixture data. | **Legacy:** The removed demo used an in-memory deterministic lifecycle store. | **Planned:** The control plane persists assigned tasks, routing decisions, lifecycle state, and event cursors in managed storage. |
 | Submit | **Current:** `mode: "adapter_managed"` lets the GitHub submit adapter create or reuse provider PRs from persisted `task.source` metadata. | **Legacy:** Artifact-style placeholder PR examples remain documentation-only; they are not a runtime mode. | **Planned:** Submit is always mediated by provider adapters, with idempotent create-or-reuse behavior and compact response state. |
 | CI / review | **Current:** GitHub Actions, CircleCI, and GitHub review feedback adapters expose compact status summaries from persisted `task.source` metadata. | **Legacy:** The removed demo simulated CI and review transitions locally. | **Planned:** The control plane stores provider status snapshots, emits task events, and prefers push delivery over agent polling. |
@@ -75,12 +75,12 @@ Current OSS/server model:
 
 Current CLI-assisted model:
 
-- `agentrail init` gathers repo/base URL defaults and writes the local setup
-  files without secrets.
-- The operator then creates the `AgentProfile`, routing rule set, and setup
-  verification task through the public setup contracts.
-- `agentrail doctor` uses the generated agent key plus an operator/setup key to
-  verify that the bootstrap actually produced visible assigned work.
+- `agentrail init` gathers repo/base URL defaults, writes local setup files, and
+  creates local operator bootstrap state.
+- `agentrail agent create` creates the scoped agent key, `AgentProfile`, starter
+  routing state, and managed agent env file.
+- `agentrail doctor` uses the generated agent key plus operator state to verify
+  that the bootstrap produced visible assigned work.
 
 Why it works this way:
 
@@ -132,50 +132,30 @@ on a human pasting a PR URL into AgentRail.
 
 ### Track A: Local Self-Hosted Bootstrap
 
-Use this when you want to run the real server locally with explicit task-store
-and task-source configuration. The default path is:
+Use this when you want to run the real server locally with CLI-managed config,
+agent credentials, routing, and provider state. The default path is:
 
 1. Run `agentrail init`.
-2. Start the server with the current task-store/task-source runtime.
-3. Bootstrap the operator key, agent key, profile, routing rule set, and setup
-   verification task through the public endpoints.
+2. Start the server with `agentrail server start`.
+3. Create or connect the first local agent with `agentrail agent create` if
+   `init` did not already do it interactively.
 4. Finish with `agentrail doctor`.
 
 The copy-paste version of that flow lives in the
-[five-minute quick start](./quick-start.md). The raw lifecycle curls later in
-this guide are reference material after doctor passes.
+[five-minute quick start](./quick-start.md). Raw lifecycle curls are developer
+reference material after doctor passes.
 
 ```bash
-git clone https://github.com/oxnw/agentrail.git
-cd agentrail
-npm install
-cp .env.example .env
-cp examples/self-hosted-task-store.json .agentrail.tasks.json
+npm install -g @agentrail-core/cli
+agentrail init
+agentrail server start
 ```
 
-Edit the copied task-store JSON to match your repository, issue, branch, and
-agent id, then start the server:
+In a second terminal:
 
 ```bash
-export GITHUB_TOKEN=ghp_your_token
-export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
-npm start
-```
-
-Bootstrap an API key before calling protected routes:
-
-```bash
-curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
-  -H "content-type: application/json" \
-  -H "idempotency-key: bootstrap-local-admin" \
-  -d '{
-    "agent": {
-      "id": "agt_local_agent",
-      "displayName": "Local Agent",
-      "role": "developer"
-    },
-    "scopes": ["auth:admin", "tasks:read", "tasks:write", "ci:read", "reviews:read", "ship:write"]
-  }'
+agentrail agent create
+agentrail doctor
 ```
 
 Cloud boundary note: Track A proves the local lifecycle contract. It does not

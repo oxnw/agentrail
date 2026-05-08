@@ -2,334 +2,162 @@
 
 [![CI](https://github.com/oxnw/agentrail/actions/workflows/ci.yml/badge.svg)](https://github.com/oxnw/agentrail/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Node.js](https://img.shields.io/badge/node-%E2%89%A522.6-brightgreen)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)](https://nodejs.org/)
 
-AgentRail is an agent-native developer operations API for the full project
-lifecycle: issue -> PR -> CI -> review -> ship.
+AgentRail is a local-first control plane for coding agents. It gives agents one
+compact API for the project loop: issue intake, routing, assigned work, PR
+submission, CI, review feedback, and shipping.
 
-The MVP in this repository is a local, deterministic release candidate that
-lets coding agents such as Claude Code, Codex, Cursor, and Devin complete a
-task through one compact API instead of stitching together raw GitHub, Linear,
-CI, review, and deployment calls.
+The OSS repo is a self-managed single-instance runtime. It is built for local
+evaluation and self-hosting. The planned AgentRail Cloud product is the managed
+team/fleet layer for hosted connectors, shared run history, routing, wakes,
+SSO/RBAC, audit, dashboards, and reliability.
 
-AgentRail OSS is intentionally runnable as a local or self-managed
-single-instance product. The planned AgentRail Cloud product is the managed
-team and fleet operations layer: hosted connector operations, durable shared run
-history and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards,
-support, compliance, and hosted reliability.
+## What Agents Get
 
-## Why Agents Need It
-
-Raw developer tools are built for humans. They expose broad resources, verbose
-logs, ambiguous next steps, and state changes that agents must discover by
-polling. That wastes context window budget and creates brittle retry behavior.
-
-AgentRail gives agents:
-
-- Compact task state with `availableActions` on every response.
-- Retry-safe mutating operations through idempotency keys.
-- CI and review summaries shaped for action, not full log replay.
-- Push-first task events over SSE and webhooks.
-- Least-privilege agent API keys and usage attribution.
-- Adapter boundaries for GitHub, Linear, CI, review, and deployment systems.
+- Assigned tasks with compact state and `availableActions`.
+- Routing from GitHub or Linear issues to the right local agent.
+- Retry-safe mutations through idempotency keys.
+- CI and review summaries shaped for action instead of raw log replay.
+- Real-time task events over SSE and webhooks.
+- Local provider setup for GitHub, CircleCI, and Linear.
 
 ## Quickstart
 
-Prerequisite: Node.js 22.6 or newer, or Docker Desktop with Docker Compose.
+Prerequisites:
 
-One-command Docker setup:
+- Node.js 24 or newer.
+- `npm`.
+- Optional provider credentials if you want live GitHub, CircleCI, or Linear
+  integration.
+
+Install the CLI:
 
 ```bash
-git clone https://github.com/oxnw/agentrail.git && cd agentrail && docker compose up --build
+npm install -g @agentrail-core/cli
 ```
 
-The local API starts on `http://127.0.0.1:3000` by default. Docker Compose
-persists task event stream replay data in the `agentrail-event-data` volume.
-This is self-managed OSS, not a Cloud-equivalent managed team control plane.
+Initialize AgentRail:
 
-Default local onboarding is now CLI-assisted: run `agentrail init`, bring up
-the current server runtime, seed auth/routing/setup state through the public
-contracts, and finish with `agentrail doctor`. The full walkthrough lives in
-[docs/quick-start.md](docs/quick-start.md) and ties the routing bootstrap back
-to [AGEA-95](https://github.com/oxnw/agentrail/issues/95) and the integration-doc cleanup back to
-[AGEA-93](https://github.com/oxnw/agentrail/issues/93).
+```bash
+agentrail init
+```
 
-Node setup:
+You can also run the first command without a global install:
+
+```bash
+npx @agentrail-core/cli init
+```
+
+The interactive setup writes local config under `~/.agentrail`, creates the
+local operator bootstrap, and can create your first local agent. It does not ask
+you to hand-write API keys or edit a seed task store.
+
+Start the local API:
+
+```bash
+agentrail server start
+```
+
+In another terminal, verify setup:
+
+```bash
+agentrail doctor
+```
+
+`doctor` is the success gate. It checks the local API, agent credentials,
+profile/routing state, and whether the current agent can see assigned work.
+
+## Connect Providers
+
+Provider connections are optional and can be added after `init`.
+
+```bash
+agentrail provider connect github
+agentrail provider connect circleci
+agentrail provider connect linear
+```
+
+Interactive provider setup asks for secrets in hidden prompts and writes them to
+local env files. Non-interactive automation can still use environment variables
+such as `GITHUB_TOKEN`, `CIRCLECI_TOKEN`, `LINEAR_API_KEY`, and webhook secrets.
+
+Import a Linear issue into AgentRail after connecting Linear:
+
+```bash
+agentrail linear import ENG-123
+```
+
+Imported provider issues go through the routing engine. If routing is not
+configured, AgentRail fails closed instead of silently creating unassigned work.
+
+## Work With Agents
+
+Create or update local agent profiles:
+
+```bash
+agentrail agent create
+agentrail agent update --agent-id agt_example
+```
+
+Inspect local config and connected repos:
+
+```bash
+agentrail config show
+agentrail repo list
+agentrail provider list
+```
+
+Repair a task source if older imported data needs to be corrected:
+
+```bash
+agentrail task source repair --task-id tsk_... --file source-patch.json
+```
+
+## Docker
+
+For a server-only smoke run:
+
+```bash
+docker compose up --build
+```
+
+The API listens on `http://127.0.0.1:3000` by default. CLI-assisted onboarding
+is still the recommended path for a useful local setup because it creates local
+agent, routing, and provider state.
+
+## Documentation
+
+- [Developer guide](./docs/developer.md): local development, architecture, API
+  contracts, SDK examples, and manual HTTP flows.
+- [Five-minute quick start](./docs/quick-start.md): expanded onboarding notes
+  and manual reference commands.
+- [Integration guide for Claude Code, Codex, and Cursor](./docs/integration-guide.md).
+- [Agent recipes](./docs/agent-recipes.md).
+- [Cloud boundary](./docs/cloud.md).
+- [Task lifecycle OpenAPI](./docs/api/task-lifecycle.openapi.yaml).
+- [Intake routing OpenAPI](./docs/api/intake-routing-admin.openapi.yaml).
+- [Intake routing architecture](./docs/architecture/intake-routing-engine.md).
+
+## Development
+
+Common repo commands:
 
 ```bash
 git clone https://github.com/oxnw/agentrail.git
 cd agentrail
-cp .env.example .env
 npm install
-cp examples/self-hosted-task-store.json .agentrail.tasks.json
-```
-
-Edit the copied task-store file so the repository owner, repo, issue number,
-branch, and assignee match your local setup. Then start the server with real
-GitHub credentials:
-
-```bash
-export GITHUB_TOKEN=ghp_your_token
-export AGENTRAIL_TASK_STORE_PATH=$PWD/.agentrail.tasks.json
-npm start
-```
-
-If you prefer persistent local configuration, put the same values in `.env`
-instead of exporting them in your shell. Shell exports override `.env` for the
-current session.
-
-Current shipped CLI surface:
-
-- `agentrail init` writes the local `.agentrail` config and env scaffolding.
-- Interactive `agentrail init` can optionally connect GitHub immediately by
-  asking you to paste the token into a hidden prompt.
-- `agentrail provider connect <github|circleci|linear>` asks you to paste secrets into
-  hidden prompts interactively and still supports env vars for non-interactive
-  automation.
-- `agentrail doctor` verifies health, auth, profile/routing readiness, and
-  `/tasks/mine` visibility.
-- The server-backed `agentrail agent create/connect` wrapper is still planned,
-  so the middle auth/routing/setup bootstrap currently stays explicit and
-  testable through the public HTTP contracts.
-
-See the detailed setup contract in
-[docs/architecture/local-self-hosted-setup-cli-contract.md](docs/architecture/local-self-hosted-setup-cli-contract.md).
-
-Bootstrap the first admin API key:
-
-```bash
-curl -s -X POST http://127.0.0.1:3000/agent-api-keys \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: bootstrap-local-admin' \
-  -d '{
-    "agent": {
-      "id": "agt_local_agent",
-      "displayName": "Local Agent",
-      "role": "developer"
-    },
-    "scopes": [
-      "auth:admin",
-      "tasks:read",
-      "tasks:write",
-      "ci:read",
-      "reviews:read",
-      "ship:write"
-    ]
-  }'
-```
-
-Copy the returned `data.apiKey` value into your shell for later requests:
-
-```bash
-export AGENTRAIL_API_KEY=<paste-the-returned-data.apiKey-here>
-```
-
-Run tests:
-
-```bash
+npm link
+npm run typecheck
 npm test
+npm run lint:openapi
 ```
 
-Docker image:
+The package exposes the `agentrail` binary:
 
 ```bash
-docker build -t agentrail .
-docker run --rm -p 3000:3000 agentrail
+agentrail --help
 ```
-
-## Advanced Manual Lifecycle Calls
-
-Use the raw lifecycle calls below as reference material after `agentrail doctor`
-passes. They are no longer the primary local onboarding path.
-
-List the current agent's task:
-
-```bash
-# Replace this with the data.apiKey value returned by the bootstrap step.
-export AGENTRAIL_API_KEY=<paste-the-returned-data.apiKey-here>
-
-curl -s http://127.0.0.1:3000/tasks/mine?status=in_progress \
-  -H "authorization: Bearer $AGENTRAIL_API_KEY"
-```
-
-Submit work for review:
-
-```bash
-curl -s -X POST http://127.0.0.1:3000/tasks/tsk_SELFHOSTED000000000001/submit \
-  -H "authorization: Bearer $AGENTRAIL_API_KEY" \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: submit-local-1' \
-  -d '{
-    "summary": "Implemented the assigned change.",
-    "mode": "adapter_managed",
-    "pullRequest": {
-      "title": "Validate the self-hosted AgentRail loop",
-      "draft": false
-    }
-  }'
-```
-
-Read CI and review feedback:
-
-```bash
-curl -s http://127.0.0.1:3000/tasks/tsk_SELFHOSTED000000000001/ci-status \
-  -H "authorization: Bearer $AGENTRAIL_API_KEY"
-curl -s http://127.0.0.1:3000/tasks/tsk_SELFHOSTED000000000001/review-feedback \
-  -H "authorization: Bearer $AGENTRAIL_API_KEY"
-```
-
-## Architecture
-
-The repository is intentionally API-first:
-
-- `docs/api/task-lifecycle.openapi.yaml` is the public contract.
-- `docs/api/intake-routing-admin.openapi.yaml` is the separate operator/admin
-  contract for provider issue intake, routing decisions, assignment, and audit.
-- `docs/architecture/intake-routing-engine.md` records the routing engine
-  boundary and assignment model.
-- `src/app.ts` exposes the HTTP routes.
-- `src/task-event-store.ts` stores and replays compact lifecycle events.
-- `src/task-webhook-store.ts` and `src/task-webhook-delivery-worker.ts` model
-  webhook subscriptions and delivery retries.
-- `src/github-actions-ci-adapter.ts`, `src/circleci-status-adapter.ts`, and
-  `src/github-review-feedback-adapter.ts` show the adapter pattern for external
-  developer tools.
-- `sdk/typescript` and `sdk/python` are the generated SDK surfaces agents should
-  use instead of hand-rolled HTTP calls.
-
-Technical decision: the public MVP is server-only. Local evaluation uses
-explicit task-store and task-source examples, while GitHub/CI behavior stays
-behind adapter interfaces. The runtime never silently falls back to fixture
-tasks.
-
-Rejected: a hosted-only demo. That would make the release depend on paid API
-access and would obscure whether the local agent lifecycle contract works.
-
-Rejected: raw GitHub passthrough responses. They are easier to proxy, but they
-push summarization, retry semantics, and next-action discovery back onto every
-agent.
-
-## Live CI Providers
-
-Provider adapters are opt-in at runtime:
-
-- `GITHUB_TOKEN` enables the GitHub Actions CI adapter for tasks with no
-  `ciProvider` or with `ciProvider: "github_actions"`.
-- `CIRCLECI_TOKEN` enables the CircleCI CI adapter for tasks with
-  `ciProvider: "circleci"` and a CircleCI `projectSlug`.
-- `CIRCLECI_WEBHOOK_SECRET` turns on HMAC verification for
-  `POST /providers/circleci/webhooks`.
-
-Example persisted `task.source` entry for CircleCI:
-
-```json
-{
-  "tsk_circleci_demo": {
-    "ciProvider": "circleci",
-    "owner": "oxnw",
-    "repo": "agentrail",
-    "projectSlug": "gh/oxnw/agentrail",
-    "branch": "feature/circleci-status",
-    "headSha": "abc123",
-    "submissionId": "sub_circleci_01"
-  }
-}
-```
-
-## SDKs
-
-Create an AgentRail API key and use the returned secret `data.apiKey` value,
-which starts with `ar_live_`. The `akey_...` value is the key ID, not the
-secret.
-
-TypeScript local usage:
-
-```ts
-import { AgentRailClient } from "@agentrail-core/sdk";
-
-const client = new AgentRailClient({
-  baseUrl: "http://127.0.0.1:3000",
-  apiKey: process.env.AGENTRAIL_API_KEY!,
-});
-
-const tasks = await client.listMyTasks({ status: "in_progress" });
-```
-
-Python local usage:
-
-```py
-import os
-from agentrail import AgentRailClient, TaskStatus
-
-async with AgentRailClient(
-    base_url="http://127.0.0.1:3000",
-    api_key=os.environ["AGENTRAIL_API_KEY"],
-) as client:
-    tasks = await client.list_my_tasks(status=TaskStatus.IN_PROGRESS)
-```
-
-Non-local base URLs are supported for self-managed or explicitly provisioned
-hosted API deployments by passing a `baseUrl` explicitly. That does not mean
-AgentRail Cloud is generally available. Local URLs remain the default developer
-path for this OSS release candidate.
-
-## Release Scope
-
-This public repo is intentionally limited to the runnable OSS contract: the
-local API server, SDKs, self-hosted bootstrap examples, and operator-facing
-integration docs.
-Internal planning and architecture decision records are kept outside the public
-release bundle.
-
-## OSS vs Cloud Boundary
-
-The OSS product should stay fully runnable for local evaluation and
-self-managed use. It includes the lifecycle API, SDKs, single-instance server
-path, event/webhook primitives, and adapter interfaces.
-
-AgentRail Cloud is planned as the managed team/fleet layer, not merely a hosted
-copy of this Node process. Cloud should own managed provider connectors,
-governed shared run history and memory, routing and wakes, SSO/RBAC/SCIM,
-audit, dashboards, support, compliance, backups, and hosted reliability.
-
-Cloud is not generally available yet. Do not treat hosted URLs, one-click
-deploys, or self-hosting instructions as a promise of managed Cloud operations.
-See [Cloud boundary](./docs/cloud.md).
-
-## Roadmap
-
-| Status | Feature | Description |
-|--------|---------|-------------|
-| :white_check_mark: | Task lifecycle API | Issue → PR → CI → review → ship through one typed API |
-| :white_check_mark: | GitHub provider adapters | PR submit/reuse, CI status, and review feedback from persisted task source metadata; live merge/ship remains gated by sandbox validation |
-| :white_check_mark: | CircleCI adapter | Multi-CI support via pluggable adapter pattern |
-| :white_check_mark: | TypeScript & Python SDKs | Typed clients with retry logic, SSE streaming, structured errors |
-| :white_check_mark: | Agent auth primitives | Per-agent API key creation, scopes, rate limits, and audit primitives; live runtime wiring remains part of the control-plane work |
-| :white_check_mark: | SSE event streams | Real-time task events with cursor replay and filtering |
-| :white_check_mark: | Webhook subscriptions | HMAC-signed delivery with retry and backoff |
-| :construction: | Ship and rollback primitives | Routes and adapter interfaces with idempotency; live GitHub ship and SDK rollback remain follow-up validation work |
-| :construction: | Self-managed deployment | One-click single-instance deploy to Railway or your own infra |
-| :construction: | Local dashboard UI | Single-instance view of local agent activity and task state |
-| :construction: | Linear integration | Sync tasks from Linear projects |
-| :dart: | Jira integration | Sync tasks from Jira boards |
-| :dart: | GitLab adapter | CI pipelines, merge requests, and shipping via GitLab |
-| :dart: | Multi-agent coordination | Task claiming, handoff, and conflict resolution across agents |
-| :dart: | Token metrics primitives | Local token-savings measurement; Cloud owns team dashboards and per-agent attribution |
-| :dart: | AgentRail Cloud | Planned managed team/fleet operations layer: connectors, shared run history/memory, routing/wakes, SSO/RBAC/SCIM, audit, dashboards, support, compliance, and hosted reliability |
-
-## Repository Docs
-
-- [Integration guide for Claude Code / Codex / Cursor](./docs/integration-guide.md)
-- [Five-minute quick start](./docs/quick-start.md)
-- [Agent recipes for Claude Code, Codex, and Cursor](./docs/agent-recipes.md)
-- [Cloud boundary](./docs/cloud.md)
-- [OpenAPI contract](./docs/api/task-lifecycle.openapi.yaml)
-- [Intake routing architecture](./docs/architecture/intake-routing-engine.md)
-- [Intake routing operator OpenAPI](./docs/api/intake-routing-admin.openapi.yaml)
-- [Railway production deployment runbook](./docs/deployment/railway-production.md)
-- [Claude Code and Codex lifecycle example](./examples/issue-to-pr-lifecycle.md)
-- [Contributing](./CONTRIBUTING.md)
-- [Security policy](./SECURITY.md)
 
 ## License
 

@@ -72,7 +72,7 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.match(readme, /choose a runner, choose permissions, and create another local agent/i);
   assert.match(readme, /already signed in to the runner you choose on this machine/i);
   assert.match(readme, /server will load `~\/\.agentrail\/server\.env` automatically/i);
-  assert.match(readme, /\.\/agentrail doctor/i);
+  assert.match(readme, /agentrail doctor/i);
   assert.match(readme, /setup is only complete when `\/tasks\/mine\?status=in_progress&limit=1` returns assigned work/i);
   assert.match(readme, /~\/\.agentrail\/agents\/<agentId>\.env/i);
   assert.match(readme, /First connected repo/i);

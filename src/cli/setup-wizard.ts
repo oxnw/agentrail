@@ -150,7 +150,7 @@ export async function runSetupWizard({
         "Use `agentrail provider connect github`, `agentrail provider connect circleci`, or `agentrail provider connect linear` when you are ready to connect live providers and choose polling or webhook delivery.",
         "After connecting Linear, import issues locally with `agentrail linear import ENG-123`.",
         "When the API is running, `agentrail doctor` is the final verification step.",
-        "Use `./agentrail server start` whenever you want the local API running outside the wizard.",
+        "Use `agentrail server start` whenever you want the local API running outside the wizard.",
       ].join("\n"),
     });
   }

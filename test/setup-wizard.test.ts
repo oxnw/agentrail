@@ -85,7 +85,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.match(prompt.notes[1]?.body ?? "", /agentrail provider connect github/i);
   assert.match(prompt.notes[1]?.body ?? "", /final verification step/i);
   assert.match(prompt.notes[1]?.body ?? "", /refresh your global AgentRail home/i);
-  assert.match(prompt.notes[1]?.body ?? "", /`\.\/agentrail server start`/);
+  assert.match(prompt.notes[1]?.body ?? "", /`agentrail server start`/);
   assert.equal(prompt.interactions[0]?.message, "Which local repo should AgentRail connect first?");
   assert.equal(prompt.interactions[1]?.message, "Primary GitHub repo URL");
   assert.doesNotMatch(stdout.toString(), /AgentRail local setup/i);
