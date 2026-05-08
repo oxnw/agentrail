@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
+import { findForbiddenPackageFiles } from "../scripts/verify-npm-package-contents.mjs";
 
 const removedInternalArtifacts = [
   "verify-browser.mjs",
@@ -65,6 +66,44 @@ test(".gitignore blocks local env files but keeps the public template", async ()
   assert.match(gitignore, /^\.env$/m);
   assert.match(gitignore, /^\.env\.\*$/m);
   assert.match(gitignore, /^!\.env\.example$/m);
+  assert.match(gitignore, /^\*\.tgz$/m);
+});
+
+test("npm packaging blocks secrets and generated tarballs", async () => {
+  const npmignore = await readFile(".npmignore", "utf8");
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+
+  assert.match(npmignore, /^\.env$/m);
+  assert.match(npmignore, /^\.env\.\*$/m);
+  assert.match(npmignore, /^\*\.pem$/m);
+  assert.match(npmignore, /^\*\.key$/m);
+  assert.match(npmignore, /^\*\.p12$/m);
+  assert.match(npmignore, /^\*\.pfx$/m);
+  assert.match(npmignore, /^\*\.tgz$/m);
+  assert.match(packageJson.scripts.prepack, /verify-npm-package-contents\.mjs/);
+  assert.deepEqual(packageJson.files, ["bin", "dist", "README.md", "LICENSE"]);
+});
+
+test("npm package content guard rejects sensitive file paths", () => {
+  assert.deepEqual(findForbiddenPackageFiles([
+    "LICENSE",
+    "README.md",
+    "dist/server.js",
+    ".env",
+    ".env.local",
+    ".env.example",
+    "secrets/prod.pem",
+    "agentrail-core-cli-0.1.3.tgz",
+    ".idea/vcs.xml",
+    "browser-artifacts/desktop.png",
+  ]), [
+    ".env",
+    ".env.local",
+    ".idea/vcs.xml",
+    "agentrail-core-cli-0.1.3.tgz",
+    "browser-artifacts/desktop.png",
+    "secrets/prod.pem",
+  ]);
 });
 
 test("TypeScript source is canonical with no side-by-side JavaScript duplicates", async () => {
