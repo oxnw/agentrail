@@ -64,6 +64,7 @@ export interface RunAgentCommandOptions {
   detectRepoContext?: (cwd: string) => DetectedRepoContext | Promise<DetectedRepoContext>;
   createPrompt?: () => PromptSession;
   bootstrapSummaryMode?: boolean;
+  agentEnvBaseUrl?: string;
 }
 
 interface SetupConfigLike {
@@ -508,7 +509,7 @@ export async function runAgentCreate(argv: string[], options: RunAgentCommandOpt
     completedSteps.push("agent_key");
 
     const envValues = buildAgentEnvValues({
-      baseUrl: inputs.baseUrl,
+      baseUrl: options.agentEnvBaseUrl ? normalizeServerBaseUrl(options.agentEnvBaseUrl) : inputs.baseUrl,
       apiKey: keyResponse.json?.data?.apiKey ?? "",
       apiKeyId: createdKeyId ?? "",
       agentId: inputs.agentId,
@@ -552,6 +553,7 @@ export async function runAgentCreate(argv: string[], options: RunAgentCommandOpt
       homePath,
       envFilePath,
       setDefaultEnv: inputs.setDefaultEnv,
+      agentLabel: inputs.name,
       prompt,
     });
 
@@ -620,7 +622,7 @@ export async function runAgentUpdate(argv: string[], options: RunAgentCommandOpt
       agentId: flags.agentId,
     });
     const operatorEnv = await readOperatorEnvFile(homePath);
-    const baseUrl = flags.baseUrl ?? process.env.AGENTRAIL_BASE_URL ?? currentEnv.values.AGENTRAIL_BASE_URL ?? setupConfig?.server?.baseUrl;
+    const rawBaseUrl = flags.baseUrl ?? process.env.AGENTRAIL_BASE_URL ?? currentEnv.values.AGENTRAIL_BASE_URL ?? setupConfig?.server?.baseUrl;
     const setupApiKey = flags.setupApiKey
       ?? process.env.AGENTRAIL_OPERATOR_KEY
       ?? process.env.AGENTRAIL_SETUP_API_KEY
@@ -629,10 +631,11 @@ export async function runAgentUpdate(argv: string[], options: RunAgentCommandOpt
       ?? operatorEnv.AGENTRAIL_OPERATOR_KEY
       ?? null;
     const agentId = flags.agentId ?? currentEnv.values.AGENTRAIL_AGENT_ID ?? null;
-    if (!baseUrl || !setupApiKey || !agentId) {
+    if (!rawBaseUrl || !setupApiKey || !agentId) {
       stderr.write("agentrail agent update requires base URL, setup API key, and agent id.\n");
       return 1;
     }
+    const baseUrl = normalizeServerBaseUrl(rawBaseUrl);
 
     const profileResponse = await getJson<{ data?: ProfileBody }>({
       baseUrl,
@@ -749,6 +752,7 @@ export async function runAgentUpdate(argv: string[], options: RunAgentCommandOpt
       homePath,
       envFilePath,
       setDefaultEnv: Boolean(flags.setDefaultEnv || (currentEnv.path && path.basename(currentEnv.path) === "agent.env")),
+      agentLabel: inputs.name,
       prompt: null,
     });
 
@@ -791,7 +795,7 @@ async function collectCreateInputs({
   setupConfig: SetupConfigLike | null;
   prompt: PromptSession | null;
 }) {
-  const baseUrl = flags.baseUrl ?? process.env.AGENTRAIL_BASE_URL ?? setupConfig?.server?.baseUrl;
+  const rawBaseUrl = flags.baseUrl ?? process.env.AGENTRAIL_BASE_URL ?? setupConfig?.server?.baseUrl;
   const homePath = resolveAgentRailHome({ cwd, explicitHome: null });
   const operatorEnv = await readOperatorEnvFile(homePath);
   const setupApiKey = flags.setupApiKey
@@ -801,9 +805,10 @@ async function collectCreateInputs({
     ?? process.env.AGENTRAIL_ADMIN_API_KEY
     ?? operatorEnv.AGENTRAIL_OPERATOR_KEY
     ?? null;
-  if (!baseUrl || !setupApiKey) {
+  if (!rawBaseUrl || !setupApiKey) {
     throw new Error("agentrail agent create requires a running server base URL and an operator key.");
   }
+  const baseUrl = normalizeServerBaseUrl(rawBaseUrl);
 
   const connectedRepos = Array.isArray(setupConfig?.repos) && setupConfig.repos.length > 0
     ? setupConfig.repos
@@ -878,7 +883,7 @@ async function collectCreateInputs({
   });
 
   return {
-    baseUrl: stripTrailingSlash(baseUrl),
+    baseUrl,
     setupApiKey,
     runner,
     agentId,
@@ -896,7 +901,7 @@ async function collectCreateInputs({
     })) : defaultInstructionsPath(homePath))),
     scopes,
     setDefaultEnv: flags.setDefaultEnv ?? (prompt ? await prompt.confirm({
-      message: "Set this as the default ~/.agentrail/agent.env alias?",
+      message: `Use ${agentLabel} as the local agent profile for this machine?`,
       defaultValue: true,
     }) : false),
     configureRouting: flags.configureRouting ?? false,
@@ -1207,11 +1212,13 @@ async function maybeWriteDefaultEnvAlias({
   homePath,
   envFilePath,
   setDefaultEnv,
+  agentLabel,
   prompt,
 }: {
   homePath: string;
   envFilePath: string;
   setDefaultEnv: boolean;
+  agentLabel: string;
   prompt: PromptSession | null;
 }) {
   const aliasPath = currentAgentEnvPathForHome(homePath);
@@ -1221,7 +1228,7 @@ async function maybeWriteDefaultEnvAlias({
   shouldWrite = shouldWrite || aliasState.shouldWrite;
   if (prompt && shouldWrite && aliasState.existing?.trim() && aliasState.existing !== content) {
     const overwrite = await prompt.confirm({
-      message: "Update ~/.agentrail/agent.env to point to this agent?",
+      message: `Replace the current local agent profile on this machine with ${agentLabel}?`,
       defaultValue: true,
     });
     if (!overwrite) return;
@@ -1324,12 +1331,17 @@ async function getJson<T>({
   route: string;
   bearerToken?: string;
 }) {
-  const response = await fetch(new URL(route.replace(/^\//, ""), `${baseUrl}/`), {
-    headers: {
-      accept: "application/json",
-      ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(new URL(route.replace(/^\//, ""), `${baseUrl}/`), {
+      headers: {
+        accept: "application/json",
+        ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
+      },
+    });
+  } catch (error) {
+    throw unreachableServerError(baseUrl, error);
+  }
   const text = await response.text();
   try {
     return {
@@ -1365,16 +1377,24 @@ async function requestJson<T = any>({
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(new URL(route.replace(/^\//, ""), `${baseUrl}/`), {
-      method,
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": idempotencyKey,
-        ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(new URL(route.replace(/^\//, ""), `${baseUrl}/`), {
+        method,
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": idempotencyKey,
+          ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      throw unreachableServerError(baseUrl, error);
+    }
     const text = await response.text();
     const json = text ? JSON.parse(text) : null;
     if (!response.ok) {
@@ -1392,6 +1412,13 @@ async function requestJson<T = any>({
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function unreachableServerError(baseUrl: string, error: unknown): Error {
+  const detail = error instanceof Error && error.message ? ` ${error.message}.` : "";
+  return new Error(
+    `Could not reach AgentRail API at ${baseUrl}.${detail} Start it with \`agentrail server start\`, or pass --base-url for the running server.`,
+  );
 }
 
 function isAbortError(error: unknown): boolean {
@@ -2001,6 +2028,19 @@ function toDisplayName(runner: string): string {
   return runner.split(/[-_]/u).map((part) => part.slice(0, 1).toUpperCase() + part.slice(1)).join(" ") + " Local";
 }
 
-function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
+function normalizeServerBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  const candidate = /^https?:\/\//iu.test(trimmed) ? trimmed : `http://${trimmed}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new Error(`Invalid AgentRail server URL "${value}". Use a URL like http://127.0.0.1:3000.`);
+  }
+
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname) {
+    throw new Error(`Invalid AgentRail server URL "${value}". Use a URL like http://127.0.0.1:3000.`);
+  }
+
+  return parsed.toString().replace(/\/+$/u, "");
 }

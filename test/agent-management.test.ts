@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
+import { createServer as createHttpServer } from "node:http";
 import { once } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
@@ -143,6 +144,109 @@ test("agent create auto-generates agent ids and honors explicit env file paths",
   await assert.rejects(readFile(path.join(homePath, "agents", `${createdMatch[1]}.env`), "utf8"));
 });
 
+test("agent create normalizes localhost base URLs from the environment", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-create-env-url-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const harness = await createHarness();
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  const previousBaseUrl = process.env.AGENTRAIL_BASE_URL;
+  process.env.AGENTRAIL_HOME = homePath;
+  process.env.AGENTRAIL_BASE_URL = harness.baseUrl.replace(/^https?:\/\//u, "");
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    if (previousBaseUrl === undefined) delete process.env.AGENTRAIL_BASE_URL;
+    else process.env.AGENTRAIL_BASE_URL = previousBaseUrl;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, harness.operatorApiKey);
+
+  const exitCode = await runCli([
+    "agent",
+    "create",
+    "--agent-id",
+    "agt_env_url",
+    "--name",
+    "Env URL",
+    "--runner",
+    "codex",
+    "--scopes",
+    "tasks:read,tasks:write",
+    "--repo-allowlist",
+    "oxnw/agentrail",
+    "--capability-tags",
+    "code,tests",
+  ], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /Created agent Env URL \(agt_env_url\)\./);
+
+  const envText = await readFile(path.join(homePath, "agents", "agt_env_url.env"), "utf8");
+  assert.match(envText, new RegExp(`AGENTRAIL_BASE_URL=${harness.baseUrl}`));
+});
+
+test("agent create reports a clear error when the server is unreachable", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-create-unreachable-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+  const baseUrl = await reserveClosedLocalBaseUrl();
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+  });
+
+  await writeSetupRepo(repoRoot, homePath, baseUrl);
+
+  const exitCode = await runCli([
+    "agent",
+    "create",
+    "--base-url",
+    baseUrl,
+    "--setup-api-key",
+    "akey_unreachable",
+    "--agent-id",
+    "agt_unreachable",
+    "--name",
+    "Unreachable",
+    "--runner",
+    "codex",
+    "--scopes",
+    "tasks:read",
+    "--repo-allowlist",
+    "oxnw/agentrail",
+    "--capability-tags",
+    "code",
+  ], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.match(stderr.toString(), /Could not reach AgentRail API at http:\/\/127\.0\.0\.1:\d+\./);
+  assert.match(stderr.toString(), /Start it with `agentrail server start`/);
+});
+
 test("agent create interactive permission preset grants expected scopes", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-create-interactive-permissions-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
@@ -206,6 +310,8 @@ test("agent create interactive permission preset grants expected scopes", async 
   assert.match(prompt.notes.map((note) => note.body).join("\n"), /Role: General coding \(coding_agent\)/);
   assert.match(prompt.notes.map((note) => note.body).join("\n"), /Best for building and editing code/);
   assert.match(prompt.notes.map((note) => note.body).join("\n"), /Task capacity: 1/);
+  assert.ok(prompt.confirmMessages.includes("Use Builder Ship as the local agent profile for this machine?"));
+  assert.ok(prompt.confirmMessages.every((message) => !message.includes("agent.env")));
 });
 
 test("agent update rotates scopes, refreshes env files, and updates managed routing", async (t) => {
@@ -585,6 +691,21 @@ async function writeSetupRepo(repoRoot: string, homePath: string, baseUrl: strin
   }
 }
 
+async function reserveClosedLocalBaseUrl(): Promise<string> {
+  const server = createHttpServer((_request, response) => {
+    response.writeHead(204).end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Missing temporary server address.");
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return baseUrl;
+}
+
 function createMemoryWriter() {
   let buffer = "";
   return {
@@ -601,6 +722,7 @@ function createMemoryWriter() {
 class ScriptedPromptSession implements PromptSession {
   readonly notes: Array<{ title?: string; body: string }> = [];
   readonly messages: string[] = [];
+  readonly confirmMessages: string[] = [];
   readonly #steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input" | "secret"; value: string | boolean | string[] }>;
 
   constructor(steps: Array<{ kind: "select" | "multiselect" | "confirm" | "input" | "secret"; value: string | boolean | string[] }>) {
@@ -622,7 +744,10 @@ class ScriptedPromptSession implements PromptSession {
     return values;
   }
 
-  async confirm(): Promise<boolean> {
+  async confirm(options?: { message?: string; defaultValue?: boolean }): Promise<boolean> {
+    if (options?.message) {
+      this.confirmMessages.push(options.message);
+    }
     const step = this.#next("confirm");
     return Boolean(step.value);
   }
