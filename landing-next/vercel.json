@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/mintlify-assets/:match*",
+      "destination": "https://agentrail.mintlify.app/mintlify-assets/:match*"
+    },
+    {
       "source": "/docs",
       "destination": "https://agentrail.mintlify.app"
     },
