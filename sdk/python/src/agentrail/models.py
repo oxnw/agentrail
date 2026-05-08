@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 # ── Enums ──────────────────────────────────────────────────────────
@@ -16,6 +16,7 @@ class AgentAuthScope(str, Enum):
     AUTH_ADMIN = "auth:admin"
     CI_READ = "ci:read"
     EVENTS_READ = "events:read"
+    PROVIDERS_WRITE = "providers:write"
     ROUTING_ADMIN = "routing:admin"
     ROUTING_EVALUATE = "routing:evaluate"
     ROUTING_READ = "routing:read"
@@ -462,6 +463,63 @@ class TaskSubmissionData(BaseModel):
 
 class TaskSubmissionResponse(BaseModel):
     data: TaskSubmissionData
+    available_actions: list[str] = Field(alias="availableActions")
+
+    model_config = {"populate_by_name": True}
+
+
+# ── Linear Provider Sync ──────────────────────────────────────────
+
+
+class LinearTaskCommentRequest(BaseModel):
+    body: str = Field(min_length=1)
+
+    model_config = {"populate_by_name": True, "by_alias": True}
+
+
+class LinearTaskCommentData(BaseModel):
+    task_id: str = Field(alias="taskId")
+    linear_issue_id: str = Field(alias="linearIssueId")
+    comment_id: str | None = Field(default=None, alias="commentId")
+    comment_url: str | None = Field(default=None, alias="commentUrl")
+    success: bool
+    synced_at: datetime = Field(alias="syncedAt")
+    available_actions: list[str] = Field(alias="availableActions")
+
+    model_config = {"populate_by_name": True}
+
+
+class LinearTaskCommentResponse(BaseModel):
+    data: LinearTaskCommentData
+    available_actions: list[str] = Field(alias="availableActions")
+
+    model_config = {"populate_by_name": True}
+
+
+class LinearTaskWorkflowStateRequest(BaseModel):
+    state_id: str = Field(alias="stateId")
+
+    model_config = {"populate_by_name": True, "by_alias": True}
+
+
+class LinearTaskWorkflowStateData(BaseModel):
+    task_id: str = Field(alias="taskId")
+    linear_issue_id: str = Field(alias="linearIssueId")
+    state_id: str = Field(alias="stateId")
+    state_name: str | None = Field(default=None, alias="stateName")
+    success: bool
+    agentrail_status: TaskStatus = Field(
+        alias="agentRailStatus",
+        validation_alias=AliasChoices("agentRailStatus", "agentrailStatus"),
+    )
+    synced_at: datetime = Field(alias="syncedAt")
+    available_actions: list[str] = Field(alias="availableActions")
+
+    model_config = {"populate_by_name": True}
+
+
+class LinearTaskWorkflowStateResponse(BaseModel):
+    data: LinearTaskWorkflowStateData
     available_actions: list[str] = Field(alias="availableActions")
 
     model_config = {"populate_by_name": True}

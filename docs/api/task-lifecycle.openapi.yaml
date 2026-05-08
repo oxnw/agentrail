@@ -1021,6 +1021,178 @@ paths:
                         availableActions: [retry]
         '404':
           $ref: '#/components/responses/NotFound'
+  /providers/linear/intake:
+    post:
+      tags: [Providers]
+      operationId: ingestLinearIssue
+      summary: Ingest a Linear issue into the AgentRail task store
+      description: |
+        Creates or updates an AgentRail task from a Linear issue payload.
+        Requires `tasks:write`. This endpoint accepts authenticated
+        on-demand synchronization requests for Linear issues.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinearIssueIntakeRequest'
+            examples:
+              issue:
+                value:
+                  id: lin_issue_01
+                  identifier: ENG-123
+                  url: https://linear.app/agentrail/issue/ENG-123/integrate-linear
+                  title: Integrate Linear issue source
+                  description: |
+                    Build the Linear adapter.
+
+                    ## Acceptance Criteria
+                    - [ ] Linear issues create AgentRail tasks.
+                  priorityLabel: High
+                  state:
+                    id: state_started
+                    name: In Progress
+                    type: started
+                  team:
+                    id: team_01
+                    key: ENG
+                    name: Engineering
+                  assignee:
+                    id: user_01
+                    name: Avery Engineer
+                  labels:
+                    nodes:
+                      - name: integration
+                      - name: P1
+                  workspace:
+                    id: workspace_01
+                    urlKey: agentrail
+      responses:
+        '201':
+          description: Linear issue accepted and mapped to an AgentRail task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinearIssueIntakeResponseEnvelope'
+              examples:
+                created:
+                  value:
+                    data:
+                      taskId: tsk_01JZLINEAR0000000000001
+                      identifier: linear:agentrail:issues/ENG-123
+                      status: in_progress
+                      availableActions: [submit]
+                      createdAt: '2026-05-06T18:00:00Z'
+                    availableActions: [get_task]
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/InsufficientScope'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /providers/linear/webhooks:
+    post:
+      tags: [Providers]
+      operationId: ingestLinearWebhook
+      summary: Ingest a signed Linear webhook
+      description: |
+        Accepts Linear `Issue` and `Comment` webhook events. When
+        `LINEAR_WEBHOOK_SECRET` is configured, AgentRail validates
+        `Linear-Signature` over the raw body and rejects events outside the
+        replay window.
+      security: []
+      parameters:
+        - in: header
+          name: Linear-Delivery
+          required: false
+          schema:
+            type: string
+          description: Linear delivery UUID used as AgentRail's intake idempotency key.
+        - in: header
+          name: Linear-Event
+          required: false
+          schema:
+            type: string
+            enum: [Issue, Comment]
+          description: Linear entity type that triggered the webhook.
+        - in: header
+          name: Linear-Signature
+          required: false
+          schema:
+            type: string
+          description: HMAC-SHA256 hex digest over the raw request body. Required when `LINEAR_WEBHOOK_SECRET` is configured; missing or invalid signatures receive `401`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinearWebhookRequest'
+            examples:
+              issue_update:
+                value:
+                  action: update
+                  type: Issue
+                  createdAt: '2026-05-06T18:00:00Z'
+                  webhookTimestamp: 1778090400000
+                  data:
+                    id: lin_issue_02
+                    identifier: ENG-124
+                    url: https://linear.app/agentrail/issue/ENG-124/state-sync
+                    title: State sync
+                    description: Keep status aligned.
+                    priorityLabel: Urgent
+                    state:
+                      id: state_done
+                      name: Done
+                      type: completed
+                    team:
+                      id: team_01
+                      key: ENG
+                      name: Engineering
+                    workspace:
+                      id: workspace_01
+                      urlKey: agentrail
+      responses:
+        '202':
+          description: Webhook accepted and mapped against persisted task source metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinearWebhookReceiptResponse'
+              examples:
+                matched:
+                  value:
+                    data:
+                      matchedTasks: [tsk_01JZLINEAR0000000000001]
+                      deduplicated: false
+                      ignored: false
+                      deliveryId: linear-delivery-01
+                      eventType: Issue
+                    availableActions: [get_task]
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          description: Linear webhook signature failed verification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_signature:
+                  value:
+                    error:
+                      code: linear_webhook_unauthorized
+                      message: Linear webhook signature is missing, invalid, or outside the replay window.
+                      details:
+                        availableActions: [retry]
+        '404':
+          $ref: '#/components/responses/NotFound'
   /task-webhook-subscriptions/{subscriptionId}:
     get:
       tags: [Task Events]
@@ -1488,6 +1660,20 @@ components:
                       - field: expectedHeadSha
                         reason: must be a 40-char commit SHA
                     availableActions: [retry]
+    Conflict:
+      description: Request conflicts with current resource state or idempotency history
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            idempotency_mismatch:
+              value:
+                error:
+                  code: conflict
+                  message: Idempotency-Key has already been used with a different request payload.
+                  details:
+                    availableActions: [retry]
     CursorExpired:
       description: Resume cursor is outside the replay window
       content:
@@ -1937,8 +2123,8 @@ components:
           description: Triage queue id when deterministic routing did not assign an agent.
         assignmentSource:
           type: [string, 'null']
-          enum: [deterministic_rule, classifier, manual_triage, null]
-          description: Source of the current assignment decision. Legacy local OSS data that used provider_assignee_mapping is normalized during load and is not emitted by current builds.
+          enum: [deterministic_rule, classifier, manual_triage, provider_assignee_mapping, null]
+          description: Source of the current assignment decision.
         routingDecisionId:
           type: [string, 'null']
           description: Stable routing decision id for audit lookup.
@@ -2336,6 +2522,170 @@ components:
               type: array
               items:
                 type: string
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    LinearIssueIntakeRequest:
+      type: object
+      additionalProperties: true
+      required: [id, title]
+      properties:
+        id:
+          type: string
+          description: Linear issue UUID.
+        identifier:
+          type: string
+          description: Human-readable Linear issue identifier, for example `ENG-123`.
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        description:
+          type: [string, 'null']
+        priority:
+          type: [integer, 'null']
+          description: Linear numeric priority, where 1 is urgent and 4 is low.
+        priorityLabel:
+          type: [string, 'null']
+          examples: [Urgent, High, Normal, Low]
+        state:
+          type: object
+          additionalProperties: true
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            type:
+              type: string
+              description: Linear workflow state category.
+              enum: [triage, backlog, unstarted, started, completed, canceled]
+        team:
+          type: object
+          additionalProperties: true
+          properties:
+            id:
+              type: string
+            key:
+              type: string
+            name:
+              type: string
+        assignee:
+          type: [object, 'null']
+          additionalProperties: true
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+        labels:
+          description: |
+            Linear labels. Accepts both direct array payloads and GraphQL-style
+            connection objects with `nodes`.
+          oneOf:
+            - type: array
+              description: Direct array of label objects.
+              items:
+                type: object
+                additionalProperties: true
+                properties:
+                  name:
+                    type: string
+            - type: object
+              description: GraphQL-style label connection object.
+              additionalProperties: true
+              properties:
+                nodes:
+                  type: array
+                  description: GraphQL label node array.
+                  items:
+                    type: object
+                    additionalProperties: true
+                    properties:
+                      name:
+                        type: string
+        workspace:
+          type: object
+          additionalProperties: true
+          properties:
+            id:
+              type: string
+            urlKey:
+              type: string
+    LinearIssueIntakeResponseEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [taskId, identifier, status, availableActions, createdAt]
+          properties:
+            taskId:
+              type: string
+              pattern: '^tsk_[A-Za-z0-9]+$'
+            identifier:
+              type: string
+              examples: [linear:agentrail:issues/ENG-123]
+            status:
+              type: string
+              enum: [todo, in_progress, in_review, blocked, done, cancelled]
+            availableActions:
+              $ref: '#/components/schemas/AvailableActions'
+            createdAt:
+              type: string
+              format: date-time
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+    LinearWebhookRequest:
+      type: object
+      additionalProperties: true
+      required: [action, type, data, webhookTimestamp]
+      properties:
+        action:
+          type: string
+          enum: [create, update, remove]
+        type:
+          type: string
+          enum: [Issue, Comment]
+        createdAt:
+          type: string
+          format: date-time
+        webhookTimestamp:
+          type: integer
+          description: UNIX timestamp in milliseconds included by Linear for replay protection.
+        data:
+          type: object
+          additionalProperties: true
+          description: Linear entity snapshot. `Issue` events use the Linear issue shape; `Comment` events include comment fields such as `issueId` and `body`.
+        updatedFrom:
+          type: object
+          additionalProperties: true
+    LinearWebhookReceiptResponse:
+      type: object
+      additionalProperties: false
+      required: [data, availableActions]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [matchedTasks, deduplicated, ignored, deliveryId, eventType]
+          properties:
+            matchedTasks:
+              type: array
+              items:
+                type: string
+                pattern: '^tsk_[A-Za-z0-9]+$'
+            deduplicated:
+              type: boolean
+              description: True when the Linear delivery was already processed and the stored receipt was replayed.
+            ignored:
+              type: boolean
+            deliveryId:
+              type: [string, 'null']
+            eventType:
+              type: [string, 'null']
         availableActions:
           $ref: '#/components/schemas/AvailableActions'
     TaskReviewFeedbackResponse:

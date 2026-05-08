@@ -3,9 +3,10 @@ import crypto from "node:crypto";
 import type { AgentTaskQueue } from "./agent-task-queue.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 import type { TaskAssignmentSource } from "./task-store.ts";
+import type { TaskSource } from "./task-source.ts";
 
 export interface ProviderRepository {
-  provider: "github" | "gitlab";
+  provider: "github" | "gitlab" | "linear";
   owner: string;
   name: string;
   defaultBranch: string;
@@ -259,7 +260,7 @@ const ROUTING_CONDITION_FIELDS = [
 
 const ROUTING_CONDITION_FIELD_SET = new Set<string>(ROUTING_CONDITION_FIELDS);
 const ROUTING_PROVIDERS = new Set(["github", "linear", "jira", "gitlab"]);
-const ROUTING_REPOSITORY_PROVIDERS = new Set(["github", "gitlab"]);
+const ROUTING_REPOSITORY_PROVIDERS = new Set(["github", "gitlab", "linear"]);
 const ROUTING_ISSUE_TYPES = new Set(["bug", "feature", "architecture", "design", "documentation", "maintenance", "unknown"]);
 const ROUTING_PRIORITIES = new Set(["low", "medium", "high", "critical"]);
 const SNAPSHOT_FIELDS = new Set([
@@ -748,6 +749,23 @@ export class RoutingControlPlane {
     const displayName = assigneeAgentId
       ? this.getAgentProfile(assigneeAgentId)?.displayName ?? assigneeAgentId
       : triageQueueId ? `Triage ${triageQueueId}` : "Unassigned";
+    const source: TaskSource = snapshot.repository.provider === "linear"
+      ? {
+          provider: "linear",
+          labels: clone(snapshot.labels),
+          deliveryId: snapshot.sourceVersion,
+          receivedAt: this.now().toISOString(),
+        }
+      : {
+          provider: snapshot.repository.provider,
+          owner: snapshot.repository.owner,
+          repo: snapshot.repository.name,
+          baseBranch: snapshot.repository.defaultBranch,
+          issueNumber: this.extractIssueNumber(snapshot.providerIssueId),
+          labels: clone(snapshot.labels),
+          deliveryId: snapshot.sourceVersion,
+          receivedAt: this.now().toISOString(),
+        };
     const commonFields = {
       title: snapshot.title,
       description: `Provider snapshot ${snapshot.providerIssueId}\nBody digest: ${snapshot.bodyDigest}`,
@@ -764,16 +782,7 @@ export class RoutingControlPlane {
         project: snapshot.project ?? repoKey(snapshot),
         goal: `Provider issue intake: ${snapshot.providerIssueId}`,
       },
-      source: {
-        provider: snapshot.repository.provider,
-        owner: snapshot.repository.owner,
-        repo: snapshot.repository.name,
-        baseBranch: snapshot.repository.defaultBranch,
-        issueNumber: this.extractIssueNumber(snapshot.providerIssueId),
-        labels: clone(snapshot.labels),
-        deliveryId: snapshot.sourceVersion,
-        receivedAt: this.now().toISOString(),
-      },
+      source,
     };
 
     if (existing) {

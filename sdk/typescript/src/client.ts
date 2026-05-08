@@ -5,6 +5,10 @@ import type {
   AgentApiKeyRotateRequest,
   AgentApiKeyUsageResponse,
   AgentRailClientOptions,
+  LinearTaskCommentRequest,
+  LinearTaskCommentResponse,
+  LinearTaskWorkflowStateRequest,
+  LinearTaskWorkflowStateResponse,
   ListMyTasksOptions,
   RetryOptions,
   StreamOptions,
@@ -98,6 +102,36 @@ export class AgentRailClient {
       body: request,
       headers: { "Idempotency-Key": idempotencyKey },
     });
+  }
+
+  async createLinearTaskComment(
+    taskId: string,
+    request: LinearTaskCommentRequest,
+    idempotencyKey: string,
+  ): Promise<LinearTaskCommentResponse> {
+    return this.request(
+      "POST",
+      `/providers/linear/tasks/${encodeURIComponent(taskId)}/comments`,
+      {
+        body: request,
+        headers: { "Idempotency-Key": idempotencyKey },
+      },
+    );
+  }
+
+  async updateLinearTaskWorkflowState(
+    taskId: string,
+    request: LinearTaskWorkflowStateRequest,
+    idempotencyKey: string,
+  ): Promise<LinearTaskWorkflowStateResponse> {
+    return this.request(
+      "POST",
+      `/providers/linear/tasks/${encodeURIComponent(taskId)}/workflow-state`,
+      {
+        body: request,
+        headers: { "Idempotency-Key": idempotencyKey },
+      },
+    );
   }
 
   async getTaskCiStatus(taskId: string): Promise<TaskCiStatusResponse> {

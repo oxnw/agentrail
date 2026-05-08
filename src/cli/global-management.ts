@@ -166,8 +166,10 @@ export async function runConfigCommand(argv: string[], {
       nextConfig.providers = nextConfig.providers ?? {};
       nextConfig.providers.github = nextConfig.providers.github ?? {};
       nextConfig.providers.circleci = nextConfig.providers.circleci ?? {};
+      nextConfig.providers.linear = nextConfig.providers.linear ?? {};
       nextConfig.providers.github.mode = flags.providerMode;
-      nextConfig.providers.circleci.mode = flags.providerMode === "real" ? "real" : "disabled";
+      nextConfig.providers.circleci.mode = flags.providerMode;
+      nextConfig.providers.linear.mode = flags.providerMode;
     }
     if (flags.markdownExport !== undefined) {
       nextConfig.exports = nextConfig.exports ?? {};

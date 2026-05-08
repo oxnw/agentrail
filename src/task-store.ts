@@ -1,6 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import {
+  getTaskSourceRepoKey,
+  isLinearTaskSource,
+  normalizeTaskSource,
+  type RepoTaskSource,
+  type TaskSource,
+} from "./task-source.ts";
 
 export interface TaskAssignee {
   id: string;
@@ -20,31 +27,32 @@ export interface TaskContext {
 export type TaskStatus = "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled";
 export type TaskPriority = "low" | "medium" | "high" | "critical";
 export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "manual_triage";
-
-export interface TaskSource {
-  provider: string;
-  owner?: string;
-  repo?: string;
-  issueNumber?: number;
-  branch?: string;
-  baseBranch?: string;
-  headSha?: string;
-  projectSlug?: string;
-  ciProvider?: string;
-  reviewers?: string[];
-  pullNumber?: number;
-  prUrl?: string;
-  submissionId?: string;
-  labels?: string[];
-  deliveryId?: string;
-  receivedAt?: string;
-}
+export type CiOverallStatus = "passed" | "failed" | "running" | "queued" | "cancelled" | "skipped" | "neutral" | "error";
 
 export interface TaskSourceAudit {
   sourceRef: string;
   changeReason: string;
   updatedBy: string;
   updatedAt: string;
+}
+
+export interface TaskCiState {
+  provider: string;
+  overallStatus: CiOverallStatus;
+  blocking: boolean;
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+    running: number;
+    queued: number;
+    cancelled: number;
+    skipped: number;
+    neutral: number;
+  };
+  headline: string | null;
+  updatedAt: string | null;
+  lastTransitionAt: string | null;
 }
 
 export interface TaskRecord {
@@ -62,7 +70,9 @@ export interface TaskRecord {
   availableActions: string[];
   submissions: TaskSubmission[];
   latestSubmissionId: string | null;
-  ciStatus: string | null;
+  // Legacy flat mirror of `ci?.overallStatus`; keep synchronized for compatibility reads.
+  ciStatus: CiOverallStatus | null;
+  ci?: TaskCiState | null;
   reviewOutcome: string | null;
   shipOperation: ShipOperation | null;
   rollbackOperation: RollbackOperation | null;
@@ -158,6 +168,8 @@ export interface TaskSummary {
   updatedAt: string;
   availableActions: string[];
 }
+
+export type { LinearTaskSource, RepoTaskSource, TaskSource } from "./task-source.ts";
 
 function createId(): string {
   return `tsk_${crypto.randomBytes(10).toString("hex")}`;
@@ -264,13 +276,27 @@ function persistState(storagePath: string | undefined, tasks: Map<string, TaskRe
 }
 
 function normalizePersistedTaskRecord(record: TaskRecord): TaskRecord {
+  const normalized: TaskRecord = {
+    ...record,
+    source: normalizeTaskSource(record.source),
+  };
   if ((record.assignmentSource as string | null | undefined) === "provider_assignee_mapping") {
-    return {
-      ...record,
-      assignmentSource: "deterministic_rule",
-    } as TaskRecord;
+    normalized.assignmentSource = "deterministic_rule";
   }
-  return record;
+  return normalized;
+}
+
+function syncCiStatus(
+  ciStatus: CiOverallStatus | null | undefined,
+  ci: TaskCiState | null | undefined,
+): CiOverallStatus | null {
+  if (!ci) {
+    return ciStatus ?? null;
+  }
+  if (ciStatus != null && ciStatus !== ci.overallStatus) {
+    throw new Error(`ciStatus (${ciStatus}) must match ci.overallStatus (${ci.overallStatus}).`);
+  }
+  return ci.overallStatus;
 }
 
 function toTaskSummary(task: TaskRecord): TaskSummary {
@@ -289,6 +315,9 @@ function toTaskSummary(task: TaskRecord): TaskSummary {
 export class TaskStore {
   private _tasks: Map<string, TaskRecord>;
   private _idempotency: Map<string, IdempotencyEntry>;
+  private _taskIdByIdentifier: Map<string, string>;
+  private _taskIdsByLinearIssueId: Map<string, Set<string>>;
+  private _taskIdsBySourceRepo: Map<string, Set<string>>;
   private readonly now: () => Date;
   private readonly storagePath: string | undefined;
 
@@ -298,6 +327,12 @@ export class TaskStore {
     const state = loadState(storagePath);
     this._tasks = loadTasks(state);
     this._idempotency = new Map(state.idempotencyEntries ?? []);
+    this._taskIdByIdentifier = new Map();
+    this._taskIdsByLinearIssueId = new Map();
+    this._taskIdsBySourceRepo = new Map();
+    for (const task of this._tasks.values()) {
+      this.indexTask(task);
+    }
   }
 
   listTasks({ status, assigneeAgentId, limit = 25, cursor = null }: ListTasksOptions = {}): ListTasksResult {
@@ -351,12 +386,30 @@ export class TaskStore {
   }
 
   findTaskByIdentifier(identifier: string): TaskRecord | null {
-    for (const task of this._tasks.values()) {
-      if (task.identifier === identifier) {
-        return structuredClone(task);
-      }
+    const taskId = this._taskIdByIdentifier.get(identifier);
+    const task = taskId ? this._tasks.get(taskId) : null;
+    return task ? structuredClone(task) : null;
+  }
+
+  findTaskByLinearIssueId(issueId: string): TaskRecord | null {
+    const tasks = this.findTasksByLinearIssueId(issueId);
+    return tasks[0] ?? null;
+  }
+
+  findTasksByLinearIssueId(issueId: string): TaskRecord[] {
+    const taskIds = this._taskIdsByLinearIssueId.get(issueId);
+    if (!taskIds) {
+      return [];
     }
-    return null;
+    return this.collectTasks(taskIds);
+  }
+
+  findTasksBySourceRepo(provider: RepoTaskSource["provider"], owner: string, repo: string): TaskRecord[] {
+    const taskIds = this._taskIdsBySourceRepo.get(`${provider}:${owner}/${repo}`);
+    if (!taskIds) {
+      return [];
+    }
+    return this.collectTasks(taskIds);
   }
 
   listAllTasks(): TaskRecord[] {
@@ -366,6 +419,8 @@ export class TaskStore {
   createTask(partial: Omit<Partial<TaskRecord>, "id"> & { identifier: string; title: string }): TaskRecord {
     const id = createId();
     const now = this.now().toISOString();
+    const ci = "ci" in partial ? (partial.ci ?? null) : null;
+    const ciStatus = syncCiStatus(partial.ciStatus ?? null, ci);
     const task: TaskRecord = {
       id,
       identifier: partial.identifier,
@@ -381,14 +436,15 @@ export class TaskStore {
       availableActions: partial.availableActions ?? ["start"],
       submissions: partial.submissions ?? [],
       latestSubmissionId: partial.latestSubmissionId ?? null,
-      ciStatus: partial.ciStatus ?? null,
+      ciStatus,
+      ci,
       reviewOutcome: partial.reviewOutcome ?? null,
       shipOperation: partial.shipOperation ?? null,
       rollbackOperation: partial.rollbackOperation ?? null,
       dueAt: partial.dueAt ?? null,
       createdAt: partial.createdAt ?? now,
       version: partial.version ?? 1,
-      source: partial.source,
+      source: normalizeTaskSource(partial.source),
       sourceAudit: "sourceAudit" in partial ? (partial.sourceAudit ?? null) : null,
       assigneeAgentId: "assigneeAgentId" in partial ? (partial.assigneeAgentId ?? null) : (partial.assignee?.id ?? null),
       triageQueueId: "triageQueueId" in partial ? (partial.triageQueueId ?? null) : null,
@@ -398,41 +454,133 @@ export class TaskStore {
       routingConfidence: "routingConfidence" in partial ? (partial.routingConfidence ?? null) : null,
     };
     this._tasks.set(id, task);
+    this.indexTask(task);
     this.persist();
     return structuredClone(task);
   }
 
   upsertTask(record: TaskRecord): TaskRecord {
-    this._tasks.set(record.id, record);
+    const existing = this._tasks.get(record.id);
+    const validatedRecord: TaskRecord = {
+      ...record,
+      ciStatus: syncCiStatus(record.ciStatus, record.ci),
+      source: normalizeTaskSource(record.source),
+    };
+    if (existing) {
+      this.unindexTask(existing);
+    }
+    this._tasks.set(validatedRecord.id, validatedRecord);
+    this.indexTask(validatedRecord);
     this.persist();
-    return structuredClone(record);
+    return structuredClone(validatedRecord);
   }
 
   updateTask(taskId: string, patch: Partial<Omit<TaskRecord, "id">>): TaskRecord | null {
     const existing = this._tasks.get(taskId);
     if (!existing) return null;
+    const ci = "ci" in patch ? (patch.ci ?? null) : existing.ci ?? null;
+    const ciStatusInput = "ciStatus" in patch ? (patch.ciStatus ?? null) : existing.ciStatus;
+    const source = "source" in patch ? normalizeTaskSource(patch.source) : existing.source;
     const updated: TaskRecord = {
       ...existing,
       ...patch,
       id: existing.id,
+      ci,
+      ciStatus: syncCiStatus(ciStatusInput, ci),
+      source,
       version: existing.version + 1,
       updatedAt: this.now().toISOString(),
     };
+    this.unindexTask(existing);
     this._tasks.set(taskId, updated);
+    this.indexTask(updated);
     this.persist();
     return structuredClone(updated);
   }
 
   deleteTask(taskId: string): boolean {
-    const existed = this._tasks.has(taskId);
-    if (existed) {
+    const existing = this._tasks.get(taskId);
+    if (existing) {
+      this.unindexTask(existing);
       this._tasks.delete(taskId);
       this.persist();
+      return true;
     }
-    return existed;
+    return false;
   }
 
   persist(): void {
     persistState(this.storagePath, this._tasks, this._idempotency);
+  }
+
+  private indexTask(task: TaskRecord): void {
+    this._taskIdByIdentifier.set(task.identifier, task.id);
+    const linearIssueId = isLinearTaskSource(task.source)
+      ? task.source.linearIssueId
+      : undefined;
+    if (!linearIssueId) {
+      const repoKey = getTaskSourceRepoKey(task.source);
+      if (!repoKey) {
+        return;
+      }
+      const repoTaskIds = this._taskIdsBySourceRepo.get(repoKey) ?? new Set<string>();
+      repoTaskIds.add(task.id);
+      this._taskIdsBySourceRepo.set(repoKey, repoTaskIds);
+      return;
+    }
+    const taskIds = this._taskIdsByLinearIssueId.get(linearIssueId) ?? new Set<string>();
+    taskIds.add(task.id);
+    this._taskIdsByLinearIssueId.set(linearIssueId, taskIds);
+    const repoKey = getTaskSourceRepoKey(task.source);
+    if (!repoKey) {
+      return;
+    }
+    const repoTaskIds = this._taskIdsBySourceRepo.get(repoKey) ?? new Set<string>();
+    repoTaskIds.add(task.id);
+    this._taskIdsBySourceRepo.set(repoKey, repoTaskIds);
+  }
+
+  private unindexTask(task: TaskRecord): void {
+    if (this._taskIdByIdentifier.get(task.identifier) === task.id) {
+      this._taskIdByIdentifier.delete(task.identifier);
+    }
+    const linearIssueId = isLinearTaskSource(task.source)
+      ? task.source.linearIssueId
+      : undefined;
+    if (linearIssueId) {
+      const taskIds = this._taskIdsByLinearIssueId.get(linearIssueId);
+      if (taskIds) {
+        taskIds.delete(task.id);
+        if (taskIds.size === 0) {
+          this._taskIdsByLinearIssueId.delete(linearIssueId);
+        }
+      }
+    }
+
+    const repoKey = getTaskSourceRepoKey(task.source);
+    if (!repoKey) {
+      return;
+    }
+    const repoTaskIds = this._taskIdsBySourceRepo.get(repoKey);
+    if (!repoTaskIds) {
+      return;
+    }
+    repoTaskIds.delete(task.id);
+    if (repoTaskIds.size === 0) {
+      this._taskIdsBySourceRepo.delete(repoKey);
+    }
+  }
+
+  private collectTasks(taskIds: Iterable<string>): TaskRecord[] {
+    return [...taskIds]
+      .map((taskId) => this._tasks.get(taskId) ?? null)
+      .filter((task): task is TaskRecord => task !== null)
+      .sort((left, right) => {
+        if (left.createdAt !== right.createdAt) {
+          return left.createdAt.localeCompare(right.createdAt);
+        }
+        return left.id.localeCompare(right.id);
+      })
+      .map((task) => structuredClone(task));
   }
 }

@@ -20,10 +20,23 @@ export interface SetupConfigLike {
     github?: {
       mode?: string;
       tokenEnv?: string;
+      deliveryMode?: string;
+      pollIntervalMs?: number;
+      webhookSecretEnv?: string;
     };
     circleci?: {
       mode?: string;
       tokenEnv?: string;
+      deliveryMode?: string;
+      pollIntervalMs?: number;
+      webhookSecretEnv?: string;
+    };
+    linear?: {
+      mode?: string;
+      tokenEnv?: string;
+      deliveryMode?: string;
+      syncMode?: string;
+      pollIntervalMs?: number;
       webhookSecretEnv?: string;
     };
   };
@@ -105,9 +118,11 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
     return null;
   }
 
+  const normalizedProviders = normalizeProviders(config.providers);
   if (Array.isArray(config.repos)) {
     return {
       ...config,
+      providers: normalizedProviders,
       repos: config.repos
         .filter((repo): repo is ConnectedRepo => Boolean(repo?.path && repo?.slug && repo?.defaultBranch))
         .map((repo) => ({
@@ -124,6 +139,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
   if (legacyPath && legacySlug && legacyBranch) {
     return {
       ...config,
+      providers: normalizedProviders,
       repos: [{
         path: legacyPath,
         slug: legacySlug,
@@ -134,8 +150,50 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
 
   return {
     ...config,
+    providers: normalizedProviders,
     repos: [],
   };
+}
+
+function normalizeProviders(providers: SetupConfigLike["providers"]): SetupConfigLike["providers"] {
+  if (!providers) {
+    return providers;
+  }
+  return {
+    ...(providers.github
+      ? {
+          github: {
+            ...providers.github,
+            deliveryMode: normalizeDeliveryMode(providers.github.deliveryMode, "polling"),
+          },
+        }
+      : {}),
+    ...(providers.circleci
+      ? {
+          circleci: {
+            ...providers.circleci,
+            deliveryMode: normalizeDeliveryMode(providers.circleci.deliveryMode, "polling"),
+          },
+        }
+      : {}),
+    ...(providers.linear
+      ? {
+          linear: {
+            ...providers.linear,
+            deliveryMode: normalizeDeliveryMode(
+              providers.linear.deliveryMode,
+              providers.linear.syncMode === "polling" ? "polling" : "webhook",
+            ),
+          },
+        }
+      : {}),
+  };
+}
+
+function normalizeDeliveryMode(value: string | undefined, fallback: "polling" | "webhook"): "polling" | "webhook" {
+  if (value === "webhook") return "webhook";
+  if (value === "polling") return "polling";
+  return fallback;
 }
 
 export function primaryRepoFromConfig(config: SetupConfigLike | null): ConnectedRepo | null {

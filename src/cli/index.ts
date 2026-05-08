@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import path from "node:path";
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { runDoctor } from "./doctor.ts";
 import { runAgentCreate, runAgentUpdate } from "./agent-management.ts";
 import { primaryRepoFromConfig, resolveAgentRailHome } from "./agentrail-home.ts";
 import { runConfigCommand, runRepoCommand, runServerStart } from "./global-management.ts";
+import { runLinearCommand } from "./linear-management.ts";
 import { ensureLocalOperatorBootstrap, hasExistingLocalAgents, withTemporaryLocalServer } from "./local-bootstrap.ts";
 import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
 import { runProviderCommand } from "./provider-management.ts";
@@ -89,6 +91,14 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
         stderr,
         createPrompt: options.createPrompt,
         fetch: options.providerFetch,
+      });
+    }
+
+    if (command === "linear") {
+      return await runLinearCommand(args, {
+        cwd,
+        stdout,
+        stderr,
       });
     }
 
@@ -346,8 +356,10 @@ async function finalizeInit({
       title: "More provider commands",
       body: [
         "Use `agentrail provider list` to review configured provider status.",
-        "Use `agentrail provider connect github` to reconnect or rotate the GitHub token later.",
-        "Use `agentrail provider connect circleci` to add CircleCI with a masked token and webhook-secret prompt.",
+        "Use `agentrail provider connect github` to reconnect GitHub and choose polling or webhook delivery later.",
+        "Use `agentrail provider connect circleci` to connect CircleCI and choose polling or webhook delivery later.",
+        "Use `agentrail provider connect linear` to connect Linear and choose polling or webhook delivery later.",
+        "Use `agentrail linear import ENG-123` to import a Linear issue locally after connecting.",
       ].join("\n"),
     });
   }
@@ -470,9 +482,10 @@ function writeUsage(output: Writer) {
     "  agentrail repo remove --repo <owner/repo>",
     "  agentrail config show",
     "  agentrail config set --base-url <url> [--provider-mode <mode>] [--markdown-export|--no-markdown-export]",
-    "  agentrail provider connect <github|circleci>",
+    "  agentrail provider connect <github|circleci|linear>",
     "  agentrail provider list",
-    "  agentrail provider test <github|circleci>",
+    "  agentrail provider test <github|circleci|linear>",
+    "  agentrail linear import <issue-id|issue-url|issue-uuid>",
     "  agentrail agent create [flags]",
     "  agentrail agent update [flags]",
     "  agentrail task source repair --task-id <tsk_...> --file <json> [flags]",
@@ -494,7 +507,7 @@ function writeUsage(output: Writer) {
   output.write("\n");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const exitCode = await runCli(process.argv.slice(2));
   process.exitCode = exitCode;
 }
