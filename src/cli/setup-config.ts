@@ -4,6 +4,7 @@ import type { ConnectedRepo } from "./agentrail-home.ts";
 
 export type SetupMode = "server";
 export type ProviderMode = "real" | "disabled";
+export type ProviderDeliveryMode = "polling" | "webhook";
 export type PersistenceKind = "file" | "memory";
 export type InteractionMode = "interactive" | "non_interactive" | "print_only";
 
@@ -51,11 +52,23 @@ export interface SetupConfig {
     github: {
       mode: ProviderMode;
       tokenEnv: string;
+      deliveryMode: ProviderDeliveryMode;
+      pollIntervalMs?: number;
+      webhookSecretEnv?: string;
     };
     circleci: {
-      mode: "real" | "disabled";
+      mode: ProviderMode;
       tokenEnv: string;
-      webhookSecretEnv: string;
+      deliveryMode: ProviderDeliveryMode;
+      pollIntervalMs?: number;
+      webhookSecretEnv?: string;
+    };
+    linear: {
+      mode: ProviderMode;
+      tokenEnv: string;
+      deliveryMode: ProviderDeliveryMode;
+      pollIntervalMs?: number;
+      webhookSecretEnv?: string;
     };
   };
   repos: ConnectedRepo[];
@@ -148,11 +161,17 @@ export function createSetupConfig({
       github: {
         mode: resolvedProviderMode,
         tokenEnv: "GITHUB_TOKEN",
+        deliveryMode: "polling",
       },
       circleci: {
         mode: resolvedProviderMode === "real" ? "real" : "disabled",
         tokenEnv: "CIRCLECI_TOKEN",
-        webhookSecretEnv: "CIRCLECI_WEBHOOK_SECRET",
+        deliveryMode: "polling",
+      },
+      linear: {
+        mode: resolvedProviderMode === "real" ? "real" : "disabled",
+        tokenEnv: "LINEAR_API_KEY",
+        deliveryMode: "polling",
       },
     },
     repos: [{
@@ -174,8 +193,12 @@ export function validateSafeDefaults(
     reasons.push("`--yes` requires a local bind on 127.0.0.1, localhost, or ::1.");
   }
 
-  if (config.providers.github.mode === "real" || config.providers.circleci.mode === "real") {
-    reasons.push("`--yes` cannot be used when live GitHub or CircleCI providers would be enabled.");
+  if (
+    config.providers.github.mode === "real"
+    || config.providers.circleci.mode === "real"
+    || config.providers.linear.mode === "real"
+  ) {
+    reasons.push("`--yes` cannot be used when live GitHub, CircleCI, or Linear providers would be enabled.");
   }
 
   return {

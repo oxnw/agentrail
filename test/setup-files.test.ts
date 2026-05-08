@@ -76,11 +76,14 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.match(readme, /setup is only complete when `\/tasks\/mine\?status=in_progress&limit=1` returns assigned work/i);
   assert.match(readme, /~\/\.agentrail\/agents\/<agentId>\.env/i);
   assert.match(readme, /First connected repo/i);
-  assert.match(readme, /masked token prompt/i);
+  assert.match(readme, /paste the token into a hidden prompt/i);
   assert.match(readme, /provider connect github/i);
   assert.match(readme, /provider connect circleci/i);
+  assert.match(readme, /provider connect linear/i);
+  assert.match(readme, /linear import ENG-123/i);
   assert.match(readme, /provider list/i);
   assert.match(readme, /save them into `~\/\.agentrail\/provider\.env`/i);
+  assert.doesNotMatch(readme, /Linear should send webhooks to/i);
   assert.match(readme, /Provider secrets stay out of `config\.json`/i);
   assert.match(readme, /AgentRail can connect more repos later with `agentrail repo add`/i);
   assert.match(readme, /--repo "\$PWD"/);

@@ -91,3 +91,27 @@ test("OpenAPI and SDK auth scope contracts expose routing scopes", () => {
     assert.match(python, new RegExp(`= "${scope}"`), `Python AgentAuthScope should include ${scope}`);
   }
 });
+
+test("Python package root re-exports Linear outbound request and response models", () => {
+  const pythonInit = readFileSync(new URL("../sdk/python/src/agentrail/__init__.py", import.meta.url), "utf8");
+
+  for (const symbol of [
+    "LinearTaskCommentData",
+    "LinearTaskCommentRequest",
+    "LinearTaskCommentResponse",
+    "LinearTaskWorkflowStateData",
+    "LinearTaskWorkflowStateRequest",
+    "LinearTaskWorkflowStateResponse",
+  ]) {
+    assert.match(
+      pythonInit,
+      new RegExp(`\\b${symbol}\\b`),
+      `Python package root should reference ${symbol}`,
+    );
+    assert.match(
+      pythonInit,
+      new RegExp(`"${symbol}"`),
+      `Python package __all__ should export ${symbol}`,
+    );
+  }
+});

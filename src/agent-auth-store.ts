@@ -11,6 +11,7 @@ export const SUPPORTED_SCOPES = new Set([
   "auth:admin",
   "ci:read",
   "events:read",
+  "providers:write",
   "routing:admin",
   "routing:evaluate",
   "routing:read",

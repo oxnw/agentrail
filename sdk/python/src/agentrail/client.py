@@ -18,6 +18,10 @@ from .models import (
     AgentApiKeyResponse,
     AgentApiKeyRotateRequest,
     AgentApiKeyUsageResponse,
+    LinearTaskCommentRequest,
+    LinearTaskCommentResponse,
+    LinearTaskWorkflowStateRequest,
+    LinearTaskWorkflowStateResponse,
     TaskCiStatusResponse,
     TaskDetailResponse,
     TaskLifecycleEvent,
@@ -192,6 +196,36 @@ class AgentRailClient:
             body=request.model_dump(by_alias=True, exclude_none=True),
             headers={"Idempotency-Key": idempotency_key},
             response_model=TaskShipResponse,
+        )
+
+    # ── Providers: Linear ────────────────────────────────────────
+
+    async def create_linear_task_comment(
+        self,
+        task_id: str,
+        request: LinearTaskCommentRequest,
+        idempotency_key: str,
+    ) -> LinearTaskCommentResponse:
+        return await self._request(
+            "POST",
+            f"/providers/linear/tasks/{quote(task_id, safe='')}/comments",
+            body=request.model_dump(by_alias=True, exclude_none=True),
+            headers={"Idempotency-Key": idempotency_key},
+            response_model=LinearTaskCommentResponse,
+        )
+
+    async def update_linear_task_workflow_state(
+        self,
+        task_id: str,
+        request: LinearTaskWorkflowStateRequest,
+        idempotency_key: str,
+    ) -> LinearTaskWorkflowStateResponse:
+        return await self._request(
+            "POST",
+            f"/providers/linear/tasks/{quote(task_id, safe='')}/workflow-state",
+            body=request.model_dump(by_alias=True, exclude_none=True),
+            headers={"Idempotency-Key": idempotency_key},
+            response_model=LinearTaskWorkflowStateResponse,
         )
 
     # ── Webhooks ───────────────────────────────────────────────────

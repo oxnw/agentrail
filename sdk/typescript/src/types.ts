@@ -6,6 +6,7 @@ export type AgentAuthScope =
   | "auth:admin"
   | "ci:read"
   | "events:read"
+  | "providers:write"
   | "routing:admin"
   | "routing:evaluate"
   | "routing:read"
@@ -60,6 +61,13 @@ export type CheckStatus = "passed" | "failed" | "running" | "skipped";
 export type TaskSubmitMode = "adapter_managed" | "artifact";
 
 export type TaskSubmissionAction = "created" | "existing" | "accepted";
+
+/**
+ * AgentRail task status values accepted by the Linear workflow-state sync API.
+ * Linear states are normalized onto the shared `TaskStatus` vocabulary, such as
+ * `todo`, `in_progress`, `in_review`, and `done`.
+ */
+export type LinearAgentRailStatus = TaskStatus;
 
 export type ShipMode = "merge_only" | "merge_and_deploy";
 
@@ -327,6 +335,51 @@ export interface TaskSubmissionData {
 
 export interface TaskSubmissionResponse {
   data: TaskSubmissionData;
+  availableActions: string[];
+}
+
+// ── Linear Provider Sync ──────────────────────────────────────────
+
+export interface LinearTaskCommentRequest {
+  body: string;
+}
+
+export interface LinearTaskCommentData {
+  taskId: string;
+  linearIssueId: string;
+  commentId: string | null;
+  commentUrl: string | null;
+  // Indicates whether the underlying Linear API operation succeeded.
+  // HTTP-level AgentRail failures return non-2xx ErrorResponse payloads.
+  success: boolean;
+  syncedAt: string;
+  availableActions: string[];
+}
+
+export interface LinearTaskCommentResponse {
+  data: LinearTaskCommentData;
+  availableActions: string[];
+}
+
+export interface LinearTaskWorkflowStateRequest {
+  stateId: string;
+}
+
+export interface LinearTaskWorkflowStateData {
+  taskId: string;
+  linearIssueId: string;
+  stateId: string;
+  stateName: string | null;
+  // Indicates whether the underlying Linear API operation succeeded.
+  // HTTP-level AgentRail failures return non-2xx ErrorResponse payloads.
+  success: boolean;
+  agentRailStatus: LinearAgentRailStatus;
+  syncedAt: string;
+  availableActions: string[];
+}
+
+export interface LinearTaskWorkflowStateResponse {
+  data: LinearTaskWorkflowStateData;
   availableActions: string[];
 }
 

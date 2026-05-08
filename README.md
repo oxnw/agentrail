@@ -81,10 +81,11 @@ current session.
 Current shipped CLI surface:
 
 - `agentrail init` writes the local `.agentrail` config and env scaffolding.
-- Interactive `agentrail init` can optionally connect GitHub immediately with a
-  masked token prompt.
-- `agentrail provider connect <github|circleci>` accepts masked secrets
-  interactively and still supports env vars for non-interactive automation.
+- Interactive `agentrail init` can optionally connect GitHub immediately by
+  asking you to paste the token into a hidden prompt.
+- `agentrail provider connect <github|circleci|linear>` asks you to paste secrets into
+  hidden prompts interactively and still supports env vars for non-interactive
+  automation.
 - `agentrail doctor` verifies health, auth, profile/routing readiness, and
   `/tasks/mine` visibility.
 - The server-backed `agentrail agent create/connect` wrapper is still planned,
@@ -309,7 +310,7 @@ See [Cloud boundary](./docs/cloud.md).
 | :construction: | Ship and rollback primitives | Routes and adapter interfaces with idempotency; live GitHub ship and SDK rollback remain follow-up validation work |
 | :construction: | Self-managed deployment | One-click single-instance deploy to Railway or your own infra |
 | :construction: | Local dashboard UI | Single-instance view of local agent activity and task state |
-| :dart: | Linear integration | Sync tasks from Linear projects |
+| :construction: | Linear integration | Sync tasks from Linear projects |
 | :dart: | Jira integration | Sync tasks from Jira boards |
 | :dart: | GitLab adapter | CI pipelines, merge requests, and shipping via GitLab |
 | :dart: | Multi-agent coordination | Task claiming, handoff, and conflict resolution across agents |

@@ -32,6 +32,10 @@ test("createSetupConfig derives server defaults from repo detection", () => {
   assert.equal(config.persistence.authStorePath, "stores/agent-auth.json");
   assert.equal(config.providers.github.mode, "real");
   assert.equal(config.providers.circleci.mode, "real");
+  assert.equal(config.providers.linear.mode, "real");
+  assert.equal(config.providers.github.deliveryMode, "polling");
+  assert.equal(config.providers.circleci.deliveryMode, "polling");
+  assert.equal(config.providers.linear.deliveryMode, "polling");
   assert.deepEqual(config.repos.map((repo) => repo.slug), ["oxnw/agentrail"]);
   assert.equal(config.repos[0].defaultBranch, "main");
   assert.equal(config.exports.markdown.enabled, false);
@@ -71,7 +75,10 @@ test("--yes safety validation rejects non-local or live defaults", () => {
 
   assert.equal(validation.ok, false);
   assert.match(validation.reasons.join("\n"), /local bind/i);
-  assert.match(validation.reasons.join("\n"), /live GitHub or CircleCI providers/i);
+  assert.match(validation.reasons.join("\n"), /live.*provider/i);
+  assert.match(validation.reasons.join("\n"), /github/i);
+  assert.match(validation.reasons.join("\n"), /circleci/i);
+  assert.match(validation.reasons.join("\n"), /linear/i);
 });
 
 test("buildInitCommand renders an equivalent non-interactive command", () => {

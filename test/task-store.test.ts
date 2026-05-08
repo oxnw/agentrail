@@ -95,7 +95,7 @@ test("TaskStore migrates legacy single-record JSONL files and rewrites them in s
 
     const store = new TaskStore({ now, storagePath });
     const restored = store.getTask(legacyTask.id);
-    assert.deepEqual(restored, legacyTask);
+    assert.deepEqual(restored, { ...legacyTask, source: undefined });
 
     store.persist();
     const rewritten = JSON.parse(await readFile(storagePath, "utf8"));
@@ -130,8 +130,8 @@ test("TaskStore migrates legacy multi-record JSONL files and preserves all tasks
     await writeFile(storagePath, legacyTasks.map((task) => JSON.stringify(task)).join("\n") + "\n", "utf8");
 
     const store = new TaskStore({ now, storagePath });
-    assert.deepEqual(store.getTask(legacyTasks[0].id), legacyTasks[0]);
-    assert.deepEqual(store.getTask(legacyTasks[1].id), legacyTasks[1]);
+    assert.deepEqual(store.getTask(legacyTasks[0].id), { ...legacyTasks[0], source: undefined });
+    assert.deepEqual(store.getTask(legacyTasks[1].id), { ...legacyTasks[1], source: undefined });
 
     store.persist();
     const rewritten = JSON.parse(await readFile(storagePath, "utf8"));
@@ -284,4 +284,286 @@ test("TaskStore getTask returns deep clone", () => {
   clone!.title = "Mutated";
   const refetch = store.getTask(task.id);
   assert.equal(refetch?.title, "Clone test");
+});
+
+test("TaskStore keeps ciStatus synchronized with ci.overallStatus", () => {
+  const store = new TaskStore({ now });
+  const ci = {
+    provider: "github",
+    overallStatus: "failed" as const,
+    blocking: true,
+    summary: {
+      total: 1,
+      passed: 0,
+      failed: 1,
+      running: 0,
+      queued: 0,
+      cancelled: 0,
+      skipped: 0,
+      neutral: 0,
+    },
+    headline: "Unit tests failed",
+    updatedAt: FIXTURE_NOW.toISOString(),
+    lastTransitionAt: FIXTURE_NOW.toISOString(),
+  };
+
+  const created = store.createTask(makeTask({
+    identifier: "CI-1",
+    title: "CI mirror",
+    ci,
+  }));
+  assert.equal(created.ciStatus, "failed");
+
+  const updated = store.updateTask(created.id, {
+    ciStatus: "passed",
+    ci: {
+      ...ci,
+      overallStatus: "passed",
+      blocking: false,
+      headline: "Unit tests passed",
+    },
+  });
+  assert.equal(updated?.ciStatus, "passed");
+  assert.equal(updated?.ci?.overallStatus, "passed");
+});
+
+test("TaskStore rejects mismatched ciStatus and ci.overallStatus", () => {
+  const store = new TaskStore({ now });
+  assert.throws(
+    () => store.createTask(makeTask({
+      identifier: "CI-2",
+      title: "CI mismatch",
+      ciStatus: "passed",
+      ci: {
+        provider: "github",
+        overallStatus: "failed",
+        blocking: true,
+        summary: {
+          total: 1,
+          passed: 0,
+          failed: 1,
+          running: 0,
+          queued: 0,
+          cancelled: 0,
+          skipped: 0,
+          neutral: 0,
+        },
+        headline: "Unit tests failed",
+        updatedAt: FIXTURE_NOW.toISOString(),
+        lastTransitionAt: FIXTURE_NOW.toISOString(),
+      },
+    })),
+    /ciStatus .* must match ci\.overallStatus/,
+  );
+});
+
+test("TaskStore rejects mismatched ciStatus and ci.overallStatus on update", () => {
+  const store = new TaskStore({ now });
+  const task = store.createTask(makeTask({
+    identifier: "CI-5",
+    title: "CI update mismatch",
+  }));
+
+  assert.throws(
+    () => store.updateTask(task.id, {
+      ciStatus: "passed",
+      ci: {
+        provider: "github",
+        overallStatus: "failed",
+        blocking: true,
+        summary: {
+          total: 1,
+          passed: 0,
+          failed: 1,
+          running: 0,
+          queued: 0,
+          cancelled: 0,
+          skipped: 0,
+          neutral: 0,
+        },
+        headline: "Unit tests failed",
+        updatedAt: FIXTURE_NOW.toISOString(),
+        lastTransitionAt: FIXTURE_NOW.toISOString(),
+      },
+    }),
+    /ciStatus .* must match ci\.overallStatus/,
+  );
+});
+
+test("TaskStore validates ciStatus and ci.overallStatus on upsert", () => {
+  const store = new TaskStore({ now });
+  const created = store.createTask(makeTask({
+    identifier: "CI-3",
+    title: "CI upsert mismatch",
+  }));
+
+  assert.throws(
+    () => store.upsertTask({
+      ...created,
+      ciStatus: "passed",
+      ci: {
+        provider: "github",
+        overallStatus: "failed",
+        blocking: true,
+        summary: {
+          total: 1,
+          passed: 0,
+          failed: 1,
+          running: 0,
+          queued: 0,
+          cancelled: 0,
+          skipped: 0,
+          neutral: 0,
+        },
+        headline: "Unit tests failed",
+        updatedAt: FIXTURE_NOW.toISOString(),
+        lastTransitionAt: FIXTURE_NOW.toISOString(),
+      },
+    }),
+    /ciStatus .* must match ci\.overallStatus/,
+  );
+});
+
+test("TaskStore synchronizes ciStatus from ci.overallStatus on upsert", () => {
+  const store = new TaskStore({ now });
+  const created = store.createTask(makeTask({
+    identifier: "CI-4",
+    title: "CI upsert sync",
+  }));
+
+  const upserted = store.upsertTask({
+    ...created,
+    ciStatus: null,
+    ci: {
+      provider: "github",
+      overallStatus: "failed",
+      blocking: true,
+      summary: {
+        total: 1,
+        passed: 0,
+        failed: 1,
+        running: 0,
+        queued: 0,
+        cancelled: 0,
+        skipped: 0,
+        neutral: 0,
+      },
+      headline: "Unit tests failed",
+      updatedAt: FIXTURE_NOW.toISOString(),
+      lastTransitionAt: FIXTURE_NOW.toISOString(),
+    },
+  });
+
+  assert.equal(upserted.ciStatus, "failed");
+  assert.equal(store.getTask(created.id)?.ciStatus, "failed");
+});
+
+test("TaskStore maintains identifier and Linear issue indexes across create, update, and delete", () => {
+  const store = new TaskStore({ now });
+  const created = store.createTask(makeTask({
+    identifier: "linear:agentrail:issues/ENG-1",
+    title: "Indexed Linear task",
+    source: {
+      provider: "linear",
+      linearIssueId: "lin_issue_1",
+    },
+  }));
+
+  assert.equal(store.findTaskByIdentifier("linear:agentrail:issues/ENG-1")?.id, created.id);
+  assert.equal(store.findTaskByLinearIssueId("lin_issue_1")?.id, created.id);
+  assert.deepEqual(
+    store.findTasksByLinearIssueId("lin_issue_1").map((task) => task.id),
+    [created.id],
+  );
+
+  const updated = store.updateTask(created.id, {
+    identifier: "linear:agentrail:issues/ENG-2",
+    source: {
+      provider: "linear",
+      linearIssueId: "lin_issue_2",
+    },
+  });
+  assert.ok(updated);
+
+  assert.equal(store.findTaskByIdentifier("linear:agentrail:issues/ENG-1"), null);
+  assert.equal(store.findTaskByLinearIssueId("lin_issue_1"), null);
+  assert.deepEqual(store.findTasksByLinearIssueId("lin_issue_1"), []);
+  assert.equal(store.findTaskByIdentifier("linear:agentrail:issues/ENG-2")?.id, created.id);
+  assert.equal(store.findTaskByLinearIssueId("lin_issue_2")?.id, created.id);
+  assert.deepEqual(
+    store.findTasksByLinearIssueId("lin_issue_2").map((task) => task.id),
+    [created.id],
+  );
+
+  assert.equal(store.deleteTask(created.id), true);
+  assert.equal(store.findTaskByIdentifier("linear:agentrail:issues/ENG-2"), null);
+  assert.equal(store.findTaskByLinearIssueId("lin_issue_2"), null);
+  assert.deepEqual(store.findTasksByLinearIssueId("lin_issue_2"), []);
+});
+
+test("TaskStore returns the oldest matching task for duplicate Linear issue ids", () => {
+  const store = new TaskStore({ now });
+  const older = store.createTask(makeTask({
+    identifier: "linear:agentrail:issues/ENG-10",
+    title: "Older duplicate",
+    createdAt: "2026-05-01T03:25:14Z",
+    source: {
+      provider: "linear",
+      linearIssueId: "lin_issue_duplicate",
+    },
+  }));
+  const newer = store.createTask(makeTask({
+    identifier: "linear:agentrail:issues/ENG-11",
+    title: "Newer duplicate",
+    createdAt: "2026-05-01T03:25:16Z",
+    source: {
+      provider: "linear",
+      linearIssueId: "lin_issue_duplicate",
+    },
+  }));
+
+  const resolved = store.findTaskByLinearIssueId("lin_issue_duplicate");
+  assert.equal(resolved?.id, older.id);
+  assert.notEqual(resolved?.id, newer.id);
+});
+
+test("TaskStore indexes repo-backed tasks by provider owner and repo", () => {
+  const store = new TaskStore({ now });
+  const first = store.createTask(makeTask({
+    identifier: "github:acme/web:issues/1",
+    title: "First repo task",
+    createdAt: "2026-05-01T03:25:14Z",
+    source: {
+      provider: "github",
+      owner: "acme",
+      repo: "web",
+      issueNumber: 1,
+    },
+  }));
+  const second = store.createTask(makeTask({
+    identifier: "github:acme/web:issues/2",
+    title: "Second repo task",
+    createdAt: "2026-05-01T03:25:16Z",
+    source: {
+      provider: "github",
+      owner: "acme",
+      repo: "web",
+      issueNumber: 2,
+    },
+  }));
+  store.createTask(makeTask({
+    identifier: "github:acme/other:issues/3",
+    title: "Other repo task",
+    source: {
+      provider: "github",
+      owner: "acme",
+      repo: "other",
+      issueNumber: 3,
+    },
+  }));
+
+  assert.deepEqual(
+    store.findTasksBySourceRepo("github", "acme", "web").map((task) => task.id),
+    [first.id, second.id],
+  );
 });

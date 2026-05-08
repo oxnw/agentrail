@@ -4,9 +4,10 @@ import path from "node:path";
 import { AgentAuthStore } from "../agent-auth-store.ts";
 import { createServer } from "../app.ts";
 import { AgentProfileStore } from "../agent-profile-store.ts";
+import { loadEnvFile } from "../env-file.ts";
 import { TaskEventStore } from "../task-event-store.ts";
 import { buildRuntime } from "../server-runtime.ts";
-import { operatorEnvPathForHome } from "./agentrail-home.ts";
+import { operatorEnvPathForHome, providerEnvPathForHome } from "./agentrail-home.ts";
 import type { SetupConfig } from "./setup-config.ts";
 
 export interface LocalBootstrapResult {
@@ -59,7 +60,7 @@ export async function ensureLocalOperatorBootstrap({
       displayName: "Local Operator",
       role: "operator",
     },
-    scopes: ["auth:admin", "routing:admin", "routing:read", "tasks:read", "usage:read"],
+    scopes: ["auth:admin", "routing:admin", "routing:read", "tasks:read", "tasks:write", "usage:read"],
   }, buildOperatorBootstrapIdempotencyKey(existing.AGENTRAIL_OPERATOR_KEY_ID));
 
   await mkdir(path.dirname(operatorEnvPath), { recursive: true });
@@ -139,6 +140,11 @@ export async function withTemporaryLocalServer<T>({
     "AGENTRAIL_ROUTING_RULES_STORE_PATH",
     "AGENTRAIL_ROUTING_AUDIT_STORE_PATH",
     "AGENTRAIL_OBSERVABILITY",
+    "GITHUB_TOKEN",
+    "CIRCLECI_TOKEN",
+    "CIRCLECI_WEBHOOK_SECRET",
+    "LINEAR_API_KEY",
+    "LINEAR_WEBHOOK_SECRET",
   ]);
 
   process.env.AGENTRAIL_TASK_STORE_PATH = paths.taskStorePath;
@@ -148,9 +154,25 @@ export async function withTemporaryLocalServer<T>({
   process.env.AGENTRAIL_OBSERVABILITY = "false";
 
   try {
+    loadEnvFile(providerEnvPathForHome(resolvedHomePath));
     const runtime = buildRuntime({
       githubToken: process.env.GITHUB_TOKEN || null,
+      githubMode: config.providers.github.mode,
+      githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET || null,
+      githubDeliveryMode: config.providers.github.deliveryMode,
+      githubPollIntervalMs: config.providers.github.pollIntervalMs ?? null,
       circleciToken: process.env.CIRCLECI_TOKEN || null,
+      circleciMode: config.providers.circleci.mode,
+      circleciWebhookSecret: process.env.CIRCLECI_WEBHOOK_SECRET || null,
+      circleciDeliveryMode: config.providers.circleci.deliveryMode,
+      circleciPollIntervalMs: config.providers.circleci.pollIntervalMs ?? null,
+      linearApiKey: process.env.LINEAR_API_KEY || null,
+      linearMode: config.providers.linear.mode,
+      linearWebhookSecret: process.env.LINEAR_WEBHOOK_SECRET || null,
+      linearDeliveryMode: config.providers.linear.deliveryMode,
+      linearPollIntervalMs: config.providers.linear.pollIntervalMs ?? null,
+      enableBackgroundDelivery: false,
+      repos: config.repos,
       now,
       eventStore,
       publicBaseUrl,
@@ -160,9 +182,12 @@ export async function withTemporaryLocalServer<T>({
       store: eventStore,
       taskLifecycleStore: runtime.taskLifecycleStore,
       ciStatusAdapter: runtime.ciStatusAdapter,
+      githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET || null,
       reviewFeedbackAdapter: runtime.reviewFeedbackAdapter,
       rollbackAdapter: runtime.rollbackAdapter,
       intakeAdapter: runtime.intakeAdapter,
+      linearIntakeAdapter: runtime.linearIntakeAdapter,
+      linearWebhookAdapter: runtime.linearWebhookAdapter,
       routingControlPlane: runtime.routingControlPlane,
       authStore,
       now,
@@ -170,6 +195,7 @@ export async function withTemporaryLocalServer<T>({
       fallbackMode: false,
     });
     try {
+      await runtime.deliveryController?.start();
       const listenResult = await listen(
         server,
         0,
@@ -193,6 +219,7 @@ export async function withTemporaryLocalServer<T>({
       const baseUrl = `http://${normalizedHost}:${address.port}`;
       return await handler({ baseUrl });
     } finally {
+      await runtime.deliveryController?.stop();
       await closeServer(server);
     }
   } finally {

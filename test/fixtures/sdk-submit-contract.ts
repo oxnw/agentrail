@@ -1,4 +1,9 @@
 import type {
+  AgentRailClient,
+  LinearTaskCommentRequest,
+  LinearTaskCommentResponse,
+  LinearTaskWorkflowStateRequest,
+  LinearTaskWorkflowStateResponse,
   TaskDetailResponse,
   TaskSubmissionResponse,
   TaskSubmitRequest
@@ -80,7 +85,62 @@ const taskDetailResponse: TaskDetailResponse = {
   },
 };
 
+const linearCommentRequest: LinearTaskCommentRequest = {
+  body: "Implemented the SDK contract and documented the outbound sync endpoints.",
+};
+
+const linearCommentResponse: LinearTaskCommentResponse = {
+  data: {
+    taskId: "tsk_123",
+    linearIssueId: "LIN-42",
+    commentId: "cmt_01JZLINEARCOMMENT0001",
+    commentUrl: "https://linear.app/acme/comment/cmt_01JZLINEARCOMMENT0001",
+    success: true,
+    syncedAt: "2026-05-06T18:30:00Z",
+    availableActions: ["get_task"],
+  },
+  availableActions: ["get_task"],
+};
+
+const linearWorkflowStateRequest: LinearTaskWorkflowStateRequest = {
+  stateId: "state_in_review",
+};
+
+const linearWorkflowStateResponse: LinearTaskWorkflowStateResponse = {
+  data: {
+    taskId: "tsk_123",
+    linearIssueId: "LIN-42",
+    stateId: "state_in_review",
+    stateName: "In Review",
+    success: true,
+    agentRailStatus: "in_review",
+    syncedAt: "2026-05-06T18:31:00Z",
+    availableActions: ["get_task"],
+  },
+  availableActions: ["get_task"],
+};
+
+async function exerciseLinearOutboundMethods(client: AgentRailClient): Promise<void> {
+  const comment: LinearTaskCommentResponse = await client.createLinearTaskComment(
+    "tsk_123",
+    linearCommentRequest,
+    "linear-comment-AGEA-133-v1",
+  );
+  const workflowState: LinearTaskWorkflowStateResponse = await client.updateLinearTaskWorkflowState(
+    "tsk_123",
+    linearWorkflowStateRequest,
+    "linear-state-AGEA-133-v1",
+  );
+  void comment;
+  void workflowState;
+}
+
 void adapterManagedSubmit;
 void artifactDemoSubmit;
 void submitResponse;
 void taskDetailResponse;
+void linearCommentRequest;
+void linearCommentResponse;
+void linearWorkflowStateRequest;
+void linearWorkflowStateResponse;
+void exerciseLinearOutboundMethods;

@@ -1,9 +1,11 @@
 import crypto from "node:crypto";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
-import { TaskStore, type TaskRecord } from "./task-store.ts";
+import { TaskStore, type CiOverallStatus, type TaskCiState, type TaskRecord } from "./task-store.ts";
 import type { TaskEventStore } from "./task-event-store.ts";
 import { getLatestTaskSubmission } from "./task-source-resolution.ts";
 import { mergeTaskSource, validateTaskSourceRepairRequest, type TaskSourceRepairRequest } from "./task-source-repair.ts";
+import { logNarrative } from "./structured-logger.ts";
+import type { RepoTaskSource } from "./task-source.ts";
 
 export interface AgentTaskQueueOptions {
   now?: () => Date;
@@ -47,6 +49,7 @@ function toTaskDetail(task: TaskRecord) {
     context: task.context,
     updatedAt: task.updatedAt,
     submissionId: task.latestSubmissionId,
+    ci: task.ci ?? null,
     prUrl: latestSubmission?.prUrl ?? task.source?.prUrl ?? null,
     prNumber: latestSubmission?.prNumber ?? task.source?.pullNumber ?? null,
     branch: latestSubmission?.branch ?? task.source?.branch ?? null,
@@ -73,6 +76,11 @@ function firstString(...values: unknown[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function toSafeNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 export class AgentTaskQueue {
@@ -324,6 +332,14 @@ export class AgentTaskQueue {
     return this.store.findTaskByIdentifier(identifier);
   }
 
+  findTaskByLinearIssueId(issueId: string) {
+    return this.store.findTaskByLinearIssueId(issueId);
+  }
+
+  findTasksByLinearIssueId(issueId: string) {
+    return this.store.findTasksByLinearIssueId(issueId);
+  }
+
   getIdempotencyEntry(key: string) {
     return this.store.getIdempotencyEntry(key);
   }
@@ -336,27 +352,133 @@ export class AgentTaskQueue {
     return this.store.listAllTasks();
   }
 
+  listRawTasksBySourceRepo(provider: RepoTaskSource["provider"], owner: string, repo: string) {
+    return this.store.findTasksBySourceRepo(provider, owner, repo);
+  }
+
+  async projectCiState(taskId: string, observation: {
+    provider: string;
+    overallStatus: CiOverallStatus;
+    summary?: Partial<TaskCiState["summary"]> | null;
+    headline?: string | null;
+    updatedAt?: string | null;
+  }): Promise<{ task: TaskRecord; outcome: "failed_transition" | "recovered_transition" | "unchanged" } | null> {
+    const existing = this.store.getTask(taskId);
+    if (!existing) {
+      return null;
+    }
+    const previousTaskStatus = existing.status;
+    const previousCiStatus = existing.ci?.overallStatus ?? existing.ciStatus ?? null;
+    const nextStatus = observation.overallStatus;
+    const blocking = nextStatus === "failed";
+    const nowIso = this.now().toISOString();
+    const ci: TaskCiState = {
+      provider: observation.provider,
+      overallStatus: nextStatus,
+      blocking,
+      summary: {
+        total: toSafeNumber(observation.summary?.total),
+        passed: toSafeNumber(observation.summary?.passed),
+        failed: toSafeNumber(observation.summary?.failed),
+        running: toSafeNumber(observation.summary?.running),
+        queued: toSafeNumber(observation.summary?.queued),
+        cancelled: toSafeNumber(observation.summary?.cancelled),
+        skipped: toSafeNumber(observation.summary?.skipped),
+        neutral: toSafeNumber(observation.summary?.neutral),
+      },
+      headline: observation.headline ?? null,
+      updatedAt: observation.updatedAt ?? nowIso,
+      lastTransitionAt: crossedFailureBoundary(previousCiStatus, nextStatus)
+        ? nowIso
+        : existing.ci?.lastTransitionAt ?? null,
+    };
+    const updated = this.store.updateTask(taskId, {
+      ciStatus: nextStatus,
+      ci,
+    });
+    if (!updated) {
+      return null;
+    }
+    if (crossedIntoFailure(previousCiStatus, nextStatus)) {
+      logNarrative({
+        title: "CI Failed",
+        message: `${formatTaskLabel(updated)} is blocked by ${formatCiProvider(ci.provider)}${ci.headline ? `: ${ci.headline}` : ""}`,
+        operation: "task_ci_failed",
+        taskId: updated.id,
+        provider: ci.provider,
+      });
+      await this.appendTaskEvent("task.ci_failed", updated, {
+        status: updated.status,
+        previousStatus: previousTaskStatus,
+        changedFields: ["ciStatus", "ci"],
+        actor: { id: "system", role: "system" },
+        summary: ci.headline ?? `${ci.provider} CI failed.`,
+        availableActions: updated.availableActions,
+        provider: ci.provider,
+        overallStatus: ci.overallStatus,
+        previousOverallStatus: previousCiStatus ?? "unknown",
+        blocking: ci.blocking,
+        ciSummary: ci.summary,
+        affectedAgentId: updated.assigneeAgentId ?? null,
+      });
+      return { task: updated, outcome: "failed_transition" };
+    } else if (crossedOutOfFailure(previousCiStatus, nextStatus)) {
+      logNarrative({
+        title: "CI Recovered",
+        message: `${formatTaskLabel(updated)} is passing in ${formatCiProvider(ci.provider)} again`,
+        operation: "task_ci_recovered",
+        taskId: updated.id,
+        provider: ci.provider,
+      });
+      await this.appendTaskEvent("task.ci_recovered", updated, {
+        status: updated.status,
+        previousStatus: previousTaskStatus,
+        changedFields: ["ciStatus", "ci"],
+        actor: { id: "system", role: "system" },
+        summary: ci.headline ?? `${ci.provider} CI recovered.`,
+        availableActions: updated.availableActions,
+        provider: ci.provider,
+        overallStatus: ci.overallStatus,
+        previousOverallStatus: previousCiStatus ?? "unknown",
+        blocking: ci.blocking,
+        ciSummary: ci.summary,
+        affectedAgentId: updated.assigneeAgentId ?? null,
+      });
+      return { task: updated, outcome: "recovered_transition" };
+    }
+    return { task: updated, outcome: "unchanged" };
+  }
+
   private async appendTaskUpdatedEvent(
     task: TaskRecord,
     { previousStatus, summary }: { previousStatus: string; summary: string }
   ) {
+    await this.appendTaskEvent("task.updated", task, {
+      status: task.status,
+      previousStatus,
+      changedFields: ["submissions", "latestSubmissionId", "status", "availableActions", "source", "updatedAt"],
+      actor: { id: task.assignee.id, role: "agent" },
+      summary,
+      availableActions: task.availableActions,
+    });
+  }
+
+  private async appendTaskEvent(
+    type: string,
+    task: TaskRecord,
+    data: Record<string, unknown>,
+  ) {
     if (!this.eventStore) return;
     await this.eventStore.append({
       id: `evt_${crypto.randomBytes(10).toString("hex")}`,
-      type: "task.updated",
+      type,
       occurredAt: this.now().toISOString(),
-      sequence: this.eventStore.getMaxSequence() + 1,
       taskVersion: task.version,
       traceId: null,
       data: {
+        ...data,
         taskId: task.id,
         taskIdentifier: task.identifier,
-        status: task.status,
-        previousStatus,
-        changedFields: ["status", "availableActions"],
-        actor: { id: task.assignee.id, role: "agent" },
-        summary,
-        availableActions: task.availableActions,
         links: {
           task: `${this.apiBaseUrl}/tasks/${task.id}`,
           reviewFeedback: `${this.apiBaseUrl}/tasks/${task.id}/review-feedback`,
@@ -368,4 +490,37 @@ export class AgentTaskQueue {
       },
     });
   }
+}
+
+function formatTaskLabel(task: TaskRecord): string {
+  if (task.source?.provider === "linear" && task.source.linearIdentifier) {
+    return `Task ${task.source.linearIdentifier}`;
+  }
+  if (task.source?.provider === "github" && task.source.owner && task.source.repo && task.source.issueNumber) {
+    return `Task ${task.source.owner}/${task.source.repo}#${task.source.issueNumber}`;
+  }
+  return `Task ${task.identifier || task.id}`;
+}
+
+function formatCiProvider(provider: string): string {
+  switch (provider) {
+    case "github_actions":
+      return "GitHub Actions";
+    case "circleci":
+      return "CircleCI";
+    default:
+      return provider;
+  }
+}
+
+function crossedIntoFailure(previousStatus: string | null, nextStatus: string): boolean {
+  return previousStatus !== "failed" && nextStatus === "failed";
+}
+
+function crossedOutOfFailure(previousStatus: string | null, nextStatus: string): boolean {
+  return previousStatus === "failed" && nextStatus !== "failed";
+}
+
+function crossedFailureBoundary(previousStatus: string | null, nextStatus: string): boolean {
+  return crossedIntoFailure(previousStatus, nextStatus) || crossedOutOfFailure(previousStatus, nextStatus);
 }

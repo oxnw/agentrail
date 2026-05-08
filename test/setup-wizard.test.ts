@@ -104,7 +104,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.equal(writes[0]?.config.providers.github.mode, "real");
 });
 
-test("runCli can connect GitHub during init with a masked token and shows provider follow-up commands", async () => {
+test("runCli can connect GitHub during init with a hidden token prompt and shows provider follow-up commands", async () => {
   const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const previousHome = process.env.AGENTRAIL_HOME;
   process.env.AGENTRAIL_HOME = agentrailHome;
@@ -119,7 +119,9 @@ test("runCli can connect GitHub during init with a masked token and shows provid
     { kind: "confirm", value: true },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
+    { kind: "select", value: "polling" },
     { kind: "secret", value: "ghp_init_flow_token" },
+    { kind: "select", value: "60000" },
   ]);
   const fetch = createFetchStub([
     {
@@ -149,11 +151,13 @@ test("runCli can connect GitHub during init with a masked token and shows provid
   assert.ok(prompt.calls.includes("secret"));
   assert.deepEqual(prompt.spinnerEvents, [
     { kind: "start", message: "Testing GitHub connection" },
-    { kind: "stop", message: "\u2713 Connected GitHub using GITHUB_TOKEN." },
+    { kind: "stop", message: "\u2713 Connected GitHub using GITHUB_TOKEN in polling mode." },
   ]);
   assert.match(prompt.notes.map((note) => note.body).join("\n"), /agentrail provider list/i);
   assert.match(prompt.notes.map((note) => note.body).join("\n"), /agentrail provider connect github/i);
   assert.match(prompt.notes.map((note) => note.body).join("\n"), /agentrail provider connect circleci/i);
+  assert.match(prompt.notes.map((note) => note.body).join("\n"), /agentrail provider connect linear/i);
+  assert.match(prompt.notes.map((note) => note.body).join("\n"), /agentrail linear import ENG-123/i);
 
   if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
   else process.env.AGENTRAIL_HOME = previousHome;
@@ -384,7 +388,7 @@ test("runCli rejects unsafe --yes defaults", async () => {
   assert.equal(exitCode, 1);
   assert.equal(stdout.toString(), "");
   assert.match(stderr.toString(), /--yes is only allowed for safe local defaults/i);
-  assert.match(stderr.toString(), /live GitHub or CircleCI providers/i);
+  assert.match(stderr.toString(), /live GitHub, CircleCI, or Linear providers/i);
 });
 
 test("runCli validates --yes safe defaults against the target repo", async () => {
