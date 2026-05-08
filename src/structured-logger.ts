@@ -4,6 +4,8 @@
 
 export interface LogFields {
   operation?: string;
+  title?: string;
+  message?: string;
   agentId?: string;
   taskId?: string;
   provider?: string;
@@ -38,6 +40,24 @@ export function createOperationTimer(fields: LogFields): Timer {
 
 export function logEvent(fields: LogFields): void {
   emit({ level: "info", ...fields });
+}
+
+/**
+ * Emits a human-readable narrative log line in text mode and a structured JSON
+ * record in JSON mode. Prefer this for operator-facing "title: message" output;
+ * use logEvent/emit for machine-oriented structured events.
+ */
+export function logNarrative({ title, message, ...fields }: LogFields & { title: string; message: string }): void {
+  if (getFormat() === "json") {
+    emit({ level: "info", title, message, ...fields });
+    return;
+  }
+  if (!isEnabled()) return;
+  const ts = new Date().toISOString();
+  const sentence = ensureSentence(message);
+  const base = sentence ? `${title}: ${sentence}` : title;
+  const extras = formatTextFields(fields);
+  process.stderr.write(`${ts} [info] ${base}${extras ? ` ${extras}` : ""}\n`);
 }
 
 interface LogRecord extends LogFields {
@@ -76,6 +96,29 @@ function emit(entry: Partial<LogRecord>): void {
 
 function isEnabled(): boolean {
   return (process.env.AGENTRAIL_OBSERVABILITY ?? "true").toLowerCase() !== "false";
+}
+
+function ensureSentence(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return /[.!?]$/u.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function formatTextFields(fields: LogFields): string {
+  return Object.entries(fields)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => `${key}=${formatTextValue(value)}`)
+    .join(" ");
+}
+
+function formatTextValue(value: unknown): string {
+  if (typeof value === "string") {
+    return /[\s"'=\\]/u.test(value) ? JSON.stringify(value) : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 let warnedAboutLogFormat = false;
