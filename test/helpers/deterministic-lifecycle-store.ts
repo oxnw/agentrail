@@ -365,7 +365,6 @@ class AgentShipCycleDemoStore {
       id: `evt_DEMOTASKUPDATED${String(this.eventStore.getMaxSequence() + 1).padStart(2, "0")}`,
       type: "task.updated",
       occurredAt: this.now().toISOString(),
-      sequence: this.eventStore.getMaxSequence() + 1,
       taskVersion: task.submissions.length + 1,
       traceId: null,
       data: {
@@ -394,7 +393,6 @@ class AgentShipCycleDemoStore {
       id: `evt_DEMOTASKSHIPPED${String(this.eventStore.getMaxSequence() + 1).padStart(2, "0")}`,
       type: "task.shipped",
       occurredAt: this.now().toISOString(),
-      sequence: this.eventStore.getMaxSequence() + 1,
       taskVersion: task.submissions.length + 2,
       traceId: null,
       data: {
@@ -420,7 +418,6 @@ class AgentShipCycleDemoStore {
       id: `evt_DEMOTASKROLLEDBACK${String(this.eventStore.getMaxSequence() + 1).padStart(2, "0")}`,
       type: "task.rolled_back",
       occurredAt: this.now().toISOString(),
-      sequence: this.eventStore.getMaxSequence() + 1,
       taskVersion: task.submissions.length + 3,
       traceId: null,
       data: {

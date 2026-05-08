@@ -1,6 +1,7 @@
 /** GitHub issue intake adapter: maps a GitHub issue to the AgentRail task store. */
 import crypto from "node:crypto";
 
+import type { RoutingControlPlane } from "./intake-routing-control-plane.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 import type { AgentTaskQueue } from "./agent-task-queue.ts";
 
@@ -21,10 +22,17 @@ export interface GitHubIssueIntakeResult {
   status: string;
   availableActions: string[];
   createdAt: string;
+  outcome?: "created" | "updated" | "unchanged";
+  routing?: {
+    kind: "assigned" | "triage" | "stored_without_routing";
+    target: string | null;
+  };
 }
 
 export interface GitHubIssueIntakeAdapterConfig {
   taskQueue: AgentTaskQueue;
+  routingControlPlane?: RoutingControlPlane | null;
+  repos?: Array<{ slug: string; defaultBranch: string }>;
   now?: () => Date;
 }
 
@@ -82,10 +90,14 @@ function sha256(value: unknown): string {
 
 export class GitHubIssueIntakeAdapter {
   private taskQueue: AgentTaskQueue;
+  private routingControlPlane: RoutingControlPlane | null;
+  private repos: Array<{ slug: string; defaultBranch: string }>;
   private now: () => Date;
 
-  constructor({ taskQueue, now = () => new Date() }: GitHubIssueIntakeAdapterConfig) {
+  constructor({ taskQueue, routingControlPlane = null, repos = [], now = () => new Date() }: GitHubIssueIntakeAdapterConfig) {
     this.taskQueue = taskQueue;
+    this.routingControlPlane = routingControlPlane;
+    this.repos = repos;
     this.now = now;
   }
 
@@ -124,6 +136,34 @@ export class GitHubIssueIntakeAdapter {
       const acceptanceCriteria = hasBody ? this.extractAcceptanceCriteria(payload.body ?? "") : existing.acceptanceCriteria;
       const labels = hasLabels ? (payload.labels ?? []) : (existing.source?.labels ?? []);
 
+      const nextTaskState = {
+        title: payload.issueTitle ?? existing.title,
+        description,
+        status: hasState ? this.mapStatus(payload.state) : existing.status,
+        priority: hasLabels ? this.mapPriority(payload.labels ?? []) : existing.priority,
+        acceptanceCriteria,
+        links: { issue: payload.issueUrl },
+        context: {
+          project: `${repository.owner}/${repository.repo}`,
+          goal: `GitHub issue intake: #${payload.issueNumber}`,
+        },
+        source: {
+          provider: "github",
+          owner: repository.owner,
+          repo: repository.repo,
+          issueNumber: payload.issueNumber,
+          labels,
+          assignees: payload.assignees?.map((assignee) => assignee.login) ?? existing.source?.assignees ?? [],
+        },
+      };
+      if (githubTaskStateMatches(existing, nextTaskState)) {
+        const result = this.resultFor(existing, "unchanged", describeRouting(existing, false));
+        if (idempotencyStoreKey) {
+          this.taskQueue.setIdempotencyEntry(idempotencyStoreKey, { fingerprint, response: structuredClone(result) });
+        }
+        return result;
+      }
+
       const updated = this.taskQueue.updateTask(existing.id, {
         title: payload.issueTitle ?? existing.title,
         description,
@@ -142,6 +182,7 @@ export class GitHubIssueIntakeAdapter {
           repo: repository.repo,
           issueNumber: payload.issueNumber,
           labels,
+          assignees: payload.assignees?.map((assignee) => assignee.login) ?? existing.source?.assignees ?? [],
           deliveryId: idempotencyKey ?? existing.source?.deliveryId,
           receivedAt: this.now().toISOString(),
         },
@@ -151,13 +192,7 @@ export class GitHubIssueIntakeAdapter {
         throw new TaskLifecycleError(500, "internal_error", "Failed to update existing task.", { availableActions: ["retry"] });
       }
 
-      const result: GitHubIssueIntakeResult = {
-        taskId: updated.id,
-        identifier: updated.identifier,
-        status: updated.status,
-        availableActions: updated.availableActions,
-        createdAt: updated.createdAt,
-      };
+      const result = this.resultFor(updated, "updated", describeRouting(updated, false));
 
       if (idempotencyStoreKey) {
         this.taskQueue.setIdempotencyEntry(idempotencyStoreKey, { fingerprint, response: structuredClone(result) });
@@ -166,14 +201,60 @@ export class GitHubIssueIntakeAdapter {
       return result;
     }
 
-    const taskRecord = this.taskQueue.createTask({
+    const routedTaskId = await this.routeIssueIfConfigured({
+      identifier,
+      repository,
+      payload,
+      idempotencyKey,
+    });
+    const baseTask = routedTaskId
+      ? this.taskQueue.getRawTask(routedTaskId)
+      : this.taskQueue.createTask({
+          identifier,
+          title: payload.issueTitle ?? `Issue #${payload.issueNumber}`,
+          description: payload.body ?? "",
+          status: this.mapStatus(payload.state),
+          priority: this.mapPriority(payload.labels ?? []),
+          assignee: { id: "unassigned", name: "Unassigned" },
+          assigneeAgentId: null,
+          links: {
+            issue: payload.issueUrl,
+          },
+          context: {
+            project: `${repository.owner}/${repository.repo}`,
+            goal: `GitHub issue intake: #${payload.issueNumber}`,
+          },
+          acceptanceCriteria: this.extractAcceptanceCriteria(payload.body ?? ""),
+          createdAt: this.now().toISOString(),
+          availableActions: ["start"],
+          submissions: [],
+          latestSubmissionId: null,
+          ciStatus: null,
+          reviewOutcome: null,
+          shipOperation: null,
+          rollbackOperation: null,
+          dueAt: null,
+          version: 1,
+          source: {
+            provider: "github",
+            owner: repository.owner,
+            repo: repository.repo,
+            issueNumber: payload.issueNumber,
+            labels: payload.labels ?? [],
+            assignees: payload.assignees?.map((assignee) => assignee.login) ?? [],
+            deliveryId: idempotencyKey,
+            receivedAt: this.now().toISOString(),
+          },
+        });
+    if (!baseTask) {
+      throw new TaskLifecycleError(500, "internal_error", "Failed to create routed GitHub task.", { availableActions: ["retry"] });
+    }
+    const taskRecord = this.taskQueue.updateTask(baseTask.id, {
       identifier,
       title: payload.issueTitle ?? `Issue #${payload.issueNumber}`,
       description: payload.body ?? "",
       status: this.mapStatus(payload.state),
       priority: this.mapPriority(payload.labels ?? []),
-      assignee: { id: "unassigned", name: "Unassigned" },
-      assigneeAgentId: null,
       links: {
         issue: payload.issueUrl,
       },
@@ -182,34 +263,21 @@ export class GitHubIssueIntakeAdapter {
         goal: `GitHub issue intake: #${payload.issueNumber}`,
       },
       acceptanceCriteria: this.extractAcceptanceCriteria(payload.body ?? ""),
-      createdAt: this.now().toISOString(),
-      availableActions: ["start"],
-      submissions: [],
-      latestSubmissionId: null,
-      ciStatus: null,
-      reviewOutcome: null,
-      shipOperation: null,
-      rollbackOperation: null,
-      dueAt: null,
-      version: 1,
+      availableActions: baseTask.assigneeAgentId ? ["start"] : baseTask.availableActions,
       source: {
+        ...baseTask.source,
         provider: "github",
         owner: repository.owner,
         repo: repository.repo,
         issueNumber: payload.issueNumber,
         labels: payload.labels ?? [],
+        assignees: payload.assignees?.map((assignee) => assignee.login) ?? [],
         deliveryId: idempotencyKey,
         receivedAt: this.now().toISOString(),
       },
-    });
+    }) ?? baseTask;
 
-    const result: GitHubIssueIntakeResult = {
-      taskId: taskRecord.id,
-      identifier: taskRecord.identifier,
-      status: taskRecord.status,
-      availableActions: taskRecord.availableActions,
-      createdAt: taskRecord.createdAt,
-    };
+    const result = this.resultFor(taskRecord, "created", describeRouting(taskRecord, !routedTaskId));
 
     if (idempotencyStoreKey) {
       this.taskQueue.setIdempotencyEntry(idempotencyStoreKey, { fingerprint, response: structuredClone(result) });
@@ -247,6 +315,54 @@ export class GitHubIssueIntakeAdapter {
       "`repository` is required when `issueUrl` cannot be parsed into owner/repo context.",
       { availableActions: ["retry"] },
     );
+  }
+
+  private async routeIssueIfConfigured({
+    identifier,
+    repository,
+    payload,
+    idempotencyKey,
+  }: {
+    identifier: string;
+    repository: GitHubRepositoryRef;
+    payload: GitHubIssueIntakePayload;
+    idempotencyKey?: string;
+  }): Promise<string | null> {
+    if (!this.routingControlPlane) {
+      return null;
+    }
+    const repoSlug = `${repository.owner}/${repository.repo}`;
+    const repo = this.repos.find((candidate) => candidate.slug === repoSlug);
+    try {
+      const decision = await this.routingControlPlane.ingestProviderIssue({
+        provider: "github",
+        providerIssueId: identifier,
+        sourceVersion: idempotencyKey ?? `${this.now().toISOString()}:github`,
+        repository: {
+          provider: "github",
+          owner: repository.owner,
+          name: repository.repo,
+          defaultBranch: repo?.defaultBranch ?? "main",
+        },
+        title: payload.issueTitle ?? `Issue #${payload.issueNumber}`,
+        bodyDigest: sha256(payload.body ?? ""),
+        labels: payload.labels ?? [],
+        project: repoSlug,
+        issueType: classifyIssueType(payload.labels ?? [], payload.issueTitle ?? "", payload.body ?? ""),
+        priority: this.mapPriority(payload.labels ?? []),
+        ownershipTags: [],
+        capabilityTags: [],
+        links: {
+          providerIssue: payload.issueUrl,
+        },
+      }, idempotencyKey ? `github-route:${idempotencyKey}` : undefined);
+      return decision.taskId;
+    } catch (error) {
+      if (error instanceof TaskLifecycleError && error.statusCode === 404) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   private mapStatus(state?: string | null): "todo" | "in_progress" | "blocked" | "done" | "cancelled" {
@@ -291,4 +407,83 @@ export class GitHubIssueIntakeAdapter {
     }
     return criteria;
   }
+
+  private resultFor(
+    task: NonNullable<ReturnType<AgentTaskQueue["getRawTask"]>>,
+    outcome: "created" | "updated" | "unchanged",
+    routing: GitHubIssueIntakeResult["routing"],
+  ): GitHubIssueIntakeResult {
+    return {
+      taskId: task.id,
+      identifier: task.identifier,
+      status: task.status,
+      availableActions: task.availableActions,
+      createdAt: task.createdAt,
+      outcome,
+      routing,
+    };
+  }
+}
+
+function githubTaskStateMatches(existing: ReturnType<AgentTaskQueue["getRawTask"]>, next: {
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  acceptanceCriteria: string[];
+  links: { issue: string };
+  context: { project: string; goal: string };
+  source: {
+    provider: string;
+    owner: string;
+    repo: string;
+    issueNumber: number;
+    labels: string[];
+    assignees: string[];
+  };
+}): boolean {
+  return stableStringify({
+    title: existing?.title,
+    description: existing?.description,
+    status: existing?.status,
+    priority: existing?.priority,
+    acceptanceCriteria: existing?.acceptanceCriteria ?? [],
+    links: { issue: existing?.links?.issue ?? "" },
+    context: existing?.context,
+    source: {
+      provider: existing?.source?.provider ?? null,
+      owner: existing?.source?.owner ?? null,
+      repo: existing?.source?.repo ?? null,
+      issueNumber: existing?.source?.issueNumber ?? null,
+      labels: existing?.source?.labels ?? [],
+      assignees: existing?.source?.assignees ?? [],
+    },
+  }) === stableStringify(next);
+}
+
+function describeRouting(
+  task: NonNullable<ReturnType<AgentTaskQueue["getRawTask"]>>,
+  storedWithoutRouting: boolean,
+): GitHubIssueIntakeResult["routing"] {
+  if (storedWithoutRouting) {
+    return { kind: "stored_without_routing", target: null };
+  }
+  if (task.assigneeAgentId) {
+    return { kind: "assigned", target: task.assignee?.name || task.assigneeAgentId };
+  }
+  if (task.triageQueueId) {
+    return { kind: "triage", target: task.triageQueueId };
+  }
+  return { kind: "stored_without_routing", target: null };
+}
+
+function classifyIssueType(labels: string[], title: string, body: string): "bug" | "feature" | "architecture" | "design" | "documentation" | "maintenance" | "unknown" {
+  const haystack = `${labels.join(" ")} ${title} ${body}`.toLowerCase();
+  if (/\b(?:bug|fix|regression|error)\b/u.test(haystack)) return "bug";
+  if (/\b(?:doc|documentation|readme)\b/u.test(haystack)) return "documentation";
+  if (/\b(?:design|ux|ui)\b/u.test(haystack)) return "design";
+  if (/\b(?:refactor|chore|maintenance|deps|dependency)\b/u.test(haystack)) return "maintenance";
+  if (/\b(?:arch|architecture|infra|platform)\b/u.test(haystack)) return "architecture";
+  if (/\b(?:feature|enhancement|improvement)\b/u.test(haystack)) return "feature";
+  return "unknown";
 }

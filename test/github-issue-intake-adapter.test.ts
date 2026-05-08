@@ -218,6 +218,65 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.deepStrictEqual(stored!.source!.labels, ["enhancement", "high-priority"]);
   });
 
+  it("classifies identical repeat intake as unchanged", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+    const payload = {
+      issueNumber: 24,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/24",
+      issueTitle: "No-op repeat",
+      body: "No changes here.",
+      labels: ["bug"],
+      state: "open" as const,
+      repository: { owner: "oxnw", repo: "agentrail" },
+      assignees: [{ login: "alice" }],
+    };
+
+    const first = await adapter.ingest(payload, "idemp_noop_first");
+    const second = await adapter.ingest(payload, "idemp_noop_second");
+
+    assert.strictEqual(first.outcome, "created");
+    assert.strictEqual(second.outcome, "unchanged");
+    assert.strictEqual(second.taskId, first.taskId);
+
+    const stored = queue.getRawTask(second.taskId);
+    assert.ok(stored, "Task should exist");
+    assert.strictEqual(stored!.title, "No-op repeat");
+    assert.deepStrictEqual(stored!.acceptanceCriteria, []);
+    assert.strictEqual(stored!.status, "todo");
+    assert.deepStrictEqual(stored!.assignee, { id: "unassigned", name: "Unassigned" });
+    assert.strictEqual(stored!.assigneeAgentId, null);
+    assert.deepStrictEqual(stored!.source?.labels, ["bug"]);
+    assert.strictEqual(stored!.source?.owner, "oxnw");
+    assert.strictEqual(stored!.source?.repo, "agentrail");
+    assert.strictEqual(stored!.source?.deliveryId, "idemp_noop_first");
+  });
+
+  it("updates existing tasks whose legacy record is missing links", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+    const payload = {
+      issueNumber: 25,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/25",
+      issueTitle: "Legacy links fallback",
+      body: "Restore missing task links from the GitHub payload.",
+      labels: ["bug"],
+      state: "open" as const,
+      repository: { owner: "oxnw", repo: "agentrail" },
+      assignees: [{ login: "alice" }],
+    };
+
+    const first = await adapter.ingest(payload, "idemp_links_first");
+    queue.updateTask(first.taskId, { links: undefined });
+
+    const second = await adapter.ingest(payload, "idemp_links_second");
+
+    assert.strictEqual(second.taskId, first.taskId);
+    const stored = queue.getRawTask(second.taskId);
+    assert.ok(stored, "Task should exist");
+    assert.strictEqual(stored!.links.issue, "https://github.com/oxnw/agentrail/issues/25");
+  });
+
   it("preserves existing task fields when sparse webhook updates omit optional payload fields", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });

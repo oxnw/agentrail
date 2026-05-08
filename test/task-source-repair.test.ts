@@ -21,6 +21,53 @@ test("validateTaskSourceRepairRequest rejects unknown fields", () => {
   );
 });
 
+test("validateTaskSourceRepairRequest rejects mixed provider-specific source fields", () => {
+  assert.throws(
+    () =>
+      validateTaskSourceRepairRequest({
+        sourceRef: "operator-test",
+        changeReason: "backfill",
+        source: {
+          provider: "linear",
+          linearIssueId: "lin_issue_123",
+          owner: "acme",
+          repo: "web",
+        },
+      }),
+    /Linear task sources cannot include repo field `owner`/,
+  );
+});
+
+test("validateTaskSourceRepairRequest rejects Linear with repo field", () => {
+  assert.throws(
+    () =>
+      validateTaskSourceRepairRequest({
+        sourceRef: "operator-test",
+        changeReason: "backfill",
+        source: {
+          provider: "linear",
+          linearIssueId: "lin_issue_123",
+          repo: "web",
+        },
+      }),
+    /Linear task sources cannot include repo field `repo`/,
+  );
+});
+
+test("validateTaskSourceRepairRequest rejects unsupported providers", () => {
+  assert.throws(
+    () =>
+      validateTaskSourceRepairRequest({
+        sourceRef: "operator-test",
+        changeReason: "backfill",
+        source: {
+          provider: "jira",
+        },
+      }),
+    /provider `jira` is not supported/i,
+  );
+});
+
 test("mergeTaskSource applies patch semantics and preserves provider", () => {
   const merged = mergeTaskSource({
     currentSource: {
@@ -46,6 +93,24 @@ test("mergeTaskSource applies patch semantics and preserves provider", () => {
     reviewers: ["bob"],
     headSha: "abc123",
   });
+});
+
+test("mergeTaskSource rejects mixed Linear and repo-backed fields after provider changes", () => {
+  assert.throws(
+    () =>
+      mergeTaskSource({
+        currentSource: {
+          provider: "github",
+          owner: "acme",
+          repo: "web",
+        },
+        patch: {
+          provider: "linear",
+          linearIssueId: "lin_issue_999",
+        },
+      }),
+    /Linear task sources cannot include repo field `owner`/,
+  );
 });
 
 test("AgentTaskQueue.repairTaskSource updates persisted task source and replays idempotently", () => {
