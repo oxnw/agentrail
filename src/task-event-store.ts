@@ -35,6 +35,10 @@ export interface TaskEvent {
   };
 }
 
+export type TaskEventDraft = Omit<TaskEvent, "sequence"> & {
+  sequence?: number;
+};
+
 export interface TaskEventStoreOptions {
   now?: () => Date;
   storagePath?: string;
@@ -46,6 +50,7 @@ export class TaskEventStore {
   private _events: TaskEvent[];
   private expiredCursors: Set<string>;
   private listeners: Set<Listener>;
+  private appendChain: Promise<void>;
   readonly now: () => Date;
   readonly storagePath: string | undefined;
 
@@ -55,6 +60,7 @@ export class TaskEventStore {
     this._events = loadEvents(storagePath);
     this.expiredCursors = new Set();
     this.listeners = new Set();
+    this.appendChain = Promise.resolve();
   }
 
   get replayWindowHours(): number { return REPLAY_WINDOW_HOURS; }
@@ -65,13 +71,26 @@ export class TaskEventStore {
     return this._events.at(-1)?.sequence ?? 0;
   }
 
-  async append(event: TaskEvent): Promise<void> {
-    this.pruneExpired();
-    this._events.push(structuredClone(event));
-    persistEvent(this.storagePath, event);
-    for (const listener of this.listeners) {
-      listener(structuredClone(event));
-    }
+  async append(event: TaskEventDraft): Promise<TaskEvent> {
+    const appendTask = this.appendChain.then(() => {
+      this.pruneExpired();
+      const currentMaxSequence = this.getMaxSequence();
+      if (event.sequence !== undefined && event.sequence <= currentMaxSequence) {
+        throw new Error(`Task event sequence ${event.sequence} must be greater than current max ${currentMaxSequence}.`);
+      }
+      const appended: TaskEvent = {
+        ...structuredClone(event),
+        sequence: event.sequence ?? currentMaxSequence + 1,
+      };
+      this._events.push(appended);
+      persistEvent(this.storagePath, appended);
+      for (const listener of this.listeners) {
+        listener(structuredClone(appended));
+      }
+      return structuredClone(appended);
+    });
+    this.appendChain = appendTask.then(() => undefined, () => undefined);
+    return appendTask;
   }
 
   subscribe(listener: Listener): () => void {

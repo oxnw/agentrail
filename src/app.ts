@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { AgentAuthStore } from "./agent-auth-store.ts";
@@ -12,14 +13,17 @@ import { RollbackSourceError } from "./github-rollback-adapter.ts";
 import { createSetupVerificationTask } from "./setup-verification-task.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 import { CursorExpiredError, matchesFilters, TaskEventStore } from "./task-event-store.ts";
+import type { TaskRecord } from "./task-store.ts";
 import {
   ConflictError,
   TaskWebhookSubscriptionStore,
   ValidationError
 } from "./task-webhook-store.ts";
 import { WaitlistStore, WaitlistValidationError } from "./waitlist-store.ts";
-import { createOperationTimer } from "./structured-logger.ts";
+import { createOperationTimer, logNarrative } from "./structured-logger.ts";
 import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
+import type { LinearIssueSourceAdapter } from "./linear-issue-source-adapter.ts";
+import type { LinearCommentWebhookAdapter } from "./linear-comment-webhook-adapter.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,13 +31,33 @@ const DEFAULT_HEARTBEAT_SECONDS = 20;
 const MIN_HEARTBEAT_SECONDS = 10;
 const MAX_HEARTBEAT_SECONDS = 60;
 
+type LinearIssueSourceAdapterLike = Partial<Pick<LinearIssueSourceAdapter, "ingest" | "receiveWebhook" | "createComment" | "updateIssueState" | "importIssue" | "refreshIssue">>;
+type LinearCommentWebhookAdapterLike = Partial<Pick<LinearCommentWebhookAdapter, "receiveWebhook">>;
+type TaskLifecycleStoreLike = {
+  getTask?(taskId: string): unknown;
+  getRawTask?(taskId: string): TaskRecord | null;
+  listRawTasks?(): TaskRecord[];
+  listRawTasksBySourceRepo?(provider: "github" | "gitlab", owner: string, repo: string): TaskRecord[];
+  projectCiState?(taskId: string, observation: {
+    provider: string;
+    overallStatus: string;
+    summary?: Record<string, number>;
+    headline?: string | null;
+    updatedAt?: string | null;
+  }): Promise<unknown> | unknown;
+};
+
 export interface CreateServerOptions {
   store: TaskEventStore;
   now?: () => Date;
   ciStatusAdapter?: { getTaskCiStatus?(taskId: string): Promise<unknown> | unknown; receiveWebhook?(payload: { headers: Record<string, string | string[]>; rawBody: string }): Promise<unknown> } | null;
+  githubWebhookSecret?: string | null;
   reviewFeedbackAdapter?: { getTaskReviewFeedback?(taskId: string): Promise<unknown> | unknown } | null;
   rollbackAdapter?: { rollbackTask?(taskId: string, payload: unknown, idempotencyKey: string): Promise<unknown> } | null;
   intakeAdapter?: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
+  linearIntakeAdapter?: LinearIssueSourceAdapterLike | null;
+  linearIssueSourceAdapter?: LinearIssueSourceAdapterLike | null;
+  linearWebhookAdapter?: LinearCommentWebhookAdapterLike | null;
   routingControlPlane?: RoutingControlPlane | null;
   authStore?: AgentAuthStore | null;
   taskLifecycleStore?: unknown;
@@ -55,9 +79,13 @@ export function createServer({
   store,
   now = () => new Date(),
   ciStatusAdapter = null,
+  githubWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET || null,
   reviewFeedbackAdapter = null,
   rollbackAdapter = null,
   intakeAdapter = null,
+  linearIntakeAdapter = null,
+  linearIssueSourceAdapter = null,
+  linearWebhookAdapter = null,
   routingControlPlane = null,
   authStore = null,
   taskLifecycleStore = null,
@@ -76,6 +104,7 @@ export function createServer({
 }: CreateServerOptions) {
   const webhookStore = new TaskWebhookSubscriptionStore({ now });
   const resolvedWaitlistStore = waitlistStore ?? new WaitlistStore({ now });
+  const resolvedLinearIssueSourceAdapter = linearIssueSourceAdapter ?? linearIntakeAdapter;
 
   return http.createServer((request, response) => {
     void routeRequest({
@@ -85,9 +114,13 @@ export function createServer({
       webhookStore,
       now,
       ciStatusAdapter,
+      githubWebhookSecret,
       reviewFeedbackAdapter,
       rollbackAdapter,
       intakeAdapter,
+      linearIntakeAdapter: resolvedLinearIssueSourceAdapter,
+      linearIssueSourceAdapter: resolvedLinearIssueSourceAdapter,
+      linearWebhookAdapter,
       routingControlPlane,
       authStore,
       taskLifecycleStore,
@@ -126,6 +159,9 @@ interface RouteRequestOptions extends CreateServerOptions {
   response: http.ServerResponse;
   webhookStore: TaskWebhookSubscriptionStore;
   intakeAdapter?: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
+  linearIntakeAdapter?: LinearIssueSourceAdapterLike | null;
+  linearIssueSourceAdapter?: LinearIssueSourceAdapterLike | null;
+  linearWebhookAdapter?: LinearCommentWebhookAdapterLike | null;
 }
 
 async function routeRequest({
@@ -135,9 +171,13 @@ async function routeRequest({
   webhookStore,
   now,
   ciStatusAdapter,
+  githubWebhookSecret = null,
   reviewFeedbackAdapter,
   rollbackAdapter,
   intakeAdapter = null,
+  linearIntakeAdapter = null,
+  linearIssueSourceAdapter = null,
+  linearWebhookAdapter = null,
   routingControlPlane = null,
   authStore,
   taskLifecycleStore,
@@ -154,6 +194,7 @@ async function routeRequest({
   brevoFromEmail = "waitlist@agentrail.app",
   brevoFromName = "AgentRail"
 }: RouteRequestOptions) {
+  const resolvedLinearIssueSourceAdapter = linearIssueSourceAdapter;
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const routePrefix = resolveRoutePrefix(publicBaseUrl);
   const pathname = stripRoutePrefix(url.pathname, routePrefix);
@@ -651,7 +692,14 @@ async function routeRequest({
   }
 
   if (request.method === "POST" && pathname === "/providers/circleci/webhooks") {
-    await handleCircleCiWebhook({ request, response, ciStatusAdapter });
+    await handleCircleCiWebhook({ request, response, ciStatusAdapter, taskLifecycleStore });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/providers/github/webhooks") {
+    obs.operation = "github_webhook";
+    obs.provider = "github";
+    await handleGitHubWebhook({ request, response, githubWebhookSecret, intakeAdapter, ciStatusAdapter, taskLifecycleStore });
     return;
   }
 
@@ -674,6 +722,122 @@ async function routeRequest({
       request,
       response,
       intakeAdapter,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/providers/linear/intake") {
+    obs.operation = "linear_issue_intake";
+    obs.provider = "linear";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "tasks:write",
+      operation: "linear_issue_intake"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleLinearIssueIntake({
+      request,
+      response,
+      linearIntakeAdapter: resolvedLinearIssueSourceAdapter,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/providers/linear/import") {
+    obs.operation = "linear_issue_import";
+    obs.provider = "linear";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "tasks:write",
+      operation: "linear_issue_import"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleLinearIssueImport({
+      request,
+      response,
+      linearIntakeAdapter: resolvedLinearIssueSourceAdapter,
+    });
+    return;
+  }
+
+  const linearCommentMatch =
+    request.method === "POST" ? pathname.match(/^\/providers\/linear\/tasks\/(tsk_[A-Za-z0-9]+)\/comments$/) : null;
+  if (linearCommentMatch) {
+    obs.operation = "linear_create_comment";
+    obs.provider = "linear";
+    obs.taskId = linearCommentMatch[1];
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "providers:write",
+      operation: "linear_create_comment"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleCreateLinearTaskComment({
+      request,
+      response,
+      taskLifecycleStore,
+      linearIssueSourceAdapter: resolvedLinearIssueSourceAdapter,
+      taskId: linearCommentMatch[1],
+      now
+    });
+    return;
+  }
+
+  const linearWorkflowStateMatch =
+    request.method === "POST" ? pathname.match(/^\/providers\/linear\/tasks\/(tsk_[A-Za-z0-9]+)\/workflow-state$/) : null;
+  if (linearWorkflowStateMatch) {
+    obs.operation = "linear_update_workflow_state";
+    obs.provider = "linear";
+    obs.taskId = linearWorkflowStateMatch[1];
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "providers:write",
+      operation: "linear_update_workflow_state"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleUpdateLinearWorkflowState({
+      request,
+      response,
+      taskLifecycleStore,
+      linearIssueSourceAdapter: resolvedLinearIssueSourceAdapter,
+      taskId: linearWorkflowStateMatch[1],
+      now
+    });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/providers/linear/webhooks") {
+    obs.operation = "linear_webhook";
+    obs.provider = "linear";
+    await handleLinearWebhook({
+      request,
+      response,
+      linearIntakeAdapter: resolvedLinearIssueSourceAdapter,
+      linearWebhookAdapter,
     });
     return;
   }
@@ -1419,10 +1583,11 @@ async function handleGetTaskCiStatus({ response, ciStatusAdapter, taskId }: GetC
 interface CircleCiWebhookOptions {
   request: http.IncomingMessage;
   response: http.ServerResponse;
-  ciStatusAdapter: { receiveWebhook?(payload: { headers: Record<string, string | string[]>; rawBody: string }): Promise<unknown> } | null;
+  ciStatusAdapter: { receiveWebhook?(payload: { headers: Record<string, string | string[]>; rawBody: string }): Promise<unknown>; getTaskCiStatus?(taskId: string): Promise<unknown> | unknown } | null;
+  taskLifecycleStore: TaskLifecycleStoreLike | null | unknown;
 }
 
-async function handleCircleCiWebhook({ request, response, ciStatusAdapter }: CircleCiWebhookOptions) {
+async function handleCircleCiWebhook({ request, response, ciStatusAdapter, taskLifecycleStore }: CircleCiWebhookOptions) {
   if (!ciStatusAdapter || typeof ciStatusAdapter.receiveWebhook !== "function") {
     writeError(response, 404, "not_found", "CircleCI webhook source not configured.", {
       availableActions: ["contact_support"]
@@ -1435,6 +1600,17 @@ async function handleCircleCiWebhook({ request, response, ciStatusAdapter }: Cir
     const body = await ciStatusAdapter.receiveWebhook({
       headers: request.headers as Record<string, string | string[]>,
       rawBody
+    });
+    logNarrative({
+      title: "Webhook Received",
+      message: describeWebhookReceipt("CircleCI", body as Record<string, unknown>),
+      operation: "circleci_webhook_receipt",
+      provider: "circleci",
+    });
+    await projectMatchedCiTasks({
+      taskLifecycleStore,
+      ciStatusAdapter,
+      matchedTaskIds: Array.isArray((body as any)?.data?.matchedTasks) ? (body as any).data.matchedTasks : [],
     });
     writeJson(response, 202, body);
   } catch (error) {
@@ -1452,6 +1628,117 @@ async function handleCircleCiWebhook({ request, response, ciStatusAdapter }: Cir
 
     throw error;
   }
+}
+
+interface GitHubWebhookOptions {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  githubWebhookSecret: string | null;
+  intakeAdapter: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
+  ciStatusAdapter: { getTaskCiStatus?(taskId: string): Promise<unknown> | unknown } | null;
+  taskLifecycleStore: TaskLifecycleStoreLike | null | unknown;
+}
+
+async function handleGitHubWebhook({
+  request,
+  response,
+  githubWebhookSecret,
+  intakeAdapter,
+  ciStatusAdapter,
+  taskLifecycleStore,
+}: GitHubWebhookOptions) {
+  if (!githubWebhookSecret) {
+    writeError(response, 404, "not_found", "GitHub webhook source not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  let rawBody: string;
+  let payload: Record<string, any>;
+  try {
+    rawBody = await readRequestBody(request);
+    verifyGitHubWebhook({
+      rawBody,
+      signatureHeader: request.headers["x-hub-signature-256"],
+      secret: githubWebhookSecret,
+    });
+    payload = JSON.parse(rawBody || "{}") as Record<string, any>;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      writeError(response, 400, "validation_error", "Request body must be valid JSON.", {
+        availableActions: ["retry"]
+      });
+      return;
+    }
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+    throw error;
+  }
+
+  const eventName = typeof request.headers["x-github-event"] === "string" ? request.headers["x-github-event"] : null;
+  const deliveryId = typeof request.headers["x-github-delivery"] === "string" ? request.headers["x-github-delivery"] : undefined;
+
+  if (eventName === "issues" && intakeAdapter?.ingest && payload.issue && !payload.issue.pull_request) {
+    const repoOwner = payload.repository?.owner?.login ?? payload.repository?.owner?.name ?? null;
+    const repoName = payload.repository?.name ?? null;
+    if (repoOwner && repoName) {
+      logNarrative({
+        title: "Webhook Received",
+        message: `GitHub issue event received for ${repoOwner}/${repoName}#${payload.issue.number}`,
+        operation: "github_webhook_receipt",
+        provider: "github",
+      });
+      const body = await intakeAdapter.ingest({
+        issueNumber: payload.issue.number,
+        issueUrl: payload.issue.html_url,
+        issueTitle: payload.issue.title,
+        body: payload.issue.body ?? "",
+        labels: Array.isArray(payload.issue.labels) ? payload.issue.labels.map((label: any) => typeof label === "string" ? label : label?.name).filter(Boolean) : [],
+        state: payload.issue.state,
+        repository: { owner: repoOwner, repo: repoName },
+        assignees: Array.isArray(payload.issue.assignees) ? payload.issue.assignees : [],
+      }, deliveryId);
+      writeJson(response, 202, body);
+      return;
+    }
+  }
+
+  if (eventName === "workflow_run") {
+    logNarrative({
+      title: "Webhook Received",
+      message: "GitHub Actions workflow_run event received",
+      operation: "github_workflow_webhook_receipt",
+      provider: "github_actions",
+    });
+    const matchedTaskIds = matchGitHubWorkflowTasks(taskLifecycleStore, payload);
+    await projectMatchedCiTasks({
+      taskLifecycleStore,
+      ciStatusAdapter,
+      matchedTaskIds,
+    });
+    writeJson(response, 202, {
+      data: {
+        accepted: true,
+        deduplicated: false,
+        matchedTasks: matchedTaskIds,
+      },
+      availableActions: matchedTaskIds.length > 0 ? ["get_task"] : [],
+    });
+    return;
+  }
+
+  writeJson(response, 202, {
+    data: {
+      accepted: true,
+      deduplicated: false,
+      matchedTasks: [],
+      ignored: true,
+    },
+    availableActions: [],
+  });
 }
 
 interface GetReviewFeedbackOptions {
@@ -2125,6 +2412,40 @@ interface GitHubIssueIntakeOptions {
   intakeAdapter: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
 }
 
+interface LinearIssueIntakeOptions {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  linearIntakeAdapter: LinearIssueSourceAdapterLike | null | undefined;
+}
+
+interface LinearWebhookOptions extends LinearIssueIntakeOptions {
+  linearWebhookAdapter: LinearCommentWebhookAdapterLike | null | undefined;
+}
+
+interface LinearOutboundOptions {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  taskLifecycleStore: unknown;
+  linearIssueSourceAdapter: LinearIssueSourceAdapterLike | null | undefined;
+  taskId: string;
+  now: () => Date;
+}
+
+interface LinearTaskSource {
+  provider?: string;
+  linearIssueId?: string;
+  workflowStateId?: string;
+  workflowStateName?: string;
+}
+
+interface LinearTaskRecordForOutbound {
+  status?: string;
+  availableActions?: string[];
+  source?: LinearTaskSource;
+}
+
+const AGENTRAIL_TASK_STATUSES = new Set(["todo", "in_progress", "in_review", "blocked", "done", "cancelled"]);
+
 async function handleGitHubIssueIntake({ request, response, intakeAdapter }: GitHubIssueIntakeOptions) {
   if (!intakeAdapter || typeof intakeAdapter.ingest !== "function") {
     writeError(response, 404, "not_found", "GitHub issue intake is not configured.", {
@@ -2151,6 +2472,580 @@ async function handleGitHubIssueIntake({ request, response, intakeAdapter }: Git
 
     throw error;
   }
+}
+
+async function handleLinearIssueIntake({ request, response, linearIntakeAdapter }: LinearIssueIntakeOptions) {
+  if (!linearIntakeAdapter || typeof linearIntakeAdapter.ingest !== "function") {
+    writeError(response, 404, "not_found", "Linear issue intake is not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  try {
+    const payload = await readJsonBody(request);
+    const body = await linearIntakeAdapter.ingest(
+      payload,
+      request.headers["idempotency-key"] as string | undefined
+    );
+    writeJson(response, 201, {
+      data: body,
+      availableActions: ["get_task"]
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      writeError(response, 400, "validation_error", "Request body must be valid JSON.", {
+        availableActions: ["retry"]
+      });
+      return;
+    }
+
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function handleLinearIssueImport({ request, response, linearIntakeAdapter }: LinearIssueIntakeOptions) {
+  if (!linearIntakeAdapter || typeof linearIntakeAdapter.importIssue !== "function") {
+    writeError(response, 404, "not_found", "Linear import is not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  try {
+    const payload = await readJsonBody(request) as { selector?: unknown };
+    const selector = typeof payload?.selector === "string" ? payload.selector : "";
+    const body = await linearIntakeAdapter.importIssue(
+      selector,
+      request.headers["idempotency-key"] as string | undefined,
+    );
+    writeJson(response, 201, {
+      data: body,
+      availableActions: ["get_task"]
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      writeError(response, 400, "validation_error", "Request body must be valid JSON.", {
+        availableActions: ["retry"]
+      });
+      return;
+    }
+
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function handleCreateLinearTaskComment({
+  request,
+  response,
+  taskLifecycleStore,
+  linearIssueSourceAdapter,
+  taskId,
+  now
+}: LinearOutboundOptions) {
+  if (!linearIssueSourceAdapter || typeof linearIssueSourceAdapter.createComment !== "function") {
+    writeError(response, 404, "not_found", "Linear issue source adapter is not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const payload = await readJsonBody(request);
+    const body = normalizeLinearCommentRequest(payload);
+    const { source } = getLinearIssueSource(taskLifecycleStore, taskId);
+    const idempotencyStore = getTaskIdempotencyStore(taskLifecycleStore);
+    const responseBody = await runIdempotentLinearMutation({
+      idempotencyStore,
+      keyPrefix: "linear-comment",
+      idempotencyKey,
+      fingerprintPayload: { taskId, linearIssueId: source.linearIssueId, body },
+      mutation: async () => {
+        const adapterResult = await linearIssueSourceAdapter.createComment(source.linearIssueId, body);
+        const data = recordValue(adapterResult, "data");
+        if (data?.success !== true) {
+          throw new TaskLifecycleError(502, "upstream_error", "Linear comment creation was not accepted upstream.", {
+            availableActions: ["retry"],
+          });
+        }
+        return {
+          data: {
+            taskId,
+            linearIssueId: source.linearIssueId,
+            commentId: nullableString(data?.commentId),
+            commentUrl: nullableString(data?.commentUrl),
+            success: true,
+            syncedAt: now().toISOString(),
+            availableActions: ["get_task"],
+          },
+          availableActions: ["get_task"],
+        };
+      },
+    });
+
+    writeJson(response, 201, responseBody);
+  } catch (error) {
+    writeLinearOutboundError(response, error);
+  }
+}
+
+async function handleUpdateLinearWorkflowState({
+  request,
+  response,
+  taskLifecycleStore,
+  linearIssueSourceAdapter,
+  taskId,
+  now
+}: LinearOutboundOptions) {
+  if (!linearIssueSourceAdapter || typeof linearIssueSourceAdapter.updateIssueState !== "function") {
+    writeError(response, 404, "not_found", "Linear issue source adapter is not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  try {
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const payload = await readJsonBody(request);
+    const syncRequest = normalizeLinearWorkflowStateRequest(payload);
+    const { task, source } = getLinearIssueSource(taskLifecycleStore, taskId);
+    const idempotencyStore = getTaskIdempotencyStore(taskLifecycleStore);
+    const responseBody = await runIdempotentLinearMutation({
+      idempotencyStore,
+      keyPrefix: "linear-workflow-state",
+      idempotencyKey,
+      fingerprintPayload: { taskId, linearIssueId: source.linearIssueId, ...syncRequest },
+      mutation: async () => {
+        const adapterResult = await linearIssueSourceAdapter.updateIssueState(source.linearIssueId, syncRequest.stateId);
+        const data = recordValue(adapterResult, "data");
+        const issueId = nullableString(data?.issueId);
+        if (data?.success !== true || issueId !== source.linearIssueId) {
+          throw new TaskLifecycleError(502, "upstream_error", "Linear workflow-state update was not accepted upstream.", {
+            availableActions: ["retry"],
+          });
+        }
+
+        const resolvedStateId = nullableString(data?.stateId) ?? syncRequest.stateId;
+        const agentRailStatus = nullableString(data?.agentRailStatus);
+        if (!agentRailStatus || !AGENTRAIL_TASK_STATUSES.has(agentRailStatus)) {
+          throw new TaskLifecycleError(502, "upstream_error", "Linear workflow-state update did not return a mappable AgentRail status.", {
+            availableActions: ["retry"],
+          });
+        }
+        const availableActions = availableActionsForTaskStatus(agentRailStatus);
+        updateTaskForLinearWorkflowState(taskLifecycleStore, taskId, {
+          status: agentRailStatus,
+          availableActions,
+          source: {
+            ...task.source,
+            workflowStateId: resolvedStateId,
+            workflowStateName: nullableString(data?.stateName) ?? task.source?.workflowStateName,
+          },
+        });
+        return {
+          data: {
+            taskId,
+            linearIssueId: issueId,
+            stateId: resolvedStateId,
+            stateName: nullableString(data?.stateName),
+            success: true,
+            agentRailStatus,
+            syncedAt: now().toISOString(),
+            availableActions,
+          },
+          availableActions: ["get_task"],
+        };
+      },
+    });
+
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeLinearOutboundError(response, error);
+  }
+}
+
+async function handleLinearWebhook({ request, response, linearIntakeAdapter, linearWebhookAdapter }: LinearWebhookOptions) {
+  if (
+    (!linearIntakeAdapter || typeof linearIntakeAdapter.receiveWebhook !== "function") &&
+    (!linearWebhookAdapter || typeof linearWebhookAdapter.receiveWebhook !== "function")
+  ) {
+    writeError(response, 404, "not_found", "Linear webhook intake is not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  const rawBody = await readRequestBody(request);
+
+  const headers = request.headers as Record<string, string | string[]>;
+  const eventType = peekLinearWebhookEventType(rawBody, headers);
+  if (eventType === "Comment" && linearWebhookAdapter && typeof linearWebhookAdapter.receiveWebhook === "function") {
+    try {
+      logNarrative({
+        title: "Webhook Received",
+        message: "Linear comment delivery received",
+        operation: "linear_comment_webhook_receipt",
+        provider: "linear",
+      });
+      const body = await linearWebhookAdapter.receiveWebhook({ headers, rawBody });
+      writeJson(response, 200, body);
+    } catch (error) {
+      if (error instanceof TaskLifecycleError) {
+        writeError(response, error.statusCode, error.code, error.message, error.details);
+        return;
+      }
+
+      throw error;
+    }
+    return;
+  }
+
+  if (!linearIntakeAdapter || typeof linearIntakeAdapter.receiveWebhook !== "function") {
+    writeError(response, 404, "not_found", "Linear webhook intake is not configured.", {
+      availableActions: ["contact_support"]
+    });
+    return;
+  }
+
+  try {
+    logNarrative({
+      title: "Webhook Received",
+      message: `Linear ${eventType ?? "unknown"} delivery received`,
+      operation: "linear_webhook_receipt",
+      provider: "linear",
+    });
+    const body = await linearIntakeAdapter.receiveWebhook({
+      headers,
+      rawBody
+    });
+    writeJson(response, 202, body);
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+
+    throw error;
+  }
+}
+
+function writeLinearOutboundError(response: http.ServerResponse, error: unknown) {
+  if (error instanceof SyntaxError) {
+    writeError(response, 400, "validation_error", "Request body must be valid JSON.", {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+
+  if (error instanceof TaskLifecycleError) {
+    writeError(response, error.statusCode, error.code, error.message, error.details);
+    return;
+  }
+
+  throw error;
+}
+
+function normalizeLinearCommentRequest(payload: unknown): string {
+  if (!isRecord(payload) || typeof payload.body !== "string" || payload.body.trim().length === 0) {
+    throw new TaskLifecycleError(400, "validation_error", "Linear comment payload requires a non-empty `body` string.", {
+      availableActions: ["retry"]
+    });
+  }
+  if (payload.body.length > 10000) {
+    throw new TaskLifecycleError(400, "validation_error", "Linear comment `body` must be 10000 characters or fewer.", {
+      availableActions: ["retry"]
+    });
+  }
+  return payload.body;
+}
+
+function normalizeLinearWorkflowStateRequest(payload: unknown): { stateId: string } {
+  if (!isRecord(payload) || typeof payload.stateId !== "string" || payload.stateId.trim().length === 0) {
+    throw new TaskLifecycleError(400, "validation_error", "Linear workflow-state payload requires a non-empty `stateId` string.", {
+      availableActions: ["retry"]
+    });
+  }
+  return {
+    stateId: payload.stateId.trim(),
+  };
+}
+
+function getLinearIssueSource(taskLifecycleStore: unknown, taskId: string): { task: LinearTaskRecordForOutbound; source: { linearIssueId: string } } {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { getRawTask?: unknown }).getRawTask !== "function") {
+    throw new TaskLifecycleError(404, "not_found", "Task source not found.", {
+      availableActions: ["list_my_tasks"]
+    });
+  }
+
+  const task = (taskLifecycleStore as { getRawTask: (taskId: string) => LinearTaskRecordForOutbound | null }).getRawTask(taskId);
+  if (!task) {
+    throw new TaskLifecycleError(404, "not_found", "Task not found.", {
+      availableActions: ["list_my_tasks"]
+    });
+  }
+  const source = task.source;
+  if (source?.provider !== "linear" || typeof source.linearIssueId !== "string" || source.linearIssueId.trim().length === 0) {
+    throw new TaskLifecycleError(404, "not_found", "Linear issue source not found for task.", {
+      availableActions: ["repair_task_source"]
+    });
+  }
+
+  return { task, source: { linearIssueId: source.linearIssueId } };
+}
+
+function updateTaskForLinearWorkflowState(
+  taskLifecycleStore: unknown,
+  taskId: string,
+  patch: { status: string; availableActions: string[]; source: LinearTaskRecordForOutbound["source"] }
+) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { updateTask?: unknown }).updateTask !== "function") {
+    return null;
+  }
+  return (taskLifecycleStore as { updateTask: (taskId: string, patch: unknown) => unknown }).updateTask(taskId, patch);
+}
+
+function getTaskIdempotencyStore(taskLifecycleStore: unknown): {
+  getIdempotencyEntry: (key: string) => { fingerprint: string; response: unknown } | null;
+  setIdempotencyEntry: (key: string, entry: { fingerprint: string; response: unknown }) => void;
+} {
+  if (
+    !taskLifecycleStore ||
+    typeof (taskLifecycleStore as { getIdempotencyEntry?: unknown }).getIdempotencyEntry !== "function" ||
+    typeof (taskLifecycleStore as { setIdempotencyEntry?: unknown }).setIdempotencyEntry !== "function"
+  ) {
+    throw new TaskLifecycleError(404, "not_found", "Task source idempotency store is not configured.", {
+      availableActions: ["contact_support"]
+    });
+  }
+  return taskLifecycleStore as {
+    getIdempotencyEntry: (key: string) => { fingerprint: string; response: unknown } | null;
+    setIdempotencyEntry: (key: string, entry: { fingerprint: string; response: unknown }) => void;
+  };
+}
+
+async function runIdempotentLinearMutation({
+  idempotencyStore,
+  keyPrefix,
+  idempotencyKey,
+  fingerprintPayload,
+  mutation,
+}: {
+  idempotencyStore: ReturnType<typeof getTaskIdempotencyStore>;
+  keyPrefix: string;
+  idempotencyKey: string;
+  fingerprintPayload: unknown;
+  mutation: () => Promise<unknown>;
+}) {
+  const storeKey = `${keyPrefix}:${idempotencyKey}`;
+  const fingerprint = stableStringify(fingerprintPayload);
+  const prior = idempotencyStore.getIdempotencyEntry(storeKey);
+  if (prior) {
+    if (prior.fingerprint !== fingerprint) {
+      throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different request payload.", {
+        idempotencyKey,
+        availableActions: ["retry"]
+      });
+    }
+    return structuredClone(prior.response);
+  }
+
+  const responseBody = await mutation();
+  idempotencyStore.setIdempotencyEntry(storeKey, { fingerprint, response: structuredClone(responseBody) });
+  return responseBody;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordValue(value: unknown, key: string): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const child = value[key];
+  return isRecord(child) ? child : null;
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function availableActionsForTaskStatus(status: string): string[] {
+  switch (status) {
+    case "todo": return ["start"];
+    case "in_progress":
+    case "blocked":
+    case "in_review":
+      return ["submit"];
+    case "done":
+    case "cancelled":
+      return [];
+    default:
+      return ["get_task"];
+  }
+}
+
+function peekLinearWebhookEventType(rawBody: string, headers: Record<string, string | string[] | undefined>): string | null {
+  const header = Object.entries(headers).find(([key]) => key.toLowerCase() === "linear-event")?.[1];
+  const headerValue = Array.isArray(header) ? header[0] : header;
+  if (typeof headerValue === "string" && headerValue.length > 0) return headerValue;
+  try {
+    const payload = JSON.parse(rawBody) as unknown;
+    return isRecord(payload) && typeof payload.type === "string" ? payload.type : null;
+  } catch {
+    return null;
+  }
+}
+
+function verifyGitHubWebhook({
+  rawBody,
+  signatureHeader,
+  secret,
+}: {
+  rawBody: string;
+  signatureHeader: string | string[] | undefined;
+  secret: string;
+}) {
+  const provided = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+  if (!provided || !provided.startsWith("sha256=")) {
+    throw new TaskLifecycleError(401, "github_webhook_unauthorized", "GitHub webhook signature is missing or invalid.", {
+      availableActions: ["retry"],
+    });
+  }
+  const expected = `sha256=${createGitHubWebhookDigest(rawBody, secret)}`;
+  if (provided.length !== expected.length || !timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) {
+    throw new TaskLifecycleError(401, "github_webhook_unauthorized", "GitHub webhook signature is missing or invalid.", {
+      availableActions: ["retry"],
+    });
+  }
+}
+
+function createGitHubWebhookDigest(rawBody: string, secret: string): string {
+  return createHmac("sha256", secret).update(rawBody).digest("hex");
+}
+
+async function projectMatchedCiTasks({
+  taskLifecycleStore,
+  ciStatusAdapter,
+  matchedTaskIds,
+}: {
+  taskLifecycleStore: TaskLifecycleStoreLike | null | unknown;
+  ciStatusAdapter: { getTaskCiStatus?(taskId: string): Promise<unknown> | unknown } | null;
+  matchedTaskIds: string[];
+}) {
+  const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null;
+  if (!lifecycle?.projectCiState || !ciStatusAdapter?.getTaskCiStatus) {
+    return;
+  }
+  for (const taskId of matchedTaskIds) {
+    try {
+      const body = await ciStatusAdapter.getTaskCiStatus(taskId) as any;
+      if (!body?.data?.overallStatus) continue;
+      const summary = body.data.summary ?? {};
+      await lifecycle.projectCiState(taskId, {
+        provider: inferCiProviderFromBody(body.data, lifecycle.getRawTask?.(taskId)),
+        overallStatus: body.data.overallStatus,
+        summary: {
+          total: Number(summary.total ?? 0),
+          passed: Number(summary.passed ?? 0),
+          failed: Number(summary.failed ?? 0),
+          running: Number(summary.running ?? 0),
+          queued: Number(summary.queued ?? 0),
+          cancelled: Number(summary.cancelled ?? 0),
+          skipped: Number(summary.skipped ?? 0),
+          neutral: Number(summary.neutral ?? 0),
+        },
+        headline: firstCiHeadline(body.data.failureSummaries),
+        updatedAt: body.data.updatedAt ?? null,
+      });
+    } catch (error) {
+      logNarrative({
+        title: "CI Sync Warning",
+        message: `Failed to project CI status for task ${taskId}: ${error instanceof Error ? error.message : String(error)}`,
+        operation: "ci_projection_failed",
+        taskId,
+      });
+    }
+  }
+}
+
+function matchGitHubWorkflowTasks(taskLifecycleStore: TaskLifecycleStoreLike | null | unknown, payload: Record<string, any>): string[] {
+  const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null;
+  if (!lifecycle?.listRawTasks && !lifecycle?.listRawTasksBySourceRepo) {
+    return [];
+  }
+  const owner = payload.repository?.owner?.login ?? payload.repository?.owner?.name ?? null;
+  const repo = payload.repository?.name ?? null;
+  const branch = payload.workflow_run?.head_branch ?? null;
+  const headSha = payload.workflow_run?.head_sha ?? null;
+  const candidates = owner && repo && lifecycle?.listRawTasksBySourceRepo
+    ? lifecycle.listRawTasksBySourceRepo("github", owner, repo)
+    : lifecycle?.listRawTasks?.() ?? [];
+  const matched: string[] = [];
+  for (const task of candidates) {
+    const source = task.source;
+    if (!source) continue;
+    if (source.provider !== "github") continue;
+    if (owner && source.owner !== owner) continue;
+    if (repo && source.repo !== repo) continue;
+    const matchesHeadSha = Boolean(headSha && source.headSha && source.headSha === headSha);
+    const matchesBranch = Boolean(branch && source.branch && source.branch === branch);
+    if (!matchesHeadSha && !matchesBranch) continue;
+    matched.push(task.id);
+  }
+  return matched;
+}
+
+function inferCiProviderFromBody(data: Record<string, any>, task: any): string {
+  if (typeof task?.source?.ciProvider === "string") {
+    return task.source.ciProvider;
+  }
+  if (task?.source?.provider === "github") {
+    return "github_actions";
+  }
+  return data.provider ?? task?.source?.provider ?? "github_actions";
+}
+
+function firstCiHeadline(failureSummaries: unknown): string | null {
+  if (!Array.isArray(failureSummaries) || failureSummaries.length === 0) return null;
+  const first = failureSummaries[0] as Record<string, unknown>;
+  if (typeof first.message === "string" && first.message.length > 0) return first.message;
+  if (typeof first.testName === "string" && first.testName.length > 0) return first.testName;
+  return null;
+}
+
+function describeWebhookReceipt(provider: string, body: unknown): string {
+  const record = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
+  const data = typeof record.data === "object" && record.data !== null ? record.data as Record<string, unknown> : {};
+  const matchedTasks = Array.isArray(data.matchedTasks) ? data.matchedTasks.length : 0;
+  const deduplicated = data.deduplicated === true;
+  const ignored = data.ignored === true;
+  if (deduplicated) {
+    return `${provider} delivery was deduplicated`;
+  }
+  if (ignored) {
+    return `${provider} delivery was accepted and ignored with ${matchedTasks} matched ${matchedTasks === 1 ? "task" : "tasks"}`;
+  }
+  return `${provider} delivery matched ${matchedTasks} ${matchedTasks === 1 ? "task" : "tasks"}`;
 }
 
 function serveStaticFile(response: http.ServerResponse, filePath: string, contentType: string) {

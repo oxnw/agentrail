@@ -15,6 +15,8 @@ import {
   jobCompletedWebhook
 } from "./fixtures/circleci-fixtures.js";
 
+const githubTaskId = "tsk_github_01";
+
 function makeTask(source) {
   return {
     id: circleCiTaskId,
@@ -276,6 +278,164 @@ test("POST /providers/circleci/webhooks accepts a signed CircleCI event and prim
   const statusBody = await statusResponse.json();
   assert.equal(statusBody.data.overallStatus, "failed");
   assert.equal(statusBody.data.failureSummaries[0].message, "Expected status 200 but received 500");
+});
+
+test("POST /providers/github/webhooks returns 401 for an invalid signature", async (t) => {
+  const server = createServer({
+    store: new TaskEventStore(),
+    githubWebhookSecret: "github-secret",
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/providers/github/webhooks`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "workflow_run",
+      "x-hub-signature-256": "sha256=bad",
+    },
+    body: JSON.stringify({}),
+  });
+
+  assert.equal(response.status, 401);
+  const body = await response.json();
+  assert.equal(body.error.code, "github_webhook_unauthorized");
+});
+
+test("POST /providers/github/webhooks returns 400 for malformed JSON", async (t) => {
+  const rawBody = "{not json";
+  const server = createServer({
+    store: new TaskEventStore(),
+    githubWebhookSecret: "github-secret",
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/providers/github/webhooks`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "workflow_run",
+      "x-hub-signature-256": `sha256=${createHmac("sha256", "github-secret").update(rawBody).digest("hex")}`,
+    },
+    body: rawBody,
+  });
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "validation_error");
+});
+
+test("POST /providers/github/webhooks only matches workflow_run tasks with explicit branch or head sha correlation", async (t) => {
+  const eventStore = new TaskEventStore();
+  const projectedTaskIds = [];
+  const projectedProviders = [];
+  const tasks = [
+    {
+      ...makeTask({
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 21,
+        branch: "feature/keep-me",
+      }),
+      id: githubTaskId,
+      identifier: "github:oxnw/agentrail:issues/21",
+    },
+    {
+      ...makeTask({
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 23,
+      }),
+      id: "tsk_sha_match",
+      identifier: "github:oxnw/agentrail:issues/23",
+      source: {
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 23,
+        headSha: "sha-abc123",
+      },
+    },
+    {
+      ...makeTask({
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 22,
+      }),
+      id: "tsk_unrelated",
+      identifier: "github:oxnw/agentrail:issues/22",
+      source: {
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 22,
+      },
+    },
+  ];
+  const server = createServer({
+    store: eventStore,
+    githubWebhookSecret: "github-secret",
+    taskLifecycleStore: {
+      listRawTasks: () => tasks,
+      getRawTask: (taskId) => tasks.find((task) => task.id === taskId) ?? null,
+      async projectCiState(taskId, observation) {
+        projectedTaskIds.push(taskId);
+        projectedProviders.push(observation.provider);
+      },
+    },
+    ciStatusAdapter: {
+      async getTaskCiStatus() {
+        return {
+          data: {
+            overallStatus: "passed",
+            summary: { total: 1, passed: 1, failed: 0, running: 0, queued: 0, cancelled: 0, skipped: 0 },
+            failureSummaries: [],
+            updatedAt: "2026-05-08T00:00:00Z",
+          },
+        };
+      },
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const payload = {
+    repository: { owner: { login: "oxnw" }, name: "agentrail" },
+    workflow_run: {
+      head_branch: "feature/keep-me",
+      head_sha: "sha-abc123",
+    },
+  };
+  const rawBody = JSON.stringify(payload);
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/providers/github/webhooks`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "workflow_run",
+      "x-hub-signature-256": `sha256=${createHmac("sha256", "github-secret").update(rawBody).digest("hex")}`,
+    },
+    body: rawBody,
+  });
+
+  assert.equal(response.status, 202);
+  const body = await response.json();
+  assert.deepEqual(body.data.matchedTasks, [githubTaskId, "tsk_sha_match"]);
+  assert.deepEqual(projectedTaskIds, [githubTaskId, "tsk_sha_match"]);
+  assert.deepEqual(projectedProviders, ["github_actions", "github_actions"]);
 });
 
 function jsonResponse(body, status = 200) {
