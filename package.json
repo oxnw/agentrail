@@ -1,5 +1,5 @@
 {
-  "name": "agentrail-service",
+  "name": "@agentrail-core/cli",
   "version": "0.1.0",
   "description": "Local OSS release candidate for the AgentRail task lifecycle API",
   "license": "Apache-2.0",
