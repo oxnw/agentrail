@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { logEvent, logNarrative } from "../src/structured-logger.ts";
+import { logEvent, logNarrative, logOperatorNotice } from "../src/structured-logger.ts";
 
 async function withStderrCapture(
   env: Record<string, string>,
@@ -39,6 +39,54 @@ async function withStderrCapture(
     await fn();
   } finally {
     process.stderr.write = originalWrite;
+    for (const [key, value] of originalEnv) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+
+  return output;
+}
+
+async function withStdoutCapture(
+  env: Record<string, string>,
+  fn: () => void | Promise<void>,
+): Promise<string> {
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  const originalEnv = new Map(
+    Object.keys(env).map((key) => [key, process.env[key]] as const),
+  );
+  let output = "";
+
+  for (const [key, value] of Object.entries(env)) {
+    process.env[key] = value;
+  }
+  process.stdout.write = ((
+    chunk: string | Uint8Array,
+    encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+    callback?: (error?: Error | null) => void,
+  ) => {
+    if (typeof chunk === "string") {
+      output += chunk;
+    } else if (typeof encodingOrCallback === "string") {
+      output += Buffer.from(chunk).toString(encodingOrCallback);
+    } else {
+      output += Buffer.from(chunk).toString("utf8");
+    }
+    const resolvedCallback = typeof encodingOrCallback === "function"
+      ? encodingOrCallback
+      : callback;
+    resolvedCallback?.(null);
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = originalWrite;
     for (const [key, value] of originalEnv) {
       if (value === undefined) {
         delete process.env[key];
@@ -109,6 +157,35 @@ test("logNarrative respects disabled observability", async () => {
         title: "Should Not Log",
         message: "This should not appear",
         operation: "test_operation",
+      });
+    },
+  );
+
+  assert.equal(output, "");
+});
+
+test("logOperatorNotice prints clean status only when observability is disabled", async () => {
+  const output = await withStdoutCapture(
+    { AGENTRAIL_LOG_FORMAT: "text", AGENTRAIL_OBSERVABILITY: "false" },
+    () => {
+      logOperatorNotice({
+        title: "GitHub poll",
+        message: "checked 1 issue and created 1 task",
+        kind: "success",
+      });
+    },
+  );
+
+  assert.equal(output, "✓ GitHub poll: checked 1 issue and created 1 task.\n");
+});
+
+test("logOperatorNotice stays silent when structured observability is enabled", async () => {
+  const output = await withStdoutCapture(
+    { AGENTRAIL_LOG_FORMAT: "text", AGENTRAIL_OBSERVABILITY: "true" },
+    () => {
+      logOperatorNotice({
+        title: "GitHub poll",
+        message: "checked 1 issue",
       });
     },
   );

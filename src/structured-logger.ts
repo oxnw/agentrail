@@ -23,6 +23,8 @@ export interface Timer {
   error(extra?: LogFields): void;
 }
 
+export type OperatorNoticeKind = "info" | "success" | "warning" | "error";
+
 export function createOperationTimer(fields: LogFields): Timer {
   const start = Date.now();
 
@@ -58,6 +60,22 @@ export function logNarrative({ title, message, ...fields }: LogFields & { title:
   const base = sentence ? `${title}: ${sentence}` : title;
   const extras = formatTextFields(fields);
   process.stderr.write(`${ts} [info] ${base}${extras ? ` ${extras}` : ""}\n`);
+}
+
+export function logOperatorNotice({
+  title,
+  message,
+  kind = "info",
+}: {
+  title: string;
+  message?: string;
+  kind?: OperatorNoticeKind;
+}): void {
+  if (isEnabled()) return;
+  const icon = iconForKind(kind);
+  const sentence = ensureSentence(message ?? "");
+  const body = sentence ? `${title}: ${sentence}` : title;
+  process.stdout.write(`${icon} ${body}\n`);
 }
 
 interface LogRecord extends LogFields {
@@ -96,6 +114,19 @@ function emit(entry: Partial<LogRecord>): void {
 
 function isEnabled(): boolean {
   return (process.env.AGENTRAIL_OBSERVABILITY ?? "true").toLowerCase() !== "false";
+}
+
+function iconForKind(kind: OperatorNoticeKind): string {
+  switch (kind) {
+    case "success":
+      return "✓";
+    case "warning":
+      return "!";
+    case "error":
+      return "×";
+    default:
+      return "•";
+  }
 }
 
 function ensureSentence(value: string): string | null {

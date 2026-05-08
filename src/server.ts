@@ -93,7 +93,7 @@ export function startServer() {
     });
 
     server.listen(port, host, () => {
-      process.stdout.write(`AgentRail API listening on ${publicBaseUrl}\n`);
+      process.stdout.write(`✓ AgentRail API ready at ${publicBaseUrl}\n`);
     });
 
     process.on("SIGTERM", () => {

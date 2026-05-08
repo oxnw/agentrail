@@ -14,7 +14,7 @@ import { RoutingControlPlane } from "./intake-routing-control-plane.ts";
 import { RoutingAuditStore } from "./routing-audit-store.ts";
 import { RoutingRuleStore } from "./routing-rule-store.ts";
 import type { ConnectedRepo } from "./cli/agentrail-home.ts";
-import { logNarrative } from "./structured-logger.ts";
+import { logNarrative, logOperatorNotice } from "./structured-logger.ts";
 import type { TaskRecord } from "./task-store.ts";
 
 type LinearIssueRuntimeAdapter = Pick<LinearIssueSourceAdapter, "ingest" | "createComment" | "updateIssueState" | "importIssue" | "refreshIssue"> & {
@@ -372,6 +372,10 @@ function buildDeliveryController({
   return {
     start() {
       for (const state of states) {
+        logOperatorNotice({
+          title: String(state.provider),
+          message: state.description.replace(/^[^ ]+ will /u, "polling "),
+        });
         logNarrative({
           title: "Delivery Mode",
           message: state.description,
@@ -762,6 +766,11 @@ function applyIssueOutcome(summary: PollSummary, outcome: "created" | "updated" 
 
 function logPollSummaries(summaries: PollSummary[]) {
   for (const summary of summaries) {
+    logOperatorNotice({
+      title: `${summary.provider} poll`,
+      message: buildOperatorPollSummaryMessage(summary),
+      kind: summary.failed > 0 ? "warning" : "success",
+    });
     logNarrative({
       title: "Poll Results",
       message: buildPollSummaryMessage(summary),
@@ -769,6 +778,10 @@ function logPollSummaries(summaries: PollSummary[]) {
       provider: summary.provider.toLowerCase().replace(/\s+/gu, "_"),
     });
     for (const notable of summary.notable) {
+      logOperatorNotice({
+        title: summary.provider,
+        message: notable,
+      });
       logNarrative({
         title: "Poll Results",
         message: notable,
@@ -784,6 +797,13 @@ function buildPollSummaryMessage(summary: PollSummary): string {
     return `${summary.provider} checked ${summary.checked} issues in ${summary.scope}, created ${summary.created}, updated ${summary.updated}, left ${summary.unchanged} unchanged, skipped ${summary.skipped}, and failed ${summary.failed}`;
   }
   return `${summary.provider} checked ${summary.checked} tasks in ${summary.scope}, detected ${summary.ciFailed} failures, ${summary.ciRecovered} recoveries, left ${summary.unchanged} unchanged, and failed ${summary.failed}`;
+}
+
+function buildOperatorPollSummaryMessage(summary: PollSummary): string {
+  if (summary.provider === "GitHub" || summary.provider === "Linear") {
+    return `${summary.checked} issues checked; ${summary.created} created, ${summary.updated} updated, ${summary.unchanged} unchanged, ${summary.skipped} skipped, ${summary.failed} failed`;
+  }
+  return `${summary.checked} tasks checked; ${summary.ciFailed} failures, ${summary.ciRecovered} recoveries, ${summary.unchanged} unchanged, ${summary.failed} failed`;
 }
 
 function formatIssueNarrative({

@@ -22,6 +22,9 @@ export async function runServerStart({
 }: {
   stdout: Writer;
 }): Promise<number> {
+  if (process.env.AGENTRAIL_OBSERVABILITY === undefined) {
+    process.env.AGENTRAIL_OBSERVABILITY = "false";
+  }
   stdout.write("Starting AgentRail API.\n");
   try {
     startServer();
