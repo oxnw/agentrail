@@ -1,4 +1,5 @@
 #!/usr/bin/env node
-// Thin shim — npm rejects .ts bin entries.
-// Requires Node 24+ which strips TypeScript types natively.
-import '../src/cli/index.ts';
+import { runCli } from "../dist/cli/index.js";
+
+const exitCode = await runCli(process.argv.slice(2));
+process.exitCode = exitCode;

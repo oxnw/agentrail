@@ -1,17 +1,25 @@
 {
   "name": "@agentrail-core/cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local OSS release candidate for the AgentRail task lifecycle API",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "agentrail": "./bin/agentrail.js"
   },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
     "agentrail": "node src/cli/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "start": "node src/server.ts",
     "smoke:sdk:typescript": "node scripts/smoke-test-sdk-packages.mjs --typescript",
     "smoke:sdk:python": "node scripts/smoke-test-sdk-packages.mjs --python",
