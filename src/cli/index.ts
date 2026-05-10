@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { runDoctor } from "./doctor.ts";
 import { parseAgentCreateArgs, runAgentCreate, runAgentUpdate } from "./agent-management.ts";
+import { runAgentReport, runAgentRun, runAgentStatus, type AgentRunnerHooks } from "./agent-runner.ts";
 import { primaryRepoFromConfig, readSetupConfigFromHome, resolveAgentRailHome } from "./agentrail-home.ts";
 import { runConfigCommand, runRepoCommand, runServerStart } from "./global-management.ts";
 import { runLinearCommand } from "./linear-management.ts";
@@ -36,6 +37,7 @@ export interface RunCliOptions {
   detectRepoContext?: (cwd: string) => DetectedRepoContext | Promise<DetectedRepoContext>;
   createPrompt?: () => PromptSession;
   providerFetch?: typeof globalThis.fetch;
+  agentRunner?: AgentRunnerHooks;
   writeSetupFiles?: (options: {
     homePath?: string;
     repoRoot?: string;
@@ -123,6 +125,31 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
         stderr,
         detectRepoContext: detectRepo,
         createPrompt: options.createPrompt,
+      });
+    }
+
+    if (command === "agent" && args[0] === "run") {
+      return await runAgentRun(args.slice(1), {
+        cwd,
+        stdout,
+        stderr,
+        ...(options.agentRunner ?? {}),
+      });
+    }
+
+    if (command === "agent" && args[0] === "report") {
+      return await runAgentReport(args.slice(1), {
+        cwd,
+        stdout,
+        stderr,
+      });
+    }
+
+    if (command === "agent" && args[0] === "status") {
+      return await runAgentStatus(args.slice(1), {
+        cwd,
+        stdout,
+        stderr,
       });
     }
 
@@ -597,6 +624,9 @@ function writeUsage(output: Writer) {
     "  agentrail linear import <issue-id|issue-url|issue-uuid>",
     "  agentrail agent create [flags]",
     "  agentrail agent update [flags]",
+    "  agentrail agent run [--once] [--agent-id <id>] [--max-runs <n>]",
+    "  agentrail agent report --status <progress|blocked|completed> --summary <text>",
+    "  agentrail agent status [--agent-id <id>] [--json]",
     "  agentrail task source repair --task-id <tsk_...> --file <json> [flags]",
     "",
     "Flags:",

@@ -15,6 +15,7 @@ export interface SetupConfigLike {
   };
   persistence?: {
     kind?: string;
+    agentRunStorePath?: string;
   };
   providers?: {
     github?: {
@@ -52,6 +53,8 @@ export interface SetupConfigLike {
     defaultBranch?: string;
   };
 }
+
+const DEFAULT_AGENT_RUN_STORE_PATH = "stores/agent-runs.json";
 
 export function defaultAgentRailHome(): string {
   return path.join(os.homedir(), ".agentrail");
@@ -119,9 +122,11 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
   }
 
   const normalizedProviders = normalizeProviders(config.providers);
+  const normalizedPersistence = normalizePersistence(config.persistence);
   if (Array.isArray(config.repos)) {
     return {
       ...config,
+      persistence: normalizedPersistence,
       providers: normalizedProviders,
       repos: config.repos
         .filter((repo): repo is ConnectedRepo => Boolean(repo?.path && repo?.slug && repo?.defaultBranch))
@@ -139,6 +144,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
   if (legacyPath && legacySlug && legacyBranch) {
     return {
       ...config,
+      persistence: normalizedPersistence,
       providers: normalizedProviders,
       repos: [{
         path: legacyPath,
@@ -150,8 +156,25 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
 
   return {
     ...config,
+    persistence: normalizedPersistence,
     providers: normalizedProviders,
     repos: [],
+  };
+}
+
+function normalizePersistence(persistence: SetupConfigLike["persistence"]): SetupConfigLike["persistence"] {
+  if (!persistence || persistence.kind !== "file") {
+    return persistence;
+  }
+  const trimmedAgentRunStorePath = typeof persistence.agentRunStorePath === "string"
+    ? persistence.agentRunStorePath.trim()
+    : "";
+  const agentRunStorePath = trimmedAgentRunStorePath.length > 0
+    ? trimmedAgentRunStorePath
+    : DEFAULT_AGENT_RUN_STORE_PATH;
+  return {
+    ...persistence,
+    agentRunStorePath,
   };
 }
 

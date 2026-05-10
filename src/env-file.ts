@@ -27,16 +27,18 @@ export function parseSimpleEnv(content: string): Record<string, string> {
 }
 
 /**
- * Loads environment variables from a `.env` file without overwriting
- * existing `process.env` values. Missing files are ignored.
+ * Loads environment variables from a `.env` file. Existing `process.env`
+ * values are preserved by default; pass `{ overwrite: true }` to replace
+ * them with values from the file. Missing files are ignored.
  */
-export function loadEnvFile(filePath: string): void {
+export function loadEnvFile(filePath: string, options: { overwrite?: boolean } = {}): void {
   const content = readFileIfExists(filePath);
   if (!content) return;
 
+  const { overwrite = false } = options;
   const values = parseSimpleEnv(content);
   for (const [key, value] of Object.entries(values)) {
-    if (process.env[key] === undefined) {
+    if (overwrite || process.env[key] === undefined) {
       process.env[key] = value;
     }
   }

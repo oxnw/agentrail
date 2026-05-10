@@ -34,6 +34,7 @@ export interface SetupConfig {
       eventStorePath: string;
       taskStorePath: string;
       authStorePath: string;
+      agentRunStorePath: string;
       agentProfileStorePath: string;
       routingRuleStorePath: string;
       routingAuditStorePath: string;
@@ -147,6 +148,7 @@ export function createSetupConfig({
         eventStorePath: "stores/events.ndjson",
         taskStorePath: "stores/tasks.json",
         authStorePath: "stores/agent-auth.json",
+        agentRunStorePath: "stores/agent-runs.json",
         agentProfileStorePath: "stores/agent-profiles.json",
         routingRuleStorePath: "stores/routing-rules.json",
         routingAuditStorePath: "stores/routing-audit.json",

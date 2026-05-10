@@ -480,6 +480,49 @@ test("RoutingControlPlane skips agent rules when the target agent is at capacity
   assert.equal(decision.assignment.triageQueueId, "triage_engineering");
 });
 
+test("RoutingControlPlane ignores setup verification tasks when checking agent capacity", async () => {
+  const { routing, taskQueue } = createControlPlane();
+  seedProfile(routing, "agt_cto", {
+    maxConcurrentTasks: 1,
+  });
+  taskQueue.createTask({
+    identifier: "LOCAL-SETUP-AGT-CTO",
+    title: "Setup verification",
+    description: "Should not consume routing capacity.",
+    status: "in_progress",
+    priority: "medium",
+    assignee: { id: "agt_cto", name: "CTO" },
+    assigneeAgentId: "agt_cto",
+    acceptanceCriteria: [],
+    links: { issue: "agentrail://setup-verification/agt_cto" },
+    context: { project: "oxnw/agentrail", goal: "Setup verification" },
+    availableActions: ["submit"],
+    source: {
+      provider: "agentrail_setup",
+      owner: "oxnw",
+      repo: "agentrail",
+    },
+  });
+  seedRuleSet(routing, [
+    {
+      id: "rule_architecture_to_cto",
+      name: "Architecture ownership",
+      enabled: true,
+      priority: 10,
+      conditions: { labelsAny: ["architecture"] },
+      target: { type: "agent", id: "agt_cto" },
+      confidence: 0.99,
+      explanation: "Architecture work maps to CTO.",
+    },
+  ]);
+
+  const decision = await routing.ingestProviderIssue(makeSnapshot(), "route_capacity_setup_task");
+
+  assert.equal(decision.outcome, "assigned");
+  assert.equal(decision.assignment.assigneeAgentId, "agt_cto");
+  assert.ok(decision.taskId);
+});
+
 test("RoutingControlPlane counts active capacity even when recent assigned tasks are terminal", async () => {
   let tick = 0;
   const now = () => new Date(Date.parse("2026-05-05T12:00:00Z") + tick++ * 1000);

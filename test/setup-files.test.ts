@@ -52,6 +52,7 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   const envExample = await readFile(envExamplePath, "utf8");
   const serverEnv = await readFile(serverEnvPath, "utf8");
   const readme = await readFile(readmePath, "utf8");
+  const recipe = await readFile(recipePath, "utf8");
 
   assert.equal(configBody.mode, "server");
   assert.equal(configBody.server.baseUrl, "http://127.0.0.1:3000");
@@ -64,6 +65,7 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.doesNotMatch(envExample, /CIRCLECI_TOKEN=/);
   assert.doesNotMatch(envExample, /CIRCLECI_WEBHOOK_SECRET=/);
   assert.match(serverEnv, new RegExp(`AGENTRAIL_AGENT_AUTH_STORE_PATH=${escapeForRegExp(path.join(homePath, "stores", "agent-auth.json"))}`));
+  assert.match(serverEnv, new RegExp(`AGENTRAIL_AGENT_RUNS_STORE_PATH=${escapeForRegExp(path.join(homePath, "stores", "agent-runs.json"))}`));
   assert.doesNotMatch(serverEnv, /AGENTRAIL_PROVIDER_IDENTITY_MAPPINGS_STORE_PATH=/);
   assert.match(serverEnv, new RegExp(`AGENTRAIL_TASK_STORE_PATH=${escapeForRegExp(path.join(homePath, "stores", "tasks.json"))}`));
   assert.equal(existsSync(envPath), false);
@@ -90,6 +92,24 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.match(readme, /AgentRail can connect more repos later with `agentrail repo add`/i);
   assert.match(readme, /--repo "\$PWD"/);
   assert.doesNotMatch(readme, /task sources/i);
+  // Core workflow instructions.
+  assert.match(recipe, /Treat AgentRail as the lifecycle source of truth for every assigned task\./);
+  assert.match(recipe, /Work only inside the provided git worktree for that task\./);
+  const doNotEditLine = recipe.split("\n").find((line) => line.includes("Do not edit"));
+  assert.ok(doNotEditLine, "Recipe should include a 'Do not edit' line");
+  assert.match(doNotEditLine, /AGENTS\.md/);
+  assert.match(doNotEditLine, /CLAUDE\.md/);
+  assert.match(doNotEditLine, /\.agentrail\/\*/);
+
+  // Reporting commands and handoff recovery.
+  assert.match(recipe, /agentrail agent report --status progress --summary "short update"/);
+  assert.match(recipe, /agentrail agent report\s+--status\s+completed\s+--summary\s+(["'])short completion summary\1\s+--handoff-file\s+(["'])\$AGENTRAIL_HANDOFF_PATH\2/);
+  assert.match(recipe, /recover if the report command fails/);
+  assert.match(recipe, /`target: "agentrail"`/);
+  assert.match(recipe, /`target: "user"`/);
+
+  // Safety rules.
+  assert.match(recipe, /Do not expose secrets in logs, prompts, commits, or final summaries\./);
 });
 
 function escapeForRegExp(value: string): string {

@@ -151,6 +151,8 @@ describe("GitHubIssueIntakeAdapter", () => {
     // Cached from first request (idempotency key hit)
     assert.strictEqual(second.taskId, first.taskId);
     assert.strictEqual(second.status, first.status);
+    assert.strictEqual(first.outcome, "created");
+    assert.strictEqual(second.outcome, "unchanged");
 
     // Verify underlying task was NOT updated
     const stored = queue.getRawTask(first.taskId);
@@ -178,6 +180,35 @@ describe("GitHubIssueIntakeAdapter", () => {
         labels: ["feature"],
       }, "idemp_conflict"),
       (err: any) => err.statusCode === 409 && err.code === "conflict"
+    );
+  });
+
+  it("rejects corrupt cached idempotency responses", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+    const payload = {
+      issueNumber: 22,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/22",
+      issueTitle: "Corrupt cache test",
+      labels: ["bug"],
+    };
+
+    await adapter.ingest(payload, "idemp_corrupt");
+    const cached = queue.getIdempotencyEntry("github-issue-intake:idemp_corrupt");
+    assert.ok(cached);
+    // A valid cached result includes taskId, identifier, status, createdAt, and availableActions.
+    // Replace it with an unrelated object to simulate stale or corrupted persisted idempotency data.
+    queue.setIdempotencyEntry("github-issue-intake:idemp_corrupt", {
+      fingerprint: cached.fingerprint,
+      response: { ok: true },
+    });
+
+    await assert.rejects(
+      adapter.ingest(payload, "idemp_corrupt"),
+      (error) => {
+        const lifecycleError = error as { statusCode?: number; code?: string };
+        return lifecycleError.statusCode === 500 && lifecycleError.code === "internal_error";
+      },
     );
   });
 

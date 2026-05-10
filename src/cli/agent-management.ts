@@ -80,6 +80,7 @@ interface AgentEnvValues {
   AGENTRAIL_API_KEY_ID?: string;
   AGENTRAIL_AGENT_ID?: string;
   AGENTRAIL_AGENT_RUNNER?: string;
+  AGENTRAIL_MAX_CONCURRENT_TASKS?: string;
   AGENTRAIL_REPO_ALLOWLIST?: string;
   AGENTRAIL_AGENT_RECIPE_PATH?: string;
   AGENTRAIL_OPERATOR_KEY?: string;
@@ -514,6 +515,7 @@ export async function runAgentCreate(argv: string[], options: RunAgentCommandOpt
       apiKeyId: createdKeyId ?? "",
       agentId: inputs.agentId,
       runner: inputs.runner,
+      maxConcurrentTasks: inputs.maxConcurrentTasks,
       repoAllowlist: inputs.repoAllowlist,
       instructionsPath: inputs.instructionsPath,
     });
@@ -742,6 +744,7 @@ export async function runAgentUpdate(argv: string[], options: RunAgentCommandOpt
       apiKeyId: rotated.json?.data?.id ?? "",
       agentId,
       runner: inputs.runner,
+      maxConcurrentTasks: inputs.maxConcurrentTasks,
       repoAllowlist: inputs.repoAllowlist,
       instructionsPath: inputs.instructionsPath,
     });
@@ -1249,6 +1252,7 @@ function buildAgentEnvValues({
   apiKeyId,
   agentId,
   runner,
+  maxConcurrentTasks,
   repoAllowlist,
   instructionsPath,
 }: {
@@ -1257,6 +1261,7 @@ function buildAgentEnvValues({
   apiKeyId: string;
   agentId: string;
   runner: string;
+  maxConcurrentTasks: number;
   repoAllowlist: string[];
   instructionsPath: string;
 }): Record<string, string> {
@@ -1266,6 +1271,7 @@ function buildAgentEnvValues({
     AGENTRAIL_API_KEY_ID: apiKeyId,
     AGENTRAIL_AGENT_ID: agentId,
     AGENTRAIL_AGENT_RUNNER: runner,
+    AGENTRAIL_MAX_CONCURRENT_TASKS: String(validateCapacity(maxConcurrentTasks)),
     AGENTRAIL_REPO_ALLOWLIST: repoAllowlist.join(","),
     AGENTRAIL_AGENT_RECIPE_PATH: instructionsPath,
   };

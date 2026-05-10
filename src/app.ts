@@ -24,12 +24,14 @@ import { createOperationTimer, logNarrative } from "./structured-logger.ts";
 import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
 import type { LinearIssueSourceAdapter } from "./linear-issue-source-adapter.ts";
 import type { LinearCommentWebhookAdapter } from "./linear-comment-webhook-adapter.ts";
+import type { AgentRunReportStatus, AgentRunStore, AgentRunStatus } from "./agent-run-store.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_HEARTBEAT_SECONDS = 20;
 const MIN_HEARTBEAT_SECONDS = 10;
 const MAX_HEARTBEAT_SECONDS = 60;
+const MAX_AGENT_RUN_LIST_LIMIT = 100;
 
 type LinearIssueSourceAdapterLike = Partial<Pick<LinearIssueSourceAdapter, "ingest" | "receiveWebhook" | "createComment" | "updateIssueState" | "importIssue" | "refreshIssue">>;
 type LinearCommentWebhookAdapterLike = Partial<Pick<LinearCommentWebhookAdapter, "receiveWebhook">>;
@@ -49,6 +51,7 @@ type TaskLifecycleStoreLike = {
 
 export interface CreateServerOptions {
   store: TaskEventStore;
+  agentRunStore?: AgentRunStore | null;
   now?: () => Date;
   ciStatusAdapter?: { getTaskCiStatus?(taskId: string): Promise<unknown> | unknown; receiveWebhook?(payload: { headers: Record<string, string | string[]>; rawBody: string }): Promise<unknown> } | null;
   githubWebhookSecret?: string | null;
@@ -77,6 +80,7 @@ export interface CreateServerOptions {
 
 export function createServer({
   store,
+  agentRunStore = null,
   now = () => new Date(),
   ciStatusAdapter = null,
   githubWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET || null,
@@ -111,6 +115,7 @@ export function createServer({
       request,
       response,
       store,
+      agentRunStore,
       webhookStore,
       now,
       ciStatusAdapter,
@@ -168,6 +173,7 @@ async function routeRequest({
   request,
   response,
   store,
+  agentRunStore,
   webhookStore,
   now,
   ciStatusAdapter,
@@ -544,6 +550,82 @@ async function routeRequest({
     return;
   }
 
+  if (request.method === "GET" && pathname === "/operator/agent-runs") {
+    obs.operation = "list_agent_runs";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "usage:read",
+      operation: "list_agent_runs"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    handleListAgentRuns({
+      response,
+      url,
+      agentRunStore,
+    });
+    return;
+  }
+
+  const agentRunMatch =
+    request.method === "GET"
+      ? pathname.match(/^\/operator\/agent-runs\/(run_[A-Za-z0-9_]+)$/)
+      : null;
+  if (agentRunMatch) {
+    obs.operation = "get_agent_run";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "usage:read",
+      operation: "get_agent_run"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    handleGetAgentRun({
+      response,
+      agentRunStore,
+      runId: agentRunMatch[1],
+    });
+    return;
+  }
+
+  const agentRunReportMatch =
+    request.method === "POST"
+      ? pathname.match(/^\/agent-runs\/(run_[A-Za-z0-9_]+)\/report$/)
+      : null;
+  if (agentRunReportMatch) {
+    obs.operation = "report_agent_run";
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "tasks:write",
+      operation: "report_agent_run"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleReportAgentRun({
+      request,
+      response,
+      agentRunStore,
+      runId: agentRunReportMatch[1],
+      principal,
+    });
+    return;
+  }
+
   const repairTaskSourceMatch =
     request.method === "PATCH"
       ? pathname.match(/^\/operator\/tasks\/(tsk_[A-Za-z0-9]+)\/source$/)
@@ -639,6 +721,33 @@ async function routeRequest({
       response,
       taskLifecycleStore,
       taskId: submitMatch[1]
+    });
+    return;
+  }
+
+  const startMatch =
+    request.method === "POST" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/start$/) : null;
+  if (startMatch) {
+    obs.operation = "start_task";
+    obs.taskId = startMatch[1];
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "tasks:write",
+      operation: "start_task"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleStartTask({
+      request,
+      response,
+      taskLifecycleStore,
+      taskId: startMatch[1],
+      actorId: principal?.agent?.id ?? null,
     });
     return;
   }
@@ -1046,6 +1155,171 @@ interface GetTaskOptions {
   principal: ReturnType<AgentAuthStore["authenticate"]> | null;
 }
 
+interface AgentRunListOptions {
+  response: http.ServerResponse;
+  url: URL;
+  agentRunStore?: AgentRunStore | null;
+}
+
+function handleListAgentRuns({ response, url, agentRunStore }: AgentRunListOptions) {
+  if (!agentRunStore) {
+    writeError(response, 404, "not_found", "Agent run store is not configured.", {
+      availableActions: []
+    });
+    return;
+  }
+
+  const statusParam = url.searchParams.get("status");
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Number.parseInt(limitParam, 10) : undefined;
+
+  if (limitParam && (!/^\d+$/u.test(limitParam) || !Number.isFinite(limit) || (limit ?? 0) <= 0 || (limit ?? 0) > MAX_AGENT_RUN_LIST_LIMIT)) {
+    writeError(response, 400, "validation_error", `limit must be between 1 and ${MAX_AGENT_RUN_LIST_LIMIT}.`, {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+
+  const status: AgentRunStatus | undefined = isAgentRunStatus(statusParam) ? statusParam : undefined;
+  if (statusParam && status === undefined) {
+    writeError(response, 400, "validation_error", "Invalid status filter value.", {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+
+  writeJson(response, 200, {
+    data: agentRunStore.listRuns({
+      agentId: url.searchParams.get("agentId") ?? undefined,
+      status,
+      limit,
+    }),
+    availableActions: [],
+    meta: responseMeta()
+  });
+}
+
+interface GetAgentRunOptions {
+  response: http.ServerResponse;
+  agentRunStore?: AgentRunStore | null;
+  runId: string;
+}
+
+function handleGetAgentRun({ response, agentRunStore, runId }: GetAgentRunOptions) {
+  if (!agentRunStore) {
+    writeError(response, 404, "not_found", "Agent run store is not configured.", {
+      availableActions: []
+    });
+    return;
+  }
+
+  const run = agentRunStore.getRun(runId);
+  if (!run) {
+    writeError(response, 404, "not_found", "Agent run not found.", {
+      availableActions: ["list_agent_runs"]
+    });
+    return;
+  }
+
+  writeJson(response, 200, {
+    data: run,
+    availableActions: [],
+    meta: responseMeta()
+  });
+}
+
+interface ReportAgentRunOptions {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  agentRunStore?: AgentRunStore | null;
+  runId: string;
+  principal: ReturnType<AgentAuthStore["authenticate"]> | null;
+}
+
+async function handleReportAgentRun({ request, response, agentRunStore, runId, principal }: ReportAgentRunOptions) {
+  if (!agentRunStore) {
+    writeError(response, 404, "not_found", "Agent run store is not configured.", {
+      availableActions: []
+    });
+    return;
+  }
+
+  const run = agentRunStore.getRun(runId);
+  if (!run) {
+    writeError(response, 404, "not_found", "Agent run not found.", {
+      availableActions: ["list_agent_runs"]
+    });
+    return;
+  }
+
+  if (!canReportAgentRun(run.agentId, principal)) {
+    writeError(response, 403, "forbidden", "Agent run is not assigned to this agent.", {
+      availableActions: []
+    });
+    return;
+  }
+
+  const payload = await readJsonBody(request);
+  if (!isRecord(payload)) {
+    writeError(response, 400, "validation_error", "Report body must be a JSON object.", {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+
+  const status = payload.status;
+  const summary = payload.summary;
+  if (status !== "progress" && status !== "blocked" && status !== "completed") {
+    writeError(response, 400, "validation_error", "Report status must be progress, blocked, or completed.", {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+  if (typeof summary !== "string" || summary.trim().length === 0) {
+    writeError(response, 400, "validation_error", "Report summary must be a non-empty string.", {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+  if (payload.handoff !== undefined && payload.handoff !== null && !isRecord(payload.handoff)) {
+    writeError(response, 400, "validation_error", "Report handoff must be a JSON object or null when provided.", {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+
+  const report: {
+    status: AgentRunReportStatus;
+    summary: string;
+    handoff?: Record<string, unknown> | null;
+  } = {
+    status,
+    summary,
+  };
+  if (payload.handoff !== undefined) {
+    report.handoff = payload.handoff === null ? null : payload.handoff as Record<string, unknown>;
+  }
+  const updated = agentRunStore.reportRun(runId, report);
+  if (!updated) {
+    writeError(response, 404, "not_found", "Agent run not found.", {
+      availableActions: ["list_agent_runs"]
+    });
+    return;
+  }
+
+  writeJson(response, 202, {
+    data: updated,
+    availableActions: [],
+    meta: responseMeta()
+  });
+}
+
+function canReportAgentRun(runAgentId: string, principal: ReturnType<AgentAuthStore["authenticate"]> | null): boolean {
+  if (!principal) return true;
+  if (principal.scopes.includes("auth:admin")) return true;
+  return principal.agent?.id === runAgentId;
+}
+
 function handleGetTask({ response, taskLifecycleStore, taskId, principal }: GetTaskOptions) {
   if (!taskLifecycleStore || typeof (taskLifecycleStore as { getTask?: unknown }).getTask !== "function") {
     writeError(response, 404, "not_found", "Task source not found.", {
@@ -1088,6 +1362,15 @@ function isTaskVisibleToPrincipal(body: unknown, principal: ReturnType<AgentAuth
   const legacyAssigneeId = taskBody?.data?.assignee?.id;
   if (!legacyAssigneeId) return true;
   return legacyAssigneeId === principalAgentId;
+}
+
+function isAgentRunStatus(value: string | null): value is AgentRunStatus {
+  return value === "starting"
+    || value === "running"
+    || value === "succeeded"
+    || value === "failed"
+    || value === "waiting_for_human"
+    || value === "cancelled";
 }
 
 interface CreateKeyOptions {
@@ -1513,6 +1796,39 @@ interface SubmitTaskOptions {
   response: http.ServerResponse;
   taskLifecycleStore: unknown;
   taskId: string;
+}
+
+interface StartTaskOptions extends SubmitTaskOptions {
+  actorId: string | null;
+}
+
+async function handleStartTask({ request, response, taskLifecycleStore, taskId, actorId }: StartTaskOptions) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { startTask?: unknown }).startTask !== "function") {
+    writeError(response, 404, "not_found", "Task source not found.", {
+      availableActions: ["list_my_tasks"]
+    });
+    return;
+  }
+
+  try {
+    const payload = await readJsonBody(request);
+    const body = await (taskLifecycleStore as {
+      startTask: (taskId: string, payload: unknown, key: string | undefined, actorId: string | null) => Promise<unknown> | unknown;
+    }).startTask(
+      taskId,
+      payload,
+      request.headers["idempotency-key"] as string | undefined,
+      actorId,
+    );
+    writeJson(response, 202, body);
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+
+    throw error;
+  }
 }
 
 async function handleSubmitTask({ request, response, taskLifecycleStore, taskId }: SubmitTaskOptions) {

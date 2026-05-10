@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { createServer } from "./app.ts";
 import { AgentAuthStore } from "./agent-auth-store.ts";
+import { AgentRunStore } from "./agent-run-store.ts";
 import { configPathForHome, defaultAgentRailHome, type ConnectedRepo } from "./cli/agentrail-home.ts";
 import { loadEnvFile } from "./env-file.ts";
 import { TaskEventStore } from "./task-event-store.ts";
@@ -15,8 +16,9 @@ const host = process.env.AGENTRAIL_HOST || "127.0.0.1";
 const port = Number.parseInt(process.env.AGENTRAIL_PORT || process.env.PORT || "3000", 10);
 const publicBaseUrl =
   process.env.AGENTRAIL_PUBLIC_BASE_URL || `http://${host}:${port}`;
-const storagePath = process.env.AGENTRAIL_EVENT_STORE_PATH || undefined;
-const authStorePath = process.env.AGENTRAIL_AGENT_AUTH_STORE_PATH || undefined;
+const storagePath = process.env.AGENTRAIL_EVENT_STORE_PATH;
+const authStorePath = process.env.AGENTRAIL_AGENT_AUTH_STORE_PATH;
+const agentRunStorePath = process.env.AGENTRAIL_AGENT_RUNS_STORE_PATH;
 
 const fallbackMode = (process.env.AGENTRAIL_FALLBACK_MODE ?? "false").toLowerCase() === "true";
 
@@ -74,9 +76,11 @@ export function startServer() {
     });
 
     const authStore = new AgentAuthStore({ now, storagePath: authStorePath });
+    const agentRunStore = new AgentRunStore({ now, storagePath: agentRunStorePath });
 
     server = createServer({
       store: eventStore,
+      agentRunStore,
       taskLifecycleStore: runtime.taskLifecycleStore,
       ciStatusAdapter: runtime.ciStatusAdapter,
       githubWebhookSecret,
@@ -115,8 +119,8 @@ function loadDotEnv() {
     const agentrailHome = process.env.AGENTRAIL_HOME || defaultAgentRailHome();
     loadEnvFile(".env");
     loadEnvFile(".agentrail/server.env");
-    loadEnvFile(path.join(agentrailHome, "provider.env"));
     loadEnvFile(path.join(agentrailHome, "server.env"));
+    loadEnvFile(path.join(agentrailHome, "provider.env"));
   } catch {
     // .env loading is convenience-only; environment variables still work.
   }
