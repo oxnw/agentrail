@@ -89,6 +89,31 @@ function sha256(value: unknown): string {
   return `sha256:${crypto.createHash("sha256").update(stableStringify(value)).digest("hex")}`;
 }
 
+const GITHUB_ISSUE_INTAKE_OUTCOMES = new Set(["created", "updated", "unchanged"]);
+const GITHUB_ISSUE_INTAKE_ROUTING_KINDS = new Set(["assigned", "triage", "stored_without_routing"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isGitHubIssueIntakeResult(value: unknown): value is GitHubIssueIntakeResult {
+  if (!isRecord(value)) return false;
+  if (typeof value.taskId !== "string" || typeof value.identifier !== "string") return false;
+  if (typeof value.status !== "string" || typeof value.createdAt !== "string") return false;
+  if (!Array.isArray(value.availableActions) || !value.availableActions.every((action) => typeof action === "string")) {
+    return false;
+  }
+  if (value.outcome !== undefined && (typeof value.outcome !== "string" || !GITHUB_ISSUE_INTAKE_OUTCOMES.has(value.outcome))) {
+    return false;
+  }
+  if (value.routing !== undefined) {
+    if (!isRecord(value.routing)) return false;
+    if (typeof value.routing.kind !== "string" || !GITHUB_ISSUE_INTAKE_ROUTING_KINDS.has(value.routing.kind)) return false;
+    if (value.routing.target !== null && typeof value.routing.target !== "string") return false;
+  }
+  return true;
+}
+
 export class GitHubIssueIntakeAdapter {
   private taskQueue: AgentTaskQueue;
   private routingControlPlane: RoutingControlPlane | null;
@@ -125,7 +150,16 @@ export class GitHubIssueIntakeAdapter {
             availableActions: ["retry"],
           });
         }
-        return structuredClone(cached.response as GitHubIssueIntakeResult);
+        const replay = structuredClone(cached.response);
+        if (!isGitHubIssueIntakeResult(replay)) {
+          throw new TaskLifecycleError(500, "internal_error", "Cached GitHub issue intake response has invalid shape.", {
+            availableActions: ["retry"],
+          });
+        }
+        if (replay.outcome === "created" || replay.outcome === "updated") {
+          replay.outcome = "unchanged";
+        }
+        return replay;
       }
     }
 

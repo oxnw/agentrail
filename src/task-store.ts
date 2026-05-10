@@ -416,6 +416,23 @@ export class TaskStore {
     return [...this._tasks.values()].map((task) => structuredClone(task));
   }
 
+  countTasks(predicate: (task: TaskRecord) => boolean, stopAt = Number.POSITIVE_INFINITY): number {
+    if (stopAt <= 0) {
+      return 0;
+    }
+    let count = 0;
+    for (const task of this._tasks.values()) {
+      if (!predicate(task)) {
+        continue;
+      }
+      count += 1;
+      if (count >= stopAt) {
+        return count;
+      }
+    }
+    return count;
+  }
+
   createTask(partial: Omit<Partial<TaskRecord>, "id"> & { identifier: string; title: string }): TaskRecord {
     const id = createId();
     const now = this.now().toISOString();

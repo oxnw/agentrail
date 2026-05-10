@@ -280,6 +280,7 @@ const SNAPSHOT_FIELDS = new Set([
 ]);
 const REPOSITORY_FIELDS = new Set(["provider", "owner", "name", "defaultBranch"]);
 const LINKS_FIELDS = new Set(["providerIssue"]);
+const ACTIVE_TASK_STATUSES = new Set(["todo", "in_progress", "in_review", "blocked"]);
 const RULE_SET_FIELDS = new Set(["sourceRef", "changeReason", "rules", "classifier"]);
 const CLASSIFIER_FIELDS = new Set(["enabled", "provider", "confidenceThreshold", "maxCandidates", "fallbackTriageQueueId"]);
 const ROUTING_RULE_FIELDS = new Set(["id", "name", "enabled", "priority", "conditions", "target", "confidence", "explanation"]);
@@ -835,25 +836,14 @@ export class RoutingControlPlane {
     }
 
     const existing = this.taskQueue.findTaskByIdentifier(providerIssueId);
-    let activeAssignedCount = 0;
-    for (const status of ["todo", "in_progress", "in_review", "blocked"]) {
-      let cursor: string | null = null;
-      do {
-        const assignedTasks = this.taskQueue.listMyTasks({
-          assigneeAgentId: profile.agentId,
-          status,
-          limit: 100,
-          cursor,
-        });
-        activeAssignedCount += assignedTasks.data.filter(task => task.id !== existing?.id).length;
-        if (activeAssignedCount >= profile.maxConcurrentTasks) {
-          return false;
-        }
-        cursor = assignedTasks.page.nextCursor;
-      } while (cursor);
-    }
-
-    return true;
+    const activeAssignedCount = this.taskQueue.countActiveAssignedTasks({
+      agentId: profile.agentId,
+      statuses: ACTIVE_TASK_STATUSES,
+      excludeTaskId: existing?.id,
+      excludeTask: (task) => isSetupVerificationTask(task.identifier, task.source?.provider),
+      stopAt: profile.maxConcurrentTasks,
+    });
+    return activeAssignedCount < profile.maxConcurrentTasks;
   }
 
   private extractIssueNumber(providerIssueId: string): number | undefined {
@@ -1123,4 +1113,8 @@ export class RoutingControlPlane {
       }
     }
   }
+}
+
+function isSetupVerificationTask(identifier: string, provider: TaskSource["provider"] | undefined): boolean {
+  return provider === "agentrail_setup" || identifier.startsWith("LOCAL-SETUP-");
 }

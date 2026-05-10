@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { AgentAuthStore } from "../agent-auth-store.ts";
+import { AgentRunStore } from "../agent-run-store.ts";
 import { createServer } from "../app.ts";
 import { AgentProfileStore } from "../agent-profile-store.ts";
 import { loadEnvFile } from "../env-file.ts";
@@ -20,6 +21,7 @@ interface ResolvedLocalPaths {
   eventStorePath: string;
   taskStorePath: string;
   authStorePath: string;
+  agentRunStorePath: string;
   agentProfileStorePath: string;
   routingRuleStorePath: string;
   routingAuditStorePath: string;
@@ -137,6 +139,7 @@ export async function withTemporaryLocalServer<T>({
   const previousEnv = captureEnv([
     "AGENTRAIL_TASK_STORE_PATH",
     "AGENTRAIL_AGENT_PROFILES_STORE_PATH",
+    "AGENTRAIL_AGENT_RUNS_STORE_PATH",
     "AGENTRAIL_ROUTING_RULES_STORE_PATH",
     "AGENTRAIL_ROUTING_AUDIT_STORE_PATH",
     "AGENTRAIL_OBSERVABILITY",
@@ -149,6 +152,7 @@ export async function withTemporaryLocalServer<T>({
 
   process.env.AGENTRAIL_TASK_STORE_PATH = paths.taskStorePath;
   process.env.AGENTRAIL_AGENT_PROFILES_STORE_PATH = paths.agentProfileStorePath;
+  process.env.AGENTRAIL_AGENT_RUNS_STORE_PATH = paths.agentRunStorePath;
   process.env.AGENTRAIL_ROUTING_RULES_STORE_PATH = paths.routingRuleStorePath;
   process.env.AGENTRAIL_ROUTING_AUDIT_STORE_PATH = paths.routingAuditStorePath;
   process.env.AGENTRAIL_OBSERVABILITY = "false";
@@ -178,8 +182,10 @@ export async function withTemporaryLocalServer<T>({
       publicBaseUrl,
     });
     const authStore = new AgentAuthStore({ now, storagePath: paths.authStorePath });
+    const agentRunStore = new AgentRunStore({ now, storagePath: paths.agentRunStorePath });
     const server = createServer({
       store: eventStore,
+      agentRunStore,
       taskLifecycleStore: runtime.taskLifecycleStore,
       ciStatusAdapter: runtime.ciStatusAdapter,
       githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET || null,
@@ -236,6 +242,7 @@ function resolveLocalPaths(homePath: string, config: SetupConfig): ResolvedLocal
     eventStorePath: path.resolve(homePath, config.persistence.eventStorePath),
     taskStorePath: path.resolve(homePath, config.persistence.taskStorePath),
     authStorePath: path.resolve(homePath, config.persistence.authStorePath),
+    agentRunStorePath: path.resolve(homePath, config.persistence.agentRunStorePath),
     agentProfileStorePath: path.resolve(homePath, config.persistence.agentProfileStorePath),
     routingRuleStorePath: path.resolve(homePath, config.persistence.routingRuleStorePath),
     routingAuditStorePath: path.resolve(homePath, config.persistence.routingAuditStorePath),

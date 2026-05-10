@@ -9,6 +9,7 @@ import test from "node:test";
 import { runCli } from "../src/cli/index.ts";
 import { withTemporaryLocalServer } from "../src/cli/local-bootstrap.ts";
 import { createSetupConfig } from "../src/cli/setup-config.ts";
+import { AgentAuthStore } from "../src/agent-auth-store.ts";
 
 test("init creates local operator state and writes local setup env files", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-init-local-"));
@@ -219,6 +220,18 @@ test("temporary local verification starts a temp server when the healthy server 
     providerMode: "disabled",
     baseUrl: `http://${address.address}:${address.port}`,
   });
+  assert.equal(config.persistence.kind, "file");
+  const authStore = new AgentAuthStore({
+    storagePath: path.resolve(repoRoot, config.persistence.authStorePath),
+  });
+  const apiKey = authStore.createKey({
+    agent: {
+      id: "agt_operator",
+      displayName: "Operator",
+      role: "operator",
+    },
+    scopes: ["usage:read"],
+  }, "key:operator").data.apiKey;
 
   const baseUrl = await withTemporaryLocalServer({
     repoRoot,
@@ -231,7 +244,15 @@ test("temporary local verification starts a temp server when the healthy server 
       });
       return response.status !== 404;
     },
-    handler: async ({ baseUrl: temporaryBaseUrl }) => temporaryBaseUrl,
+    handler: async ({ baseUrl: temporaryBaseUrl }) => {
+      const response = await fetch(new URL("operator/agent-runs", `${temporaryBaseUrl}/`), {
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+        },
+      });
+      assert.equal(response.status, 200, await response.text());
+      return temporaryBaseUrl;
+    },
   });
 
   assert.notEqual(baseUrl, `http://${address.address}:${address.port}`);

@@ -83,6 +83,20 @@ function toSafeNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function canonicalAssigneeAgentId(task: TaskRecord): string | null {
+  return Object.prototype.hasOwnProperty.call(task, "assigneeAgentId")
+    ? task.assigneeAgentId ?? null
+    : task.assignee.id ?? null;
+}
+
+function canStartTask(task: TaskRecord): boolean {
+  return task.status === "todo" && task.availableActions.includes("start");
+}
+
+function canShipTask(task: TaskRecord): boolean {
+  return task.status === "in_review" && task.availableActions.includes("ship");
+}
+
 export class AgentTaskQueue {
   private store: TaskStore;
   private now: () => Date;
@@ -133,6 +147,101 @@ export class AgentTaskQueue {
         truncatedFields: [],
       },
     };
+  }
+
+  async startTask(taskId: string, payload: unknown, idempotencyKey: string | undefined, actorId: string | null | undefined) {
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    if (!actorId) {
+      throw new TaskLifecycleError(403, "forbidden", "Task start requires an agent-scoped API key.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+
+    const existing = this.store.getTask(taskId);
+    if (!existing) {
+      throw new TaskLifecycleError(404, "not_found", "Task not found.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+
+    if (canonicalAssigneeAgentId(existing) !== actorId) {
+      throw new TaskLifecycleError(403, "forbidden", "Task is not assigned to this agent.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+
+    const key = `start:${idempotencyKey}`;
+    const fingerprint = JSON.stringify({ taskId, payload: payload ?? {}, actorId });
+    const prior = this.store.getIdempotencyEntry(key);
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) {
+        throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different request payload.", {
+          idempotencyKey,
+          availableActions: ["retry"],
+        });
+      }
+      return structuredClone(prior.response);
+    }
+
+    if (!canStartTask(existing)) {
+      throw new TaskLifecycleError(409, "conflict", "Task is not in a startable state.", {
+        currentStatus: existing.status,
+        availableActions: existing.availableActions,
+      });
+    }
+
+    const updated = this.store.updateTask(taskId, {
+      status: "in_progress",
+      availableActions: ["submit"],
+      updatedAt: this.now().toISOString(),
+    });
+    if (!updated) {
+      throw new TaskLifecycleError(500, "internal_error", "Failed to start task.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    const response = {
+      data: toTaskDetail(updated),
+      availableActions: updated.availableActions,
+      meta: {
+        tokenBudgetHint: "standard",
+        truncatedFields: [],
+      },
+    };
+
+    try {
+      await this.appendTaskEvent("task.updated", updated, {
+        status: updated.status,
+        previousStatus: existing.status,
+        changedFields: ["status", "availableActions", "updatedAt"],
+        actor: { id: actorId, role: "agent" },
+        summary: "Task started.",
+        availableActions: updated.availableActions,
+      });
+    } catch (error) {
+      try {
+        this.store.upsertTask(existing);
+      } catch (rollbackError) {
+        logNarrative({
+          title: "Task Start Rollback Failed",
+          message: `Failed to restore task ${taskId} after task event append failed.`,
+          operation: "task_start_rollback_failed",
+          taskId,
+          details: {
+            error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          },
+        });
+      }
+      throw error;
+    }
+    this.store.setIdempotencyEntry(key, { fingerprint, response: structuredClone(response) });
+    return response;
   }
 
   async submitTask(taskId: string, payload: unknown, idempotencyKey: string | undefined) {
@@ -226,6 +335,18 @@ export class AgentTaskQueue {
   }
 
   async shipTask(taskId: string, payload: unknown, idempotencyKey: string | undefined) {
+    const task = this.store.getTask(taskId);
+    if (!task) {
+      throw new TaskLifecycleError(404, "not_found", "Task not found.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+    if (!canShipTask(task)) {
+      throw new TaskLifecycleError(409, "conflict", "Task is not in a shippable state.", {
+        currentStatus: task.status,
+        availableActions: task.availableActions,
+      });
+    }
     if (this.delegate?.shipTask) {
       return this.delegate.shipTask(taskId, payload, idempotencyKey);
     }
@@ -350,6 +471,30 @@ export class AgentTaskQueue {
 
   listRawTasks() {
     return this.store.listAllTasks();
+  }
+
+  countActiveAssignedTasks({
+    agentId,
+    statuses,
+    excludeTaskId,
+    excludeTask,
+    stopAt,
+  }: {
+    agentId: string;
+    statuses: ReadonlySet<string>;
+    excludeTaskId?: string;
+    excludeTask?: (task: TaskRecord) => boolean;
+    stopAt?: number;
+  }) {
+    return this.store.countTasks((task) => {
+      if (task.id === excludeTaskId) {
+        return false;
+      }
+      const isExcluded = excludeTask?.(task) ?? false;
+      return canonicalAssigneeAgentId(task) === agentId
+        && statuses.has(task.status)
+        && !isExcluded;
+    }, stopAt);
   }
 
   listRawTasksBySourceRepo(provider: RepoTaskSource["provider"], owner: string, repo: string) {

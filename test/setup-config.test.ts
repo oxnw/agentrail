@@ -7,6 +7,7 @@ import {
   validateSafeDefaults,
   type DetectedRepoContext,
 } from "../src/cli/setup-config.ts";
+import { normalizeSetupConfigLike } from "../src/cli/agentrail-home.ts";
 
 const detectedRepo: DetectedRepoContext = {
   repoPath: "/tmp/agentrail",
@@ -30,6 +31,7 @@ test("createSetupConfig derives server defaults from repo detection", () => {
   assert.equal(config.persistence.kind, "file");
   assert.equal(config.persistence.engine, "file");
   assert.equal(config.persistence.authStorePath, "stores/agent-auth.json");
+  assert.equal(config.persistence.agentRunStorePath, "stores/agent-runs.json");
   assert.equal(config.providers.github.mode, "real");
   assert.equal(config.providers.circleci.mode, "real");
   assert.equal(config.providers.linear.mode, "real");
@@ -39,6 +41,123 @@ test("createSetupConfig derives server defaults from repo detection", () => {
   assert.deepEqual(config.repos.map((repo) => repo.slug), ["oxnw/agentrail"]);
   assert.equal(config.repos[0].defaultBranch, "main");
   assert.equal(config.exports.markdown.enabled, false);
+});
+
+test("normalizeSetupConfigLike fills agent run store path for older file configs", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    server: {
+      baseUrl: "http://127.0.0.1:3000",
+    },
+    persistence: {
+      kind: "file",
+    },
+    providers: {},
+    repos: [{
+      path: "/tmp/agentrail",
+      slug: "oxnw/agentrail",
+      defaultBranch: "main",
+    }],
+  });
+
+  assert.ok(config);
+  assert.ok(config.persistence);
+  assert.equal(config.persistence.agentRunStorePath, "stores/agent-runs.json");
+});
+
+test("normalizeSetupConfigLike preserves explicit agent run store paths", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    persistence: {
+      kind: "file",
+      agentRunStorePath: "custom/runs.json",
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.ok(config.persistence);
+  assert.equal(config.persistence.agentRunStorePath, "custom/runs.json");
+});
+
+test("normalizeSetupConfigLike treats whitespace-only agent run store paths as missing", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    persistence: {
+      kind: "file",
+      agentRunStorePath: "   ",
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.ok(config.persistence);
+  assert.equal(config.persistence.agentRunStorePath, "stores/agent-runs.json");
+});
+
+test("normalizeSetupConfigLike treats mixed whitespace agent run store paths as missing", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    persistence: {
+      kind: "file",
+      agentRunStorePath: "\t\n ",
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.ok(config.persistence);
+  assert.equal(config.persistence.agentRunStorePath, "stores/agent-runs.json");
+});
+
+test("normalizeSetupConfigLike treats empty string agent run store paths as missing", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    persistence: {
+      kind: "file",
+      agentRunStorePath: "",
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.ok(config.persistence);
+  assert.equal(config.persistence.agentRunStorePath, "stores/agent-runs.json");
+});
+
+test("normalizeSetupConfigLike trims explicit agent run store paths", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    persistence: {
+      kind: "file",
+      agentRunStorePath: "  custom/runs.json  ",
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.ok(config.persistence);
+  assert.equal(config.persistence.agentRunStorePath, "custom/runs.json");
+});
+
+test("normalizeSetupConfigLike does not add file defaults to memory persistence", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    persistence: {
+      kind: "memory",
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.ok(config.persistence);
+  assert.equal(config.persistence.agentRunStorePath, undefined);
 });
 
 test("--yes safety validation rejects non-local or live defaults", () => {
