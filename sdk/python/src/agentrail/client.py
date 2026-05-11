@@ -18,6 +18,9 @@ from .models import (
     AgentApiKeyResponse,
     AgentApiKeyRotateRequest,
     AgentApiKeyUsageResponse,
+    EventSubscriptionCreateRequest,
+    EventSubscriptionListResponse,
+    EventSubscriptionResponse,
     LinearTaskCommentRequest,
     LinearTaskCommentResponse,
     LinearTaskWorkflowStateRequest,
@@ -228,45 +231,67 @@ class AgentRailClient:
             response_model=LinearTaskWorkflowStateResponse,
         )
 
-    # ── Webhooks ───────────────────────────────────────────────────
+    # ── Event Subscriptions ────────────────────────────────────────
 
-    async def list_webhook_subscriptions(self) -> TaskWebhookSubscriptionListResponse:
+    async def list_event_subscriptions(self) -> EventSubscriptionListResponse:
         return await self._request(
             "GET",
-            "/task-webhook-subscriptions",
-            response_model=TaskWebhookSubscriptionListResponse,
+            "/event-subscriptions",
+            response_model=EventSubscriptionListResponse,
         )
+
+    async def get_event_subscription(
+        self, subscription_id: str
+    ) -> EventSubscriptionResponse:
+        return await self._request(
+            "GET",
+            f"/event-subscriptions/{quote(subscription_id, safe='')}",
+            response_model=EventSubscriptionResponse,
+        )
+
+    async def create_event_subscription(
+        self,
+        request: EventSubscriptionCreateRequest,
+        idempotency_key: str,
+    ) -> EventSubscriptionResponse:
+        return await self._request(
+            "POST",
+            "/event-subscriptions",
+            body=request.model_dump(by_alias=True, exclude_none=True),
+            headers={"Idempotency-Key": idempotency_key},
+            response_model=EventSubscriptionResponse,
+        )
+
+    async def deactivate_event_subscription(
+        self, subscription_id: str
+    ) -> EventSubscriptionResponse:
+        return await self._request(
+            "DELETE",
+            f"/event-subscriptions/{quote(subscription_id, safe='')}",
+            response_model=EventSubscriptionResponse,
+        )
+
+    # ── Webhook aliases ────────────────────────────────────────────
+
+    async def list_webhook_subscriptions(self) -> TaskWebhookSubscriptionListResponse:
+        return await self.list_event_subscriptions()
 
     async def get_webhook_subscription(
         self, subscription_id: str
     ) -> TaskWebhookSubscriptionResponse:
-        return await self._request(
-            "GET",
-            f"/task-webhook-subscriptions/{quote(subscription_id, safe='')}",
-            response_model=TaskWebhookSubscriptionResponse,
-        )
+        return await self.get_event_subscription(subscription_id)
 
     async def create_webhook_subscription(
         self,
         request: TaskWebhookSubscriptionCreateRequest,
         idempotency_key: str,
     ) -> TaskWebhookSubscriptionResponse:
-        return await self._request(
-            "POST",
-            "/task-webhook-subscriptions",
-            body=request.model_dump(by_alias=True, exclude_none=True),
-            headers={"Idempotency-Key": idempotency_key},
-            response_model=TaskWebhookSubscriptionResponse,
-        )
+        return await self.create_event_subscription(request, idempotency_key)
 
     async def deactivate_webhook_subscription(
         self, subscription_id: str
     ) -> TaskWebhookSubscriptionResponse:
-        return await self._request(
-            "DELETE",
-            f"/task-webhook-subscriptions/{quote(subscription_id, safe='')}",
-            response_model=TaskWebhookSubscriptionResponse,
-        )
+        return await self.deactivate_event_subscription(subscription_id)
 
     # ── Event Stream ───────────────────────────────────────────────
 

@@ -9,15 +9,15 @@ import { mkdtemp } from "node:fs/promises";
 
 import { TaskEventStore } from "../src/task-event-store.ts";
 import {
-  TaskWebhookSubscriptionStore,
+  AgentRailEventSubscriptionStore,
   signatureForPayload
-} from "../src/task-webhook-store.ts";
+} from "../src/event-subscription-store.ts";
 
 async function importWorkerModule() {
   try {
-    return await import("../src/task-webhook-delivery-worker.ts");
+    return await import("../src/event-delivery-worker.ts");
   } catch {
-    assert.fail("TaskWebhookDeliveryWorker module should exist.");
+    assert.fail("AgentRailEventDeliveryWorker module should exist.");
   }
 }
 
@@ -79,12 +79,12 @@ function createWebhookReceiver(statuses, requests) {
   });
 }
 
-test("TaskWebhookDeliveryWorker retries with contract headers, stable event IDs, fresh delivery IDs, and HMAC signatures", async (t) => {
-  const { TaskWebhookDeliveryWorker } = await importWorkerModule();
+test("AgentRailEventDeliveryWorker retries with contract headers, stable event IDs, fresh delivery IDs, and HMAC signatures", async (t) => {
+  const { AgentRailEventDeliveryWorker } = await importWorkerModule();
   let currentTime = new Date("2026-05-01T03:30:00Z");
 
   const eventStore = new TaskEventStore({ now: () => currentTime });
-  const webhookStore = new TaskWebhookSubscriptionStore({ now: () => currentTime });
+  const eventSubscriptionStore = new AgentRailEventSubscriptionStore({ now: () => currentTime });
   const requests = [];
   const receiver = createWebhookReceiver([500, 500, 202], requests);
   const receiverUrl = await listen(receiver);
@@ -93,7 +93,7 @@ test("TaskWebhookDeliveryWorker retries with contract headers, stable event IDs,
     await new Promise((resolve) => receiver.close(resolve));
   });
 
-  const subscription = webhookStore.createSubscription(
+  const subscription = eventSubscriptionStore.createSubscription(
     {
       url: receiverUrl,
       eventTypes: ["task.updated"],
@@ -102,15 +102,15 @@ test("TaskWebhookDeliveryWorker retries with contract headers, stable event IDs,
         taskIds: ["tsk_target"]
       }
     },
-    "whsub-worker-retry-v1"
+    "evsub-worker-retry-v1"
   );
 
   const event = createTaskUpdatedEvent();
   await eventStore.append(event);
 
-  const worker = new TaskWebhookDeliveryWorker({
+  const worker = new AgentRailEventDeliveryWorker({
     eventStore,
-    webhookStore,
+    eventSubscriptionStore,
     now: () => currentTime
   });
 
@@ -152,7 +152,7 @@ test("TaskWebhookDeliveryWorker retries with contract headers, stable event IDs,
     ["task.updated", "task.updated", "task.updated"]
   );
   assert.deepEqual(
-    requests.map((request) => request.headers["x-agentrail-webhook-id"]),
+    requests.map((request) => request.headers["x-agentrail-subscription-id"]),
     [subscription.data.id, subscription.data.id, subscription.data.id]
   );
 
@@ -167,12 +167,95 @@ test("TaskWebhookDeliveryWorker retries with contract headers, stable event IDs,
   }
 });
 
-test("TaskWebhookDeliveryWorker disables the subscription on explicit 410 Gone and stops retrying it", async (t) => {
-  const { TaskWebhookDeliveryWorker } = await importWorkerModule();
+test("AgentRailEventDeliveryWorker treats any 2xx response as delivered", async (t) => {
+  const { AgentRailEventDeliveryWorker } = await importWorkerModule();
+  const currentTime = new Date("2026-05-01T03:30:00Z");
+
+  const eventStore = new TaskEventStore({ now: () => currentTime });
+  const eventSubscriptionStore = new AgentRailEventSubscriptionStore({ now: () => currentTime });
+  const requests = [];
+  const receiver = createWebhookReceiver([204], requests);
+  const receiverUrl = await listen(receiver);
+
+  t.after(async () => {
+    await new Promise((resolve) => receiver.close(resolve));
+  });
+
+  const subscription = eventSubscriptionStore.createSubscription(
+    {
+      url: receiverUrl,
+      eventTypes: ["task.updated"],
+      secret: "whsec_live_agentrail_contract_001"
+    },
+    "evsub-worker-2xx-v1"
+  );
+
+  const event = createTaskUpdatedEvent();
+  await eventStore.append(event);
+
+  const worker = new AgentRailEventDeliveryWorker({
+    eventStore,
+    eventSubscriptionStore,
+    now: () => currentTime
+  });
+
+  await worker.processDueDeliveries();
+
+  const delivery = worker.getDelivery(event.id, subscription.data.id);
+  assert.equal(delivery.status, "delivered");
+  assert.equal(delivery.lastResponseStatus, 204);
+  assert.equal(requests.length, 1);
+});
+
+test("AgentRailEventDeliveryWorker does not backfill events from before subscription creation", async (t) => {
+  const { AgentRailEventDeliveryWorker } = await importWorkerModule();
+  const currentTime = new Date("2026-05-01T03:30:00Z");
+
+  const eventStore = new TaskEventStore({ now: () => currentTime });
+  const eventSubscriptionStore = new AgentRailEventSubscriptionStore({ now: () => currentTime });
+  const requests = [];
+  const receiver = createWebhookReceiver([202, 202], requests);
+  const receiverUrl = await listen(receiver);
+
+  t.after(async () => {
+    await new Promise((resolve) => receiver.close(resolve));
+  });
+
+  await eventStore.append(createTaskUpdatedEvent({ id: "evt_historical", sequence: 4128 }));
+  const subscription = eventSubscriptionStore.createSubscription(
+    {
+      url: receiverUrl,
+      eventTypes: ["task.updated"],
+      secret: "whsec_live_agentrail_contract_001"
+    },
+    "evsub-worker-no-backfill-v1",
+    { createdAfterSequence: eventStore.getMaxSequence() }
+  );
+  const freshEvent = createTaskUpdatedEvent({ id: "evt_fresh", sequence: 4129 });
+  await eventStore.append(freshEvent);
+
+  const worker = new AgentRailEventDeliveryWorker({
+    eventStore,
+    eventSubscriptionStore,
+    now: () => currentTime
+  });
+
+  await worker.processDueDeliveries();
+
+  assert.equal(worker.getDelivery("evt_historical", subscription.data.id), null);
+  assert.equal(worker.getDelivery("evt_fresh", subscription.data.id)?.status, "delivered");
+  assert.deepEqual(
+    requests.map((request) => JSON.parse(request.body).id),
+    ["evt_fresh"]
+  );
+});
+
+test("AgentRailEventDeliveryWorker disables the subscription on explicit 410 Gone and stops retrying it", async (t) => {
+  const { AgentRailEventDeliveryWorker } = await importWorkerModule();
   let currentTime = new Date("2026-05-01T03:30:00Z");
 
   const eventStore = new TaskEventStore({ now: () => currentTime });
-  const webhookStore = new TaskWebhookSubscriptionStore({ now: () => currentTime });
+  const eventSubscriptionStore = new AgentRailEventSubscriptionStore({ now: () => currentTime });
   const requests = [];
   const receiver = createWebhookReceiver([410, 202], requests);
   const receiverUrl = await listen(receiver);
@@ -181,21 +264,22 @@ test("TaskWebhookDeliveryWorker disables the subscription on explicit 410 Gone a
     await new Promise((resolve) => receiver.close(resolve));
   });
 
-  const subscription = webhookStore.createSubscription(
+  const subscription = eventSubscriptionStore.createSubscription(
     {
       url: receiverUrl,
       eventTypes: ["task.updated"],
       secret: "whsec_live_agentrail_contract_001"
     },
-    "whsub-worker-410-v1"
+    "evsub-worker-410-v1"
   );
 
   const event = createTaskUpdatedEvent();
   await eventStore.append(event);
+  await eventStore.append(createTaskUpdatedEvent({ id: "evt_after_gone", sequence: 4129 }));
 
-  const worker = new TaskWebhookDeliveryWorker({
+  const worker = new AgentRailEventDeliveryWorker({
     eventStore,
-    webhookStore,
+    eventSubscriptionStore,
     now: () => currentTime
   });
 
@@ -203,19 +287,20 @@ test("TaskWebhookDeliveryWorker disables the subscription on explicit 410 Gone a
 
   const delivery = worker.getDelivery(event.id, subscription.data.id);
   assert.equal(delivery.status, "disabled");
-  assert.deepEqual(webhookStore.listActiveSubscriptions(), []);
+  assert.deepEqual(eventSubscriptionStore.listActiveSubscriptions(), []);
+  assert.equal(requests.length, 1);
 
   currentTime = new Date("2026-05-01T05:30:00Z");
   await worker.processDueDeliveries();
   assert.equal(requests.length, 1);
 });
 
-test("TaskWebhookDeliveryWorker marks the eighth retryable failure as exhausted", async (t) => {
-  const { TaskWebhookDeliveryWorker, DELIVERY_SCHEDULE_SECONDS } = await importWorkerModule();
+test("AgentRailEventDeliveryWorker marks the eighth retryable failure as exhausted", async (t) => {
+  const { AgentRailEventDeliveryWorker, DELIVERY_SCHEDULE_SECONDS } = await importWorkerModule();
   let currentTime = new Date("2026-05-01T03:30:00Z");
 
   const eventStore = new TaskEventStore({ now: () => currentTime });
-  const webhookStore = new TaskWebhookSubscriptionStore({ now: () => currentTime });
+  const eventSubscriptionStore = new AgentRailEventSubscriptionStore({ now: () => currentTime });
   const requests = [];
   const receiver = createWebhookReceiver([500, 500, 500, 500, 500, 500, 500, 500], requests);
   const receiverUrl = await listen(receiver);
@@ -224,21 +309,21 @@ test("TaskWebhookDeliveryWorker marks the eighth retryable failure as exhausted"
     await new Promise((resolve) => receiver.close(resolve));
   });
 
-  const subscription = webhookStore.createSubscription(
+  const subscription = eventSubscriptionStore.createSubscription(
     {
       url: receiverUrl,
       eventTypes: ["task.updated"],
       secret: "whsec_live_agentrail_contract_001"
     },
-    "whsub-worker-exhausted-v1"
+    "evsub-worker-exhausted-v1"
   );
 
   const event = createTaskUpdatedEvent();
   await eventStore.append(event);
 
-  const worker = new TaskWebhookDeliveryWorker({
+  const worker = new AgentRailEventDeliveryWorker({
     eventStore,
-    webhookStore,
+    eventSubscriptionStore,
     now: () => currentTime
   });
 
@@ -253,14 +338,14 @@ test("TaskWebhookDeliveryWorker marks the eighth retryable failure as exhausted"
   assert.equal(requests.length, 8);
 });
 
-test("TaskWebhookDeliveryWorker resumes retry state after a restart when a delivery storage path is configured", async (t) => {
-  const { TaskWebhookDeliveryWorker } = await importWorkerModule();
+test("AgentRailEventDeliveryWorker resumes retry state after a restart when a delivery storage path is configured", async (t) => {
+  const { AgentRailEventDeliveryWorker } = await importWorkerModule();
   let currentTime = new Date("2026-05-01T03:30:00Z");
 
   const deliveryDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-deliveries-"));
   const deliveryStoragePath = path.join(deliveryDir, "deliveries.json");
   const eventStore = new TaskEventStore({ now: () => currentTime });
-  const webhookStore = new TaskWebhookSubscriptionStore({ now: () => currentTime });
+  const eventSubscriptionStore = new AgentRailEventSubscriptionStore({ now: () => currentTime });
   const requests = [];
   const receiver = createWebhookReceiver([500, 202], requests);
   const receiverUrl = await listen(receiver);
@@ -269,30 +354,30 @@ test("TaskWebhookDeliveryWorker resumes retry state after a restart when a deliv
     await new Promise((resolve) => receiver.close(resolve));
   });
 
-  const subscription = webhookStore.createSubscription(
+  const subscription = eventSubscriptionStore.createSubscription(
     {
       url: receiverUrl,
       eventTypes: ["task.updated"],
       secret: "whsec_live_agentrail_contract_001"
     },
-    "whsub-worker-persist-v1"
+    "evsub-worker-persist-v1"
   );
 
   const event = createTaskUpdatedEvent();
   await eventStore.append(event);
 
-  const firstWorker = new TaskWebhookDeliveryWorker({
+  const firstWorker = new AgentRailEventDeliveryWorker({
     eventStore,
-    webhookStore,
+    eventSubscriptionStore,
     now: () => currentTime,
     storagePath: deliveryStoragePath
   });
   await firstWorker.processDueDeliveries();
 
   currentTime = new Date("2026-05-01T03:30:10Z");
-  const restartedWorker = new TaskWebhookDeliveryWorker({
+  const restartedWorker = new AgentRailEventDeliveryWorker({
     eventStore,
-    webhookStore,
+    eventSubscriptionStore,
     now: () => currentTime,
     storagePath: deliveryStoragePath
   });
@@ -305,4 +390,39 @@ test("TaskWebhookDeliveryWorker resumes retry state after a restart when a deliv
     requests.map((request) => request.headers["x-agentrail-delivery-attempt"]),
     ["1", "2"]
   );
+});
+
+test("AgentRailEventDeliveryController triggers delivery after task events are appended", async () => {
+  const { AgentRailEventDeliveryController } = await importWorkerModule();
+  const eventStore = new TaskEventStore();
+  let runCount = 0;
+  let notifyRun = () => {};
+  const nextRun = () => new Promise((resolve) => {
+    notifyRun = resolve;
+  });
+  let pendingRun = nextRun();
+  const worker = {
+    async processDueDeliveries() {
+      runCount += 1;
+      notifyRun();
+      pendingRun = nextRun();
+    },
+  };
+  const controller = new AgentRailEventDeliveryController({
+    eventStore,
+    worker,
+    intervalMs: 60_000,
+  });
+
+  const firstRun = pendingRun;
+  controller.start();
+  await firstRun;
+  assert.equal(runCount, 1);
+
+  const secondRun = pendingRun;
+  await eventStore.append(createTaskUpdatedEvent({ id: "evt_controller", sequence: 1 }));
+  await secondRun;
+  assert.equal(runCount, 2);
+
+  await controller.stop();
 });

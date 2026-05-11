@@ -16,9 +16,9 @@ import { CursorExpiredError, matchesFilters, TaskEventStore } from "./task-event
 import type { TaskRecord } from "./task-store.ts";
 import {
   ConflictError,
-  TaskWebhookSubscriptionStore,
+  AgentRailEventSubscriptionStore,
   ValidationError
-} from "./task-webhook-store.ts";
+} from "./event-subscription-store.ts";
 import { WaitlistStore, WaitlistValidationError } from "./waitlist-store.ts";
 import { createOperationTimer, logNarrative } from "./structured-logger.ts";
 import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
@@ -65,6 +65,7 @@ export interface CreateServerOptions {
   linearWebhookAdapter?: LinearCommentWebhookAdapterLike | null;
   routingControlPlane?: RoutingControlPlane | null;
   authStore?: AgentAuthStore | null;
+  eventSubscriptionStore?: AgentRailEventSubscriptionStore | null;
   taskLifecycleStore?: unknown;
   waitlistStore?: WaitlistStore | null;
   publicBaseUrl?: string | null;
@@ -94,6 +95,7 @@ export function createServer({
   linearWebhookAdapter = null,
   routingControlPlane = null,
   authStore = null,
+  eventSubscriptionStore = null,
   taskLifecycleStore = null,
   waitlistStore = null,
   publicBaseUrl = process.env.AGENTRAIL_PUBLIC_BASE_URL || null,
@@ -108,7 +110,7 @@ export function createServer({
   brevoFromEmail = process.env.BREVO_FROM_EMAIL || "waitlist@agentrail.app",
   brevoFromName = process.env.BREVO_FROM_NAME || "AgentRail"
 }: CreateServerOptions) {
-  const webhookStore = new TaskWebhookSubscriptionStore({ now });
+  const resolvedEventSubscriptionStore = eventSubscriptionStore ?? new AgentRailEventSubscriptionStore({ now });
   const resolvedWaitlistStore = waitlistStore ?? new WaitlistStore({ now });
   const resolvedLinearIssueSourceAdapter = linearIssueSourceAdapter ?? linearIntakeAdapter;
 
@@ -118,7 +120,7 @@ export function createServer({
       response,
       store,
       agentRunStore,
-      webhookStore,
+      eventSubscriptionStore: resolvedEventSubscriptionStore,
       now,
       ciStatusAdapter,
       githubWebhookSecret,
@@ -164,7 +166,7 @@ export function createServer({
 interface RouteRequestOptions extends CreateServerOptions {
   request: http.IncomingMessage;
   response: http.ServerResponse;
-  webhookStore: TaskWebhookSubscriptionStore;
+  eventSubscriptionStore: AgentRailEventSubscriptionStore;
   intakeAdapter?: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
   linearIntakeAdapter?: LinearIssueSourceAdapterLike | null;
   linearIssueSourceAdapter?: LinearIssueSourceAdapterLike | null;
@@ -176,7 +178,7 @@ async function routeRequest({
   response,
   store,
   agentRunStore,
-  webhookStore,
+  eventSubscriptionStore,
   now,
   ciStatusAdapter,
   githubWebhookSecret = null,
@@ -231,7 +233,7 @@ async function routeRequest({
 
   // Fallback switch: return 503 on all task lifecycle routes so agents can detect
   // the condition and revert to direct GitHub / Paperclip APIs.
-  const isTaskRoute = /^\/(tasks|task-events|task-webhook-subscriptions|agent-api-keys)/.test(pathname);
+  const isTaskRoute = /^\/(tasks|task-events|event-subscriptions|agent-api-keys)/.test(pathname);
   if (fallbackMode && isTaskRoute) {
     obs.operation = obs.operation ?? "fallback_gate";
     response.writeHead(503, {
@@ -826,35 +828,37 @@ async function routeRequest({
     return;
   }
 
-  if (request.method === "GET" && pathname === "/task-webhook-subscriptions") {
+  if (request.method === "GET" && pathname === "/event-subscriptions") {
+    obs.operation = "list_event_subscriptions";
     const principal = authorizeRoute({
       request,
       response,
       authStore,
       requiredScope: "webhooks:read",
-      operation: "list_task_webhook_subscriptions"
+      operation: "list_event_subscriptions"
     });
     if (principal === false) {
       return;
     }
 
-    handleListTaskWebhookSubscriptions({ response, webhookStore });
+    handleListEventSubscriptions({ response, eventSubscriptionStore });
     return;
   }
 
-  if (request.method === "POST" && pathname === "/task-webhook-subscriptions") {
+  if (request.method === "POST" && pathname === "/event-subscriptions") {
+    obs.operation = "create_event_subscription";
     const principal = authorizeRoute({
       request,
       response,
       authStore,
       requiredScope: "webhooks:write",
-      operation: "create_task_webhook_subscription"
+      operation: "create_event_subscription"
     });
     if (principal === false) {
       return;
     }
 
-    await handleCreateTaskWebhookSubscription({ request, response, webhookStore });
+    await handleCreateEventSubscription({ request, response, eventSubscriptionStore, store });
     return;
   }
 
@@ -1114,49 +1118,51 @@ async function routeRequest({
     return;
   }
 
-  const getWebhookSubscriptionMatch =
+  const getEventSubscriptionMatch =
     request.method === "GET"
-      ? pathname.match(/^\/task-webhook-subscriptions\/(whsub_[A-Za-z0-9]+)$/)
+      ? pathname.match(/^\/event-subscriptions\/(evsub_[A-Za-z0-9]+)$/)
       : null;
-  if (getWebhookSubscriptionMatch) {
+  if (getEventSubscriptionMatch) {
+    obs.operation = "get_event_subscription";
     const principal = authorizeRoute({
       request,
       response,
       authStore,
       requiredScope: "webhooks:read",
-      operation: "get_task_webhook_subscription"
+      operation: "get_event_subscription"
     });
     if (principal === false) {
       return;
     }
 
-    handleGetTaskWebhookSubscription({
+    handleGetEventSubscription({
       response,
-      webhookStore,
-      subscriptionId: getWebhookSubscriptionMatch[1]
+      eventSubscriptionStore,
+      subscriptionId: getEventSubscriptionMatch[1]
     });
     return;
   }
 
   const deleteMatch =
     request.method === "DELETE"
-      ? pathname.match(/^\/task-webhook-subscriptions\/(whsub_[A-Za-z0-9]+)$/)
+      ? pathname.match(/^\/event-subscriptions\/(evsub_[A-Za-z0-9]+)$/)
       : null;
   if (deleteMatch) {
+    obs.operation = "deactivate_event_subscription";
     const principal = authorizeRoute({
       request,
       response,
       authStore,
       requiredScope: "webhooks:write",
-      operation: "deactivate_task_webhook_subscription"
+      operation: "deactivate_event_subscription"
     });
     if (principal === false) {
       return;
     }
 
-    handleDeactivateTaskWebhookSubscription({
+    handleDeactivateEventSubscription({
       response,
-      webhookStore,
+      eventSubscriptionStore,
       subscriptionId: deleteMatch[1]
     });
     return;
@@ -2650,16 +2656,21 @@ function authorizeRoute({
   }
 }
 
-interface CreateWebhookOptions {
+interface CreateEventSubscriptionOptions {
   request: http.IncomingMessage;
   response: http.ServerResponse;
-  webhookStore: TaskWebhookSubscriptionStore;
+  eventSubscriptionStore: AgentRailEventSubscriptionStore;
+  store: TaskEventStore;
 }
 
-async function handleCreateTaskWebhookSubscription({ request, response, webhookStore }: CreateWebhookOptions) {
+async function handleCreateEventSubscription({ request, response, eventSubscriptionStore, store }: CreateEventSubscriptionOptions) {
   try {
     const payload = await readJsonBody(request);
-    const body = webhookStore.createSubscription(payload as Parameters<TaskWebhookSubscriptionStore["createSubscription"]>[0], request.headers["idempotency-key"] as string);
+    const body = eventSubscriptionStore.createSubscription(
+      payload as Parameters<AgentRailEventSubscriptionStore["createSubscription"]>[0],
+      request.headers["idempotency-key"] as string,
+      { createdAfterSequence: store.getMaxSequence() },
+    );
     response.writeHead(201, {
       "content-type": "application/json"
     });
@@ -2679,18 +2690,20 @@ async function handleCreateTaskWebhookSubscription({ request, response, webhookS
   }
 }
 
-function handleListTaskWebhookSubscriptions({ response, webhookStore }: { response: http.ServerResponse; webhookStore: TaskWebhookSubscriptionStore }) {
-  const body = webhookStore.listSubscriptions();
+function handleListEventSubscriptions({ response, eventSubscriptionStore }: { response: http.ServerResponse; eventSubscriptionStore: AgentRailEventSubscriptionStore }) {
+  const body = eventSubscriptionStore.listSubscriptions();
   response.writeHead(200, {
     "content-type": "application/json"
   });
   response.end(JSON.stringify(body));
 }
 
-function handleGetTaskWebhookSubscription({ response, webhookStore, subscriptionId }: { response: http.ServerResponse; webhookStore: TaskWebhookSubscriptionStore; subscriptionId: string }) {
-  const body = webhookStore.getSubscription(subscriptionId);
+function handleGetEventSubscription({ response, eventSubscriptionStore, subscriptionId }: { response: http.ServerResponse; eventSubscriptionStore: AgentRailEventSubscriptionStore; subscriptionId: string }) {
+  const body = eventSubscriptionStore.getSubscription(subscriptionId);
   if (!body) {
-    writeError(response, 404, "not_found", "Webhook subscription not found.", {});
+    writeError(response, 404, "not_found", "Event subscription not found.", {
+      availableActions: ["list_event_subscriptions", "create_event_subscription"],
+    });
     return;
   }
 
@@ -2700,10 +2713,12 @@ function handleGetTaskWebhookSubscription({ response, webhookStore, subscription
   response.end(JSON.stringify(body));
 }
 
-function handleDeactivateTaskWebhookSubscription({ response, webhookStore, subscriptionId }: { response: http.ServerResponse; webhookStore: TaskWebhookSubscriptionStore; subscriptionId: string }) {
-  const body = webhookStore.deactivateSubscription(subscriptionId);
+function handleDeactivateEventSubscription({ response, eventSubscriptionStore, subscriptionId }: { response: http.ServerResponse; eventSubscriptionStore: AgentRailEventSubscriptionStore; subscriptionId: string }) {
+  const body = eventSubscriptionStore.deactivateSubscription(subscriptionId);
   if (!body) {
-    writeError(response, 404, "not_found", "Webhook subscription not found.", {});
+    writeError(response, 404, "not_found", "Event subscription not found.", {
+      availableActions: ["list_event_subscriptions", "create_event_subscription"],
+    });
     return;
   }
 

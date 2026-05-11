@@ -32,6 +32,8 @@ test("createSetupConfig derives server defaults from repo detection", () => {
   assert.equal(config.persistence.engine, "file");
   assert.equal(config.persistence.authStorePath, "stores/agent-auth.json");
   assert.equal(config.persistence.agentRunStorePath, "stores/agent-runs.json");
+  assert.equal(config.persistence.eventSubscriptionStorePath, "stores/event-subscriptions.json");
+  assert.equal(config.persistence.eventDeliveryStorePath, "stores/event-deliveries.json");
   assert.equal(config.providers.github.mode, "real");
   assert.equal(config.providers.circleci.mode, "real");
   assert.equal(config.providers.linear.mode, "real");
@@ -63,6 +65,8 @@ test("normalizeSetupConfigLike fills agent run store path for older file configs
   assert.ok(config);
   assert.ok(config.persistence);
   assert.equal(config.persistence.agentRunStorePath, "stores/agent-runs.json");
+  assert.equal(config.persistence.eventSubscriptionStorePath, "stores/event-subscriptions.json");
+  assert.equal(config.persistence.eventDeliveryStorePath, "stores/event-deliveries.json");
 });
 
 test("normalizeSetupConfigLike preserves explicit agent run store paths", () => {
@@ -158,6 +162,8 @@ test("normalizeSetupConfigLike does not add file defaults to memory persistence"
   assert.ok(config);
   assert.ok(config.persistence);
   assert.equal(config.persistence.agentRunStorePath, undefined);
+  assert.equal(config.persistence.eventSubscriptionStorePath, undefined);
+  assert.equal(config.persistence.eventDeliveryStorePath, undefined);
 });
 
 test("--yes safety validation rejects non-local or live defaults", () => {

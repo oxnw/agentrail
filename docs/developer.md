@@ -52,8 +52,8 @@ The repository is intentionally API-first:
   background delivery.
 - `src/task-store.ts` stores task lifecycle state.
 - `src/task-event-store.ts` stores and replays compact task events.
-- `src/task-webhook-store.ts` and `src/task-webhook-delivery-worker.ts` model
-  webhook subscriptions and delivery retry state.
+- `src/event-subscription-store.ts` and `src/event-delivery-worker.ts` model
+  event subscriptions and delivery retry state.
 - `src/github-issue-intake-adapter.ts` and
   `src/linear-issue-source-adapter.ts` ingest provider issues.
 - `src/intake-routing-control-plane.ts` owns routing profiles, rule sets,

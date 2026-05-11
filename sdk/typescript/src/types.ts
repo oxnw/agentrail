@@ -77,10 +77,12 @@ export type ShipStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type TaskEventType =
   | "task.updated"
+  | "task.awaiting_user"
   | "task.reviewed"
   | "task.shipped";
 
-export type WebhookSubscriptionStatus = "active" | "disabled";
+export type EventSubscriptionStatus = "active" | "disabled";
+export type WebhookSubscriptionStatus = EventSubscriptionStatus;
 
 export type FlakyConfidence = "low" | "medium" | "high";
 
@@ -195,6 +197,7 @@ export interface TaskSummary {
   priority: TaskPriority;
   dueAt: string | null;
   updatedAt: string;
+  blocker?: TaskBlocker | null;
   availableActions: string[];
 }
 
@@ -211,6 +214,16 @@ export interface TaskLinks {
 export interface TaskContext {
   project: string | null;
   goal: string;
+}
+
+export interface TaskBlocker {
+  kind: "awaiting_user";
+  sourceRunId: string;
+  sourceAgentId: string;
+  reason: string;
+  actionRequired: string;
+  resumeInstructions: string;
+  createdAt: string;
 }
 
 export type TaskAssignmentSource =
@@ -261,6 +274,7 @@ export interface TaskDetail {
   routingDecisionId?: string | null;
   routingReason?: TaskRoutingReason | null;
   routingConfidence?: number | null;
+  blocker?: TaskBlocker | null;
   availableActions: string[];
 }
 
@@ -506,7 +520,9 @@ export interface WebhookFilters {
   taskIds?: string[];
 }
 
-export interface TaskWebhookSubscriptionCreateRequest {
+export type EventSubscriptionFilters = WebhookFilters;
+
+export interface EventSubscriptionCreateRequest {
   url: string;
   eventTypes: TaskEventType[];
   secret: string;
@@ -514,33 +530,43 @@ export interface TaskWebhookSubscriptionCreateRequest {
   filters?: WebhookFilters;
 }
 
-export interface WebhookRetryPolicy {
+export type TaskWebhookSubscriptionCreateRequest = EventSubscriptionCreateRequest;
+
+export interface EventSubscriptionRetryPolicy {
   maxAttempts: number;
   initialBackoffSeconds: number;
   maxBackoffSeconds: number;
 }
 
-export interface TaskWebhookSubscriptionData {
+export type WebhookRetryPolicy = EventSubscriptionRetryPolicy;
+
+export interface EventSubscriptionData {
   id: string;
   url: string;
   eventTypes: TaskEventType[];
   filters: WebhookFilters;
-  status: WebhookSubscriptionStatus;
+  status: EventSubscriptionStatus;
   signingAlgorithm: "hmac_sha256";
-  retryPolicy: WebhookRetryPolicy;
+  retryPolicy: EventSubscriptionRetryPolicy;
   createdAt: string;
   availableActions: string[];
 }
 
-export interface TaskWebhookSubscriptionResponse {
-  data: TaskWebhookSubscriptionData;
+export type TaskWebhookSubscriptionData = EventSubscriptionData;
+
+export interface EventSubscriptionResponse {
+  data: EventSubscriptionData;
   availableActions: string[];
 }
 
-export interface TaskWebhookSubscriptionListResponse {
-  data: TaskWebhookSubscriptionData[];
+export type TaskWebhookSubscriptionResponse = EventSubscriptionResponse;
+
+export interface EventSubscriptionListResponse {
+  data: EventSubscriptionData[];
   availableActions: string[];
 }
+
+export type TaskWebhookSubscriptionListResponse = EventSubscriptionListResponse;
 
 // ── Task Events ────────────────────────────────────────────────────
 
@@ -565,6 +591,20 @@ export interface TaskUpdatedEventData {
   actor: TaskEventActor;
   summary: string;
   availableActions: string[];
+  blocker?: TaskBlocker | null;
+  links: TaskEventLinks;
+}
+
+export interface TaskAwaitingUserEventData {
+  taskId: string;
+  taskIdentifier: string;
+  status: "blocked";
+  previousStatus: TaskStatus | null;
+  changedFields: string[];
+  actor: TaskEventActor;
+  summary: string;
+  availableActions: string[];
+  blocker: TaskBlocker;
   links: TaskEventLinks;
 }
 
@@ -604,6 +644,11 @@ export interface TaskUpdatedEvent extends BaseEvent {
   data: TaskUpdatedEventData;
 }
 
+export interface TaskAwaitingUserEvent extends BaseEvent {
+  type: "task.awaiting_user";
+  data: TaskAwaitingUserEventData;
+}
+
 export interface TaskReviewedEvent extends BaseEvent {
   type: "task.reviewed";
   data: TaskReviewedEventData;
@@ -616,6 +661,7 @@ export interface TaskShippedEvent extends BaseEvent {
 
 export type TaskLifecycleEvent =
   | TaskUpdatedEvent
+  | TaskAwaitingUserEvent
   | TaskReviewedEvent
   | TaskShippedEvent;
 
@@ -649,7 +695,7 @@ export interface StreamOptions {
 }
 
 export interface WebhookHeaders {
-  "x-agentrail-webhook-id": string;
+  "x-agentrail-subscription-id": string;
   "x-agentrail-event-id": string;
   "x-agentrail-event-type": TaskEventType;
   "x-agentrail-delivery-id": string;

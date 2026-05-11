@@ -207,27 +207,28 @@ except AgentRailError as e:
 
 ```python
 from agentrail import (
-    TaskWebhookSubscriptionCreateRequest,
+    EventSubscriptionCreateRequest,
     TaskEventType,
-    WebhookFilters,
+    EventSubscriptionFilters,
 )
 
-sub = await client.create_webhook_subscription(
-    TaskWebhookSubscriptionCreateRequest(
+sub = await client.create_event_subscription(
+    EventSubscriptionCreateRequest(
         url="https://agents.example.com/webhooks/task-events",
         eventTypes=[
+            TaskEventType.TASK_AWAITING_USER,
             TaskEventType.TASK_UPDATED,
             TaskEventType.TASK_REVIEWED,
             TaskEventType.TASK_SHIPPED,
         ],
         secret="whsec_live_agentrail_contract_001",
-        filters=WebhookFilters(taskIds=["tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V"]),
+        filters=EventSubscriptionFilters(taskIds=["tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V"]),
     ),
-    idempotency_key="whsub-primary-v1",
+    idempotency_key="evsub-primary-v1",
 )
 
-subscriptions = await client.list_webhook_subscriptions()
-current = await client.get_webhook_subscription(sub.data.id)
+subscriptions = await client.list_event_subscriptions()
+current = await client.get_event_subscription(sub.data.id)
 ```
 
 ### Verify and parse incoming webhooks
@@ -240,6 +241,8 @@ signature = request.headers["X-AgentRail-Signature"]
 
 event = parse_webhook_event(raw_body, "whsec_live_agentrail_contract_001", signature)
 match event.type:
+    case "task.awaiting_user":
+        print(f"User needed: {event.data.blocker.action_required}")
     case "task.updated":
         print(f"Task {event.data.task_identifier} -> {event.data.status}")
     case "task.reviewed":

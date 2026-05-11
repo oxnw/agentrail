@@ -11,6 +11,7 @@ import { primaryRepoFromConfig, readSetupConfigFromHome, resolveAgentRailHome } 
 import { runConfigCommand, runRepoCommand, runServerStart } from "./global-management.ts";
 import { runLinearCommand } from "./linear-management.ts";
 import { ensureLocalOperatorBootstrap, hasExistingLocalAgents, withTemporaryLocalServer } from "./local-bootstrap.ts";
+import { runEventCommand } from "./event-subscriptions.ts";
 import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
 import { runProviderCommand } from "./provider-management.ts";
 import { detectRepoContext } from "./repo-detection.ts";
@@ -38,6 +39,7 @@ export interface RunCliOptions {
   detectRepoContext?: (cwd: string) => DetectedRepoContext | Promise<DetectedRepoContext>;
   createPrompt?: () => PromptSession;
   providerFetch?: typeof globalThis.fetch;
+  eventFetch?: typeof globalThis.fetch;
   agentRunner?: AgentRunnerHooks;
   writeSetupFiles?: (options: {
     homePath?: string;
@@ -102,6 +104,15 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
         cwd,
         stdout,
         stderr,
+      });
+    }
+
+    if (command === "event") {
+      return await runEventCommand(args, {
+        cwd,
+        stdout,
+        stderr,
+        fetch: options.eventFetch,
       });
     }
 
@@ -631,6 +642,9 @@ function writeUsage(output: Writer) {
     "  agentrail provider list",
     "  agentrail provider test <github|circleci|linear>",
     "  agentrail linear import <issue-id|issue-url|issue-uuid>",
+    "  agentrail event subscribe --url <url> --event-types <csv> [flags]",
+    "  agentrail event subscriptions [flags]",
+    "  agentrail event unsubscribe --subscription-id <evsub_...> [flags]",
     "  agentrail agent create [flags]",
     "  agentrail agent update [flags]",
     "  agentrail agent run [--once] [--agent-id <id>] [--max-runs <n>]",
@@ -645,6 +659,8 @@ function writeUsage(output: Writer) {
     "  --print-only",
     "  --yes",
     "  --markdown-export",
+    "  --event-types <csv>",
+    "  --subscription-id <evsub_...>",
     "  --base-url <url>",
     "  --api-key <key>",
     "  --agent-id <id>",

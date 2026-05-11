@@ -65,6 +65,8 @@ function renderServerEnv(config: SetupConfig, homePath: string): string {
       `AGENTRAIL_TASK_STORE_PATH=${path.resolve(homePath, config.persistence.taskStorePath)}`,
       `AGENTRAIL_AGENT_AUTH_STORE_PATH=${path.resolve(homePath, config.persistence.authStorePath)}`,
       `AGENTRAIL_AGENT_RUNS_STORE_PATH=${path.resolve(homePath, config.persistence.agentRunStorePath)}`,
+      `AGENTRAIL_EVENT_SUBSCRIPTION_STORE_PATH=${path.resolve(homePath, config.persistence.eventSubscriptionStorePath)}`,
+      `AGENTRAIL_EVENT_DELIVERY_STORE_PATH=${path.resolve(homePath, config.persistence.eventDeliveryStorePath)}`,
       `AGENTRAIL_AGENT_PROFILES_STORE_PATH=${path.resolve(homePath, config.persistence.agentProfileStorePath)}`,
       `AGENTRAIL_ROUTING_RULES_STORE_PATH=${path.resolve(homePath, config.persistence.routingRuleStorePath)}`,
       `AGENTRAIL_ROUTING_AUDIT_STORE_PATH=${path.resolve(homePath, config.persistence.routingAuditStorePath)}`,

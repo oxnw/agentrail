@@ -433,7 +433,7 @@ Recommended scopes:
 | Inspect review feedback | `reviews:read` |
 | Ship or roll back | `ship:write` |
 | Stream task events | `events:read` |
-| Manage webhooks | `webhooks:read`, `webhooks:write` |
+| Manage event webhook subscriptions | `webhooks:read`, `webhooks:write` |
 | Manage API keys | `auth:admin`, `usage:read` |
 
 ## Live GitHub and CI Adapters
@@ -468,7 +468,7 @@ Do not commit provider tokens or generated AgentRail API keys.
 Agents should avoid blind status polling. Prefer one of these:
 
 - `GET /task-events/stream` for server-sent events with cursor replay.
-- `/task-webhook-subscriptions` for signed outbound webhook delivery.
+- `/event-subscriptions` for signed outbound webhook delivery.
 
 Use polling only as a fallback when the agent runtime cannot receive push
 events.
