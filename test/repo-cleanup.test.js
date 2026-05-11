@@ -81,7 +81,7 @@ test("npm packaging blocks secrets and generated tarballs", async () => {
   assert.match(npmignore, /^\*\.pfx$/m);
   assert.match(npmignore, /^\*\.tgz$/m);
   assert.match(packageJson.scripts.prepack, /verify-npm-package-contents\.mjs/);
-  assert.deepEqual(packageJson.files, ["bin", "dist", "README.md", "LICENSE"]);
+  assert.deepEqual(packageJson.files, ["assets", "bin", "dist", "README.md", "LICENSE"]);
 });
 
 test("npm package content guard rejects sensitive file paths", () => {

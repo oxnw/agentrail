@@ -240,11 +240,15 @@ test("POST /tasks/{id}/blocker records blocker metadata and returns blocked task
   const taskQueue = new AgentTaskQueue({ now, eventStore });
   const task = createInProgressTask(taskQueue);
   const apiKey = createAgentKey(authStore, "agt_alice");
+  const notifications = [];
   const server = createServer({
     store: eventStore,
     taskLifecycleStore: taskQueue,
     authStore,
     now,
+    awaitingUserNotifier: async (notification) => {
+      notifications.push(notification);
+    },
   });
 
   t.after(async () => {
@@ -252,7 +256,7 @@ test("POST /tasks/{id}/blocker records blocker metadata and returns blocked task
   });
 
   const baseUrl = await listen(server);
-  const result = await requestJson(baseUrl, `/tasks/${task.id}/blocker`, {
+  const blockerRequest = {
     method: "POST",
     headers: {
       authorization: `Bearer ${apiKey}`,
@@ -265,7 +269,8 @@ test("POST /tasks/{id}/blocker records blocker metadata and returns blocked task
       actionRequired: "Choose staging or production.",
       resumeInstructions: "Resume once the target is confirmed.",
     }),
-  });
+  };
+  const result = await requestJson(baseUrl, `/tasks/${task.id}/blocker`, blockerRequest);
 
   assert.equal(result.response.status, 202);
   assert.equal(result.body.data.status, "blocked");
@@ -289,6 +294,19 @@ test("POST /tasks/{id}/blocker records blocker metadata and returns blocked task
   assert.equal(eventStore.events.length, 1);
   assert.equal(eventStore.events[0].type, "task.updated");
   assert.deepEqual(eventStore.events[0].data.changedFields, ["status", "availableActions", "blocker", "updatedAt"]);
+  assert.deepEqual(notifications, [{
+    runId: "run_user_needed_1",
+    taskId: task.id,
+    taskIdentifier: task.identifier,
+    reason: "Need deployment target.",
+    actionRequired: "Choose staging or production.",
+    resumeInstructions: "Resume once the target is confirmed.",
+  }]);
+
+  const replay = await requestJson(baseUrl, `/tasks/${task.id}/blocker`, blockerRequest);
+  assert.equal(replay.response.status, 202);
+  assert.deepEqual(replay.body, result.body);
+  assert.equal(notifications.length, 1);
 });
 
 test("POST /tasks/{id}/resolve-blocker clears blocker and returns todo start action", async (t) => {

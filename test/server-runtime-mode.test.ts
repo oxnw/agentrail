@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { TaskStore } from "../src/task-store.ts";
@@ -160,6 +160,80 @@ test("server mode exposes routing control plane routes", async (t) => {
   const currentBody = await currentRes.json();
   assert.equal(currentRes.status, 200);
   assert.equal(currentBody.data.rules[0].id, "rule_runtime_architecture_to_cto");
+});
+
+test("server mode loads AgentRail home server.env over cwd .env", async (t) => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "agentrail-runtime-cwd-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-runtime-home-"));
+  const cwdEnvPort = 37000 + Math.floor(Math.random() * 1000);
+  const homeEnvPort = 38000 + Math.floor(Math.random() * 1000);
+
+  await writeFile(
+    path.join(cwd, ".env"),
+    [
+      "AGENTRAIL_HOST=127.0.0.1",
+      `AGENTRAIL_PORT=${cwdEnvPort}`,
+      `AGENTRAIL_PUBLIC_BASE_URL=http://127.0.0.1:${cwdEnvPort}`,
+      "GITHUB_TOKEN=ghp_cwdtoken",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    path.join(homePath, "server.env"),
+    [
+      "AGENTRAIL_HOST=127.0.0.1",
+      `AGENTRAIL_PORT=${homeEnvPort}`,
+      `AGENTRAIL_PUBLIC_BASE_URL=http://127.0.0.1:${homeEnvPort}`,
+      "AGENTRAIL_DESKTOP_NOTIFICATIONS=false",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    path.join(homePath, "provider.env"),
+    "GITHUB_TOKEN=ghp_hometoken\n",
+    "utf8",
+  );
+
+  const env = { ...process.env };
+  delete env.AGENTRAIL_HOST;
+  delete env.AGENTRAIL_PORT;
+  delete env.AGENTRAIL_PUBLIC_BASE_URL;
+  delete env.GITHUB_TOKEN;
+
+  const server = spawn(process.execPath, [path.resolve("src/server.ts")], {
+    cwd,
+    env: {
+      ...env,
+      AGENTRAIL_HOME: homePath,
+      AGENTRAIL_OBSERVABILITY: "false",
+      CIRCLECI_TOKEN: "",
+      CIRCLECI_WEBHOOK_SECRET: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  t.after(async () => {
+    if (!server.killed) {
+      server.kill("SIGTERM");
+    }
+    await rm(cwd, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+  });
+
+  const output = [];
+  server.stdout.setEncoding("utf8");
+  server.stderr.setEncoding("utf8");
+  server.stdout.on("data", (chunk) => output.push(chunk));
+  server.stderr.on("data", (chunk) => output.push(chunk));
+
+  await waitForServerReady(server, output);
+
+  const joinedOutput = output.join("");
+  assert.match(joinedOutput, new RegExp(`AgentRail API ready at http://127\\.0\\.0\\.1:${homeEnvPort}`));
+  assert.doesNotMatch(joinedOutput, new RegExp(`AgentRail API ready at http://127\\.0\\.0\\.1:${cwdEnvPort}`));
+
+  const response = await fetch(`http://127.0.0.1:${homeEnvPort}/health`);
+  assert.equal(response.status, 200);
 });
 
 async function waitForServerReady(server, output) {

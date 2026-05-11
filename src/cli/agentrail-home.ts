@@ -46,6 +46,11 @@ export interface SetupConfigLike {
       enabled?: boolean;
     };
   };
+  notifications?: {
+    desktop?: {
+      enabled?: boolean;
+    };
+  };
   repos?: ConnectedRepo[];
   targetRepo?: {
     path?: string;
@@ -123,11 +128,13 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
 
   const normalizedProviders = normalizeProviders(config.providers);
   const normalizedPersistence = normalizePersistence(config.persistence);
+  const normalizedNotifications = normalizeNotifications(config.notifications);
   if (Array.isArray(config.repos)) {
     return {
       ...config,
       persistence: normalizedPersistence,
       providers: normalizedProviders,
+      notifications: normalizedNotifications,
       repos: config.repos
         .filter((repo): repo is ConnectedRepo => Boolean(repo?.path && repo?.slug && repo?.defaultBranch))
         .map((repo) => ({
@@ -146,6 +153,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
       ...config,
       persistence: normalizedPersistence,
       providers: normalizedProviders,
+      notifications: normalizedNotifications,
       repos: [{
         path: legacyPath,
         slug: legacySlug,
@@ -158,6 +166,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
     ...config,
     persistence: normalizedPersistence,
     providers: normalizedProviders,
+    notifications: normalizedNotifications,
     repos: [],
   };
 }
@@ -210,6 +219,19 @@ function normalizeProviders(providers: SetupConfigLike["providers"]): SetupConfi
           },
         }
       : {}),
+  };
+}
+
+function normalizeNotifications(notifications: SetupConfigLike["notifications"] | null): SetupConfigLike["notifications"] {
+  const source = notifications && typeof notifications === "object" ? notifications : {};
+  const rawDesktop = (source as { desktop?: unknown }).desktop;
+  const desktop = rawDesktop && typeof rawDesktop === "object" ? rawDesktop : {};
+  return {
+    ...source,
+    desktop: {
+      ...desktop,
+      enabled: (desktop as { enabled?: unknown }).enabled === true,
+    },
   };
 }
 

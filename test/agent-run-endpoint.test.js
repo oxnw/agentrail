@@ -299,12 +299,16 @@ test("POST /agent-runs/{runId}/report blocks the linked task for user action", a
     taskId: task.id,
   });
   const apiKey = createRunnerKey(authStore);
+  const notifications = [];
   const server = createServer({
     store: eventStore,
     authStore,
     agentRunStore,
     taskLifecycleStore: taskQueue,
     now,
+    awaitingUserNotifier: async (notification) => {
+      notifications.push(notification);
+    },
   });
 
   t.after(async () => {
@@ -347,6 +351,69 @@ test("POST /agent-runs/{runId}/report blocks the linked task for user action", a
     resumeInstructions: "Retry the task after GitHub is connected.",
     createdAt: "2026-05-09T10:25:00.000Z",
   });
+  assert.deepEqual(notifications, [{
+    runId: "run_blocked_report",
+    taskId: task.id,
+    taskIdentifier: "AGEA-BLOCKER-REPORT",
+    reason: "missing_credentials",
+    actionRequired: "Reconnect GitHub.",
+    resumeInstructions: "Retry the task after GitHub is connected.",
+  }]);
+});
+
+test("POST /agent-runs/{runId}/report swallows awaiting-user notification failures", async (t) => {
+  const now = () => new Date("2026-05-09T10:26:00.000Z");
+  const authStore = new AgentAuthStore({ now });
+  const eventStore = new TaskEventStore({ now });
+  const agentRunStore = new AgentRunStore({ now });
+  const taskQueue = new AgentTaskQueue({ now, eventStore });
+  const task = taskQueue.createTask({
+    identifier: "AGEA-BLOCKER-NOTIFY-FAIL",
+    title: "Needs user input",
+    assignee: { id: "agt_claudia", name: "Claudia" },
+    assigneeAgentId: "agt_claudia",
+    status: "in_progress",
+    availableActions: ["submit"],
+  });
+  agentRunStore.createRun({
+    ...makeRun("run_blocked_notify_fail", "running"),
+    taskId: task.id,
+  });
+  const apiKey = createRunnerKey(authStore);
+  const server = createServer({
+    store: eventStore,
+    authStore,
+    agentRunStore,
+    taskLifecycleStore: taskQueue,
+    now,
+    awaitingUserNotifier: async () => {
+      throw new Error("desktop unavailable");
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/agent-runs/run_blocked_notify_fail/report`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      status: "blocked",
+      summary: "Need repository credentials.",
+      reason: "missing_credentials",
+      actionRequired: "Reconnect GitHub.",
+      resumeInstructions: "Retry the task after GitHub is connected.",
+    }),
+  });
+
+  assert.equal(response.status, 202, await response.text());
+  assert.equal(agentRunStore.getRun("run_blocked_notify_fail")?.status, "awaiting_user");
+  assert.equal(taskQueue.getRawTask(task.id)?.status, "blocked");
 });
 
 test("POST /agent-runs/{runId}/report requires task lifecycle blocking for blocked reports", async (t) => {

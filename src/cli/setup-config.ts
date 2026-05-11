@@ -49,6 +49,11 @@ export interface SetupConfig {
       path: string;
     };
   };
+  notifications: {
+    desktop: {
+      enabled: boolean;
+    };
+  };
   providers: {
     github: {
       mode: ProviderMode;
@@ -90,6 +95,7 @@ export interface CreateSetupConfigOptions {
   repoAllowlist?: string[];
   defaultBranch?: string;
   markdownExport?: boolean;
+  desktopNotifications?: boolean;
 }
 
 export interface SafetyValidation {
@@ -115,6 +121,7 @@ export function createSetupConfig({
   repoAllowlist,
   defaultBranch,
   markdownExport = false,
+  desktopNotifications = false,
 }: CreateSetupConfigOptions): SetupConfig {
   const repoRoot = path.resolve(cwd, repoPath ?? detectedRepo.repoPath ?? cwd);
   const resolvedServer = resolveServer({
@@ -157,6 +164,11 @@ export function createSetupConfig({
       markdown: {
         enabled: markdownExport,
         path: "notes",
+      },
+    },
+    notifications: {
+      desktop: {
+        enabled: desktopNotifications,
       },
     },
     providers: {
@@ -227,6 +239,10 @@ export function buildInitCommand(config: SetupConfig): string {
 
   if (config.exports.markdown.enabled) {
     parts.push("--markdown-export");
+  }
+
+  if (config.notifications.desktop.enabled) {
+    parts.push("--desktop-notifications");
   }
 
   return parts.join(" ");

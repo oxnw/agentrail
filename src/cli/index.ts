@@ -559,6 +559,12 @@ function parseInitArgs(argv: string[]): InitFlags {
       case "--no-markdown-export":
         flags.markdownExport = false;
         break;
+      case "--desktop-notifications":
+        flags.desktopNotifications = true;
+        break;
+      case "--no-desktop-notifications":
+        flags.desktopNotifications = false;
+        break;
       case "--mode":
         flags.mode = readEnum(nextValue(argv, ++index, arg), ["server"], arg);
         break;
@@ -644,7 +650,8 @@ function writeUsage(output: Writer) {
     "  --repo <path>",
     "  --print-only",
     "  --yes",
-    "  --markdown-export",
+    "  --markdown-export|--no-markdown-export",
+    "  --desktop-notifications|--no-desktop-notifications",
     "  --base-url <url>",
     "  --api-key <key>",
     "  --agent-id <id>",
