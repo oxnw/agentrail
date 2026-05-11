@@ -5,11 +5,11 @@ replace Claude Code, Codex, Cursor, git, GitHub, or CI. It gives the agent one
 compact source of truth for assigned work, submission state, CI status, review
 feedback, events, and ship requests.
 
-This repository is the local and self-managed OSS surface. It should be useful
-without a hosted account. The planned AgentRail Cloud surface is the managed
-team/fleet operations layer: connector operations, durable shared run history
-and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards, support,
-compliance, and hosted reliability. See [Cloud boundary](./cloud.md).
+This repository is the local and self-managed source-available surface. It
+should be useful without a hosted account. The planned AgentRail Cloud surface
+is the managed team/fleet operations layer: connector operations, durable shared
+run history and memory, routing and wakes, SSO/RBAC/SCIM, audit, dashboards,
+support, compliance, and hosted reliability. See [Cloud boundary](./cloud.md).
 
 Use this guide when you are integrating AgentRail into a real agent workflow.
 If you want to bootstrap a local self-hosted setup quickly, start with the
@@ -36,19 +36,20 @@ Keep these processes separate:
 For local evaluation, the AgentRail server and the target repo may be the same
 checkout. In production, they are usually separate: AgentRail runs as shared
 infrastructure, while agents work inside individual project repositories.
-Self-managed OSS can run that shared infrastructure for a small deployment, but
-it is not the same promise as AgentRail Cloud operating the team control plane
-with managed connectors, access control, audit, support, and reliability.
+Self-managed source-available deployments can run that shared infrastructure
+for a small deployment, but it is not the same promise as AgentRail Cloud
+operating the team control plane with managed connectors, access control, audit,
+support, and reliability.
 
 ## Current / Legacy / Planned Capability Labels
 
-This repository mixes working OSS runtime paths with operator contracts for the
-planned control plane. Use these labels when deciding what an integration can
-rely on today:
+This repository mixes working source-available runtime paths with operator
+contracts for the planned control plane. Use these labels when deciding what an
+integration can rely on today:
 
 | Capability | Current live adapter support | Legacy demo note | Planned MVP control-plane behavior |
 | --- | --- | --- | --- |
-| Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the OSS server does not yet run a live provider intake worker. | **Legacy:** The removed demo used a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
+| Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the self-managed server does not yet run a live provider intake worker. | **Legacy:** The removed demo used a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
 | Routing | **Current:** Routing rules, dry-run evaluation, assignment, and audit are implemented as operator/admin contracts; `AGENTRAIL_ROUTING_AUDIT_STORE_PATH` persists decisions and evaluation/intake idempotency replay locally. | **Legacy:** The removed demo skipped routing by starting with a pre-assigned task. | **Planned:** Hosted control-plane deployments evaluate deterministic rules, store `routingReason`, wake the selected agent, and expose managed audit history. |
 | Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented on the default server path. | **Legacy:** Placeholder demo keys are no longer valid on the core runtime. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
 | Local/self-hosted setup | **Current:** `agentrail init` writes local `.agentrail` scaffolding and operator bootstrap state, `agentrail agent create` creates scoped local agent credentials/profile/routing, and `agentrail doctor` verifies health, auth, profile/routing state, and `/tasks/mine` visibility. | **Legacy:** The removed demo runtime used a built-in fixture task instead of explicit task-store configuration. | **Planned:** Hosted setup will wrap the same identity/profile/routing concepts in a managed team onboarding service. |
@@ -62,7 +63,7 @@ rely on today:
 The first routing rule is not created by a worker agent and it is not inferred
 only from GitHub labels.
 
-Current OSS/server model:
+Current source-available server model:
 
 - A trusted operator or setup script first creates the `AgentProfile` for the
   new `agentId`.
@@ -119,7 +120,7 @@ and [operator routing OpenAPI](./api/intake-routing-admin.openapi.yaml)
 contracts. Those endpoints require routing scopes and should not be generated
 into the normal lifecycle SDK used by coding agents.
 
-The OSS repository now exposes this as the primary submit contract:
+The source-available repository now exposes this as the primary submit contract:
 `mode: "adapter_managed"` lets `GitHubSubmitAdapter` create or reuse PRs from
 persisted `task.source` metadata, and the response can include `prUrl`, `prNumber`, and
 whether the PR was created or reused.

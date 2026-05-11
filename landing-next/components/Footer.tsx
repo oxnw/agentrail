@@ -74,7 +74,7 @@ export default function Footer() {
               Product
             </h5>
             {[
-              { label: "OSS", href: "#product" },
+              { label: "Self-hosted", href: "#product" },
               { label: "Cloud waitlist", href: "#cloud-waitlist" },
               { label: "Lifecycle", href: "#lifecycle" },
               { label: "SDK", href: "#sdk" },

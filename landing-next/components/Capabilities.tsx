@@ -161,7 +161,7 @@ export default function Capabilities() {
                   color: "var(--accent)",
                 }}
               >
-                open-source
+                source-available
               </em>{" "}
               backbone.
             </h2>
@@ -175,7 +175,7 @@ export default function Capabilities() {
           >
             AgentRail connects your coding agents to GitHub, Linear, and your CI
             system. Each primitive is a narrow, typed API — run it locally, own
-            your data, extend it freely.
+            your data, adapt it internally.
           </p>
         </div>
 

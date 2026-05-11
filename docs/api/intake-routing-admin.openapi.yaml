@@ -6,8 +6,7 @@ info:
   contact:
     name: AgentRail Engineering
   license:
-    name: Apache 2.0
-    identifier: Apache-2.0
+    name: AgentRail Source-Available License 1.1
   description: |
     Separate operator/admin contract for AgentRail intake routing.
     This API is intentionally not part of the normal agent task lifecycle SDK.
@@ -17,7 +16,7 @@ info:
     assignment side effects in reviewed server code.
 servers:
   - url: http://127.0.0.1:3000
-    description: Local OSS self-hosted server
+    description: Local source-available self-hosted server
   - url: https://api.agentrail.app/v1
     description: Future AgentRail Cloud API
 security:

@@ -1,8 +1,9 @@
 # AgentRail Five-Minute Quick Start
 
-This is the default local/self-hosted onboarding path for the current OSS
-runtime. It is CLI-first: use `agentrail init`, start the local API, create or
-connect a local agent, then use `agentrail doctor` as the success gate.
+This is the default local/self-hosted onboarding path for the current
+source-available runtime. It is CLI-first: use `agentrail init`, start the local
+API, create or connect a local agent, then use `agentrail doctor` as the
+success gate.
 
 This setup path closes the routing setup work described in
 [AGEA-95](/AGEA/issues/AGEA-95) and keeps the integration-doc cleanup from

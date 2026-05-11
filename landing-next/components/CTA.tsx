@@ -85,7 +85,7 @@ export default function CTA() {
             marginTop: "24px",
           }}
         >
-          MIT licensed. One npm install. No account required.
+          Source-available. One npm install. No account required.
         </p>
 
         {/* Install card */}

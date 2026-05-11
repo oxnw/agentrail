@@ -155,11 +155,11 @@ use the same mental model.
 
 Current behavior:
 
-- local OSS routing uses hard constraints plus deterministic rule conditions
+- local source-available routing uses hard constraints plus deterministic rule conditions
   such as repo, labels, project, issue type, and priority;
 - `role`, `capabilityTags`, and `ownershipTags` exist on profiles, but they are
   not yet modeled as a separate soft-scoring phase;
-- local OSS AgentRail no longer uses provider-assignee mapping as a routing
+- local source-available AgentRail no longer uses provider-assignee mapping as a routing
   signal.
 
 Planned behavior:
@@ -237,9 +237,9 @@ ownership changes that happen often: repo-to-agent mappings, label conventions,
 provider assignee mappings, project ownership, issue type defaults, priority
 escalation, and ownership/capability tag mappings.
 
-Config files are allowed only as an import/export path for OSS deployments,
-local demos, and disaster recovery. Importing a config file still creates a
-normal audited rule set revision with `source: config_file_import`.
+Config files are allowed only as an import/export path for source-available
+deployments, local demos, and disaster recovery. Importing a config file still
+creates a normal audited rule set revision with `source: config_file_import`.
 
 Direct in-memory config is limited to tests. Hard-coded production routing data
 is not allowed, except for bootstrap defaults that create an auditable initial
@@ -273,7 +273,8 @@ The mapping is:
 - each AgentRail API key authenticates as exactly one `agentId`, so a worker
   cannot use a key to read tasks assigned to another agent;
 - provider-side assignee data stays in GitHub, Linear, Jira, or GitLab; local
-  OSS AgentRail does not maintain provider-to-agent identity mappings.
+  source-available AgentRail does not maintain provider-to-agent identity
+  mappings.
 
 In short: providers and runtimes are aliases; `agentId` is the routing and task
 ownership key.

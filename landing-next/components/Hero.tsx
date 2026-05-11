@@ -55,7 +55,7 @@ export default function Hero() {
                   flexShrink: 0,
                 }}
               />
-              Now in open beta · MIT licensed
+              Now in open beta · source-available
             </span>
             <span
               style={{
@@ -194,7 +194,7 @@ export default function Hero() {
                   color: "var(--ink-3)",
                 }}
               >
-                <span>npm i @agentrail-core/cli · pip install agentrail · MIT License</span>
+                <span>npm i @agentrail-core/cli · pip install agentrail · Source-available license</span>
               </div>
             </div>
 
@@ -487,8 +487,8 @@ export default function Hero() {
           }}
         >
           {[
-            { glyph: "◆", text: "open source" },
-            { glyph: "◇", text: "MIT license" },
+            { glyph: "◆", text: "source-available" },
+            { glyph: "◇", text: "custom license" },
             { glyph: "◆", text: "GitHub + Linear intake" },
             { glyph: "◇", text: "GitHub Actions + CircleCI" },
             { glyph: "◆", text: "rules-based routing" },
@@ -498,8 +498,8 @@ export default function Hero() {
             { glyph: "◆", text: "TypeScript + Python SDK" },
             { glyph: "◇", text: "runs locally · bring your own keys" },
             // Duplicate for seamless loop
-            { glyph: "◆", text: "open source" },
-            { glyph: "◇", text: "MIT license" },
+            { glyph: "◆", text: "source-available" },
+            { glyph: "◇", text: "custom license" },
             { glyph: "◆", text: "GitHub + Linear intake" },
             { glyph: "◇", text: "GitHub Actions + CircleCI" },
             { glyph: "◆", text: "rules-based routing" },

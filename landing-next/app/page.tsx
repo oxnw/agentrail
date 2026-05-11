@@ -91,7 +91,7 @@ export default function Home() {
                   maxWidth: "540px",
                 }}
               >
-                The open-source package separates what ships now from planned
+                The source-available package separates what ships now from planned
                 managed features. Cloud roadmap items are waitlist-only until the
                 hosted service is ready.
               </p>
@@ -108,8 +108,8 @@ export default function Home() {
               {[
                 {
                   word: "Today",
-                  desc: "GitHub, Linear, CircleCI, and GitHub Actions integrations ship in the open-source package. Install and run in minutes.",
-                  src: "OSS package",
+                  desc: "GitHub, Linear, CircleCI, and GitHub Actions integrations ship in the source-available package. Install and run in minutes.",
+                  src: "Source-available package",
                 },
                 {
                   word: "Typed",
@@ -119,7 +119,7 @@ export default function Home() {
                 {
                   word: "Scoped",
                   desc: "Per-agent API keys with narrow scopes replace org-wide PATs. Each agent sees only what its tasks require.",
-                  src: "OSS credential model",
+                  src: "Source-available credential model",
                 },
                 {
                   word: null,

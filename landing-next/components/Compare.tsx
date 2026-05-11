@@ -226,7 +226,7 @@ export default function Compare() {
                   color: "var(--accent)",
                 }}
               >
-                06 / OSS vs Cloud waitlist
+                06 / Source-available vs Cloud waitlist
               </span>
             </div>
             <h2
@@ -255,7 +255,7 @@ export default function Compare() {
             </h2>
           </div>
           <p style={{ fontSize: "17px", color: "var(--ink-2)", maxWidth: "540px" }}>
-            Everything you need to run coding agents ships in the open-source
+            Everything you need to run coding agents ships in the source-available
             package. Cloud team features are on the roadmap and waitlist-gated
             until the managed service is ready.
           </p>
@@ -303,7 +303,7 @@ export default function Compare() {
                 color: "var(--accent)",
               }}
             >
-              OSS (free, MIT)
+              Source-available
             </div>
             <div
               style={{
@@ -435,7 +435,7 @@ export default function Compare() {
               }}
             >
               Join the list for hosted sync, team memory, managed integrations,
-              and compliance workflow updates. The open-source package is ready
+              and compliance workflow updates. The source-available package is ready
               to install today.
             </p>
           </div>

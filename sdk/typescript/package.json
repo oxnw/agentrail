@@ -26,7 +26,7 @@
     "agent",
     "task-lifecycle"
   ],
-  "license": "Apache-2.0",
+  "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
     "node": ">=18.0.0"
   },

@@ -11,7 +11,7 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": ["agentrail", "agent", "sdk", "task-lifecycle"],
-  "license": "ISC",
+  "license": "SEE LICENSE IN ../../../LICENSE",
   "type": "commonjs",
   "devDependencies": {
     "@types/node": "^25.6.0",

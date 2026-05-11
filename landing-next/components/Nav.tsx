@@ -88,7 +88,7 @@ export default function Nav() {
         {/* Center: Nav links */}
         <nav className="hidden md:flex items-center gap-7">
           {[
-            { label: "OSS", href: "#product" },
+            { label: "Self-hosted", href: "#product" },
             { label: "Docs", href: "/docs" },
             { label: "GitHub", href: "https://github.com/oxnw/agentrail" },
           ].map((link) => (
