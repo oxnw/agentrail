@@ -22,6 +22,7 @@ function makeTask(partial: Partial<TaskRecord> & { id: string }): TaskRecord {
     submissions: partial.submissions ?? [],
     latestSubmissionId: partial.latestSubmissionId ?? null,
     ciStatus: partial.ciStatus ?? null,
+    blocker: partial.blocker ?? null,
     reviewOutcome: partial.reviewOutcome ?? null,
     shipOperation: partial.shipOperation ?? null,
     rollbackOperation: partial.rollbackOperation ?? null,

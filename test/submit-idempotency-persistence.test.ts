@@ -30,6 +30,7 @@ function makeTask(partial: Partial<Omit<TaskRecord, "id">> & { identifier: strin
     submissions: partial.submissions ?? [],
     latestSubmissionId: partial.latestSubmissionId ?? null,
     ciStatus: partial.ciStatus ?? null,
+    blocker: partial.blocker ?? null,
     reviewOutcome: partial.reviewOutcome ?? null,
     shipOperation: partial.shipOperation ?? null,
     rollbackOperation: partial.rollbackOperation ?? null,

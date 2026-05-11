@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
-import { TaskStore, type CiOverallStatus, type TaskCiState, type TaskRecord } from "./task-store.ts";
+import { TaskStore, type CiOverallStatus, type TaskBlocker, type TaskCiState, type TaskRecord } from "./task-store.ts";
 import type { TaskEventStore } from "./task-event-store.ts";
 import { getLatestTaskSubmission } from "./task-source-resolution.ts";
 import { mergeTaskSource, validateTaskSourceRepairRequest, type TaskSourceRepairRequest } from "./task-source-repair.ts";
@@ -56,6 +56,7 @@ function toTaskDetail(task: TaskRecord) {
     baseBranch: latestSubmission?.baseBranch ?? task.source?.baseBranch ?? null,
     headSha: latestSubmission?.headSha ?? task.source?.headSha ?? null,
     availableActions: task.availableActions,
+    blocker: task.blocker ?? null,
     assigneeAgentId: hasStoredAssigneeAgentId ? task.assigneeAgentId ?? null : task.assignee.id,
     triageQueueId: task.triageQueueId ?? null,
     assignmentSource: task.assignmentSource ?? null,
@@ -95,6 +96,17 @@ function canStartTask(task: TaskRecord): boolean {
 
 function canShipTask(task: TaskRecord): boolean {
   return task.status === "in_review" && task.availableActions.includes("ship");
+}
+
+function requireNonEmptyStringField(payload: Record<string, unknown>, field: string): string {
+  const value = payload[field];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TaskLifecycleError(400, "validation_error", `${field} must be a non-empty string.`, {
+      field,
+      availableActions: ["retry"],
+    });
+  }
+  return value.trim();
 }
 
 export class AgentTaskQueue {
@@ -240,6 +252,235 @@ export class AgentTaskQueue {
       }
       throw error;
     }
+    this.store.setIdempotencyEntry(key, { fingerprint, response: structuredClone(response) });
+    return response;
+  }
+
+  async blockTaskAwaitingUser(
+    taskId: string,
+    payload: unknown,
+    idempotencyKey: string | undefined,
+    sourceAgentId: string | null | undefined,
+  ) {
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    const payloadObject = asObject(payload);
+    if (!payloadObject) {
+      throw new TaskLifecycleError(400, "validation_error", "Blocker payload must be a JSON object.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    const sourceRunId = requireNonEmptyStringField(payloadObject, "sourceRunId");
+    const resolvedSourceAgentId = requireNonEmptyStringField(payloadObject, "sourceAgentId");
+    const authenticatedSourceAgentId = typeof sourceAgentId === "string" && sourceAgentId.trim().length > 0
+      ? sourceAgentId.trim()
+      : null;
+    if (authenticatedSourceAgentId && authenticatedSourceAgentId !== resolvedSourceAgentId) {
+      throw new TaskLifecycleError(403, "forbidden", "Task blocker sourceAgentId must match the authenticated agent.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+    const reason = requireNonEmptyStringField(payloadObject, "reason");
+    const actionRequired = requireNonEmptyStringField(payloadObject, "actionRequired");
+    const resumeInstructions = requireNonEmptyStringField(payloadObject, "resumeInstructions");
+
+    const key = `block-task-awaiting-user:${idempotencyKey}`;
+    const fingerprint = JSON.stringify({ taskId, sourceRunId, sourceAgentId: resolvedSourceAgentId, reason, actionRequired, resumeInstructions });
+    const prior = this.store.getIdempotencyEntry(key);
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) {
+        throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different blocker payload.", {
+          idempotencyKey,
+          availableActions: ["retry"],
+        });
+      }
+      return structuredClone(prior.response);
+    }
+
+    const existing = this.store.getTask(taskId);
+    if (!existing) {
+      throw new TaskLifecycleError(404, "not_found", "Task not found.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+
+    const assigneeAgentId = canonicalAssigneeAgentId(existing);
+    if (resolvedSourceAgentId && assigneeAgentId && assigneeAgentId !== resolvedSourceAgentId) {
+      throw new TaskLifecycleError(403, "forbidden", "Task is not assigned to this agent.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+    if (existing.status !== "in_progress") {
+      throw new TaskLifecycleError(409, "conflict", "Task is not in a blockable state.", {
+        currentStatus: existing.status,
+        availableActions: existing.availableActions,
+      });
+    }
+
+    const blocker: TaskBlocker = {
+      kind: "awaiting_user",
+      sourceRunId,
+      sourceAgentId: resolvedSourceAgentId,
+      reason,
+      actionRequired,
+      resumeInstructions,
+      createdAt: this.now().toISOString(),
+    };
+
+    const updated = this.store.updateTask(taskId, {
+      status: "blocked",
+      availableActions: ["resolve_blocker"],
+      blocker,
+      updatedAt: this.now().toISOString(),
+    });
+    if (!updated) {
+      throw new TaskLifecycleError(500, "internal_error", "Failed to block task.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    const response = {
+      data: toTaskDetail(updated),
+      availableActions: updated.availableActions,
+      meta: {
+        tokenBudgetHint: "standard",
+        truncatedFields: [],
+      },
+    };
+
+    try {
+      await this.appendTaskEvent("task.updated", updated, {
+        status: updated.status,
+        previousStatus: existing.status,
+        changedFields: ["status", "availableActions", "blocker", "updatedAt"],
+        actor: { id: resolvedSourceAgentId, role: "agent" },
+        summary: "Task blocked awaiting user input.",
+        availableActions: updated.availableActions,
+        blocker: updated.blocker,
+      });
+    } catch (error) {
+      try {
+        this.store.upsertTask(existing);
+      } catch (rollbackError) {
+        logNarrative({
+          title: "Task Blocker Rollback Failed",
+          message: `Failed to restore task ${taskId} after task event append failed.`,
+          operation: "task_blocker_rollback_failed",
+          taskId,
+          details: {
+            error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          },
+        });
+      }
+      throw error;
+    }
+
+    this.store.setIdempotencyEntry(key, { fingerprint, response: structuredClone(response) });
+    return response;
+  }
+
+  async resolveBlocker(
+    taskId: string,
+    payload: unknown,
+    idempotencyKey: string | undefined,
+    actorId: string | null | undefined,
+    actorRole = "system",
+  ) {
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    const payloadObject = asObject(payload);
+    if (!payloadObject) {
+      throw new TaskLifecycleError(400, "validation_error", "Resolution payload must be a JSON object.", {
+        availableActions: ["retry"],
+      });
+    }
+    const resolutionSummary = requireNonEmptyStringField(payloadObject, "resolutionSummary");
+
+    const key = `resolve-task-blocker:${idempotencyKey}`;
+    const fingerprint = JSON.stringify({ taskId, resolutionSummary, actorId: actorId ?? null, actorRole });
+    const prior = this.store.getIdempotencyEntry(key);
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) {
+        throw new TaskLifecycleError(409, "conflict", "Idempotency-Key has already been used with a different blocker resolution payload.", {
+          idempotencyKey,
+          availableActions: ["retry"],
+        });
+      }
+      return structuredClone(prior.response);
+    }
+
+    const existing = this.store.getTask(taskId);
+    if (!existing) {
+      throw new TaskLifecycleError(404, "not_found", "Task not found.", {
+        availableActions: ["list_my_tasks"],
+      });
+    }
+
+    if (existing.status !== "blocked" || existing.blocker?.kind !== "awaiting_user") {
+      throw new TaskLifecycleError(409, "conflict", "Task does not have an awaiting-user blocker to resolve.", {
+        currentStatus: existing.status,
+        availableActions: existing.availableActions,
+      });
+    }
+
+    const updated = this.store.updateTask(taskId, {
+      status: "todo",
+      availableActions: ["start"],
+      blocker: null,
+      updatedAt: this.now().toISOString(),
+    });
+    if (!updated) {
+      throw new TaskLifecycleError(500, "internal_error", "Failed to resolve task blocker.", {
+        availableActions: ["retry"],
+      });
+    }
+
+    const response = {
+      data: toTaskDetail(updated),
+      availableActions: updated.availableActions,
+      meta: {
+        tokenBudgetHint: "standard",
+        truncatedFields: [],
+      },
+    };
+
+    try {
+      await this.appendTaskEvent("task.updated", updated, {
+        status: updated.status,
+        previousStatus: existing.status,
+        changedFields: ["status", "availableActions", "blocker", "updatedAt"],
+        actor: { id: actorId ?? "system", role: actorRole },
+        summary: "Task blocker resolved.",
+        resolutionSummary,
+        availableActions: updated.availableActions,
+        blocker: null,
+      });
+    } catch (error) {
+      try {
+        this.store.upsertTask(existing);
+      } catch (rollbackError) {
+        logNarrative({
+          title: "Task Blocker Resolve Rollback Failed",
+          message: `Failed to restore task ${taskId} after task blocker event append failed.`,
+          operation: "task_blocker_resolve_rollback_failed",
+          taskId,
+          details: {
+            error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          },
+        });
+      }
+      throw error;
+    }
+
     this.store.setIdempotencyEntry(key, { fingerprint, response: structuredClone(response) });
     return response;
   }

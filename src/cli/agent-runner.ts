@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { AgentRunStore, type AgentRunRecord, type AgentRunStatus } from "../agent-run-store.ts";
+import { AgentRunStore, type AgentRunRecord, type AgentRunReportInput, type AgentRunStatus } from "../agent-run-store.ts";
 import { parseSimpleEnv } from "../env-file.ts";
 import {
   currentAgentEnvPathForHome,
@@ -73,6 +73,9 @@ interface AgentReportFlags {
   runId?: string;
   status?: "progress" | "blocked" | "completed";
   summary?: string;
+  reason?: string;
+  actionRequired?: string;
+  resumeInstructions?: string;
   handoffFile?: string;
   json?: boolean;
 }
@@ -152,6 +155,7 @@ type RunnerHandoff =
       summary: string;
       reason: string;
       actionRequired: string;
+      resumeInstructions: string;
     };
 
 interface JsonEnvelope<T> {
@@ -271,6 +275,12 @@ export async function runAgentReport(argv: string[], options: Pick<RunAgentRunne
     options.stderr.write("agentrail agent report requires --summary.\n");
     return 1;
   }
+  const blockedMetadata = status === "blocked"
+    ? validateBlockedReportFlags(flags, options.stderr)
+    : null;
+  if (blockedMetadata === false) {
+    return 1;
+  }
 
   const handoffFile = flags.handoffFile ?? (status === "completed" ? envValues.AGENTRAIL_HANDOFF_PATH : undefined);
   const handoffResult = await readReportHandoffFile({
@@ -290,6 +300,7 @@ export async function runAgentReport(argv: string[], options: Pick<RunAgentRunne
       runId,
       status,
       summary,
+      blockedMetadata,
       handoff,
     });
     if (flags.json) {
@@ -317,6 +328,7 @@ export async function runAgentReport(argv: string[], options: Pick<RunAgentRunne
     body: {
       status,
       summary,
+      ...(blockedMetadata ? blockedMetadata : {}),
       ...(handoff !== undefined ? { handoff } : {}),
     },
   });
@@ -359,6 +371,7 @@ async function writeLocalRunReport({
   runId,
   status,
   summary,
+  blockedMetadata,
   handoff,
 }: {
   cwd: string;
@@ -366,6 +379,7 @@ async function writeLocalRunReport({
   runId: string;
   status: "progress" | "blocked" | "completed";
   summary: string;
+  blockedMetadata: BlockedReportMetadata | null;
   handoff: unknown;
 }): Promise<void> {
   const resolvedReportPath = path.resolve(cwd, reportPath);
@@ -377,6 +391,7 @@ async function writeLocalRunReport({
       runId,
       status,
       summary,
+      ...(blockedMetadata ? blockedMetadata : {}),
       ...(handoff !== undefined ? { handoff } : {}),
     })}\n`,
     "utf8",
@@ -643,6 +658,7 @@ async function executeSingleTaskRun({
       task,
       result,
       repo,
+      agentId,
       runId,
       runDir,
       handoffPath,
@@ -659,7 +675,7 @@ async function executeSingleTaskRun({
       status: finalResult.status,
       exitCode: finalResult.exitCode,
       summary: finalResult.summary,
-      finishedAt: ["failed", "succeeded", "cancelled", "waiting_for_human"].includes(finalResult.status) ? now().toISOString() : null,
+      finishedAt: ["failed", "succeeded", "cancelled", "awaiting_user"].includes(finalResult.status) ? now().toISOString() : null,
     });
     if (!completed) {
       throw new Error(`Agent run ${runId} disappeared after launch.`);
@@ -688,6 +704,7 @@ async function processRunnerHandoff({
   task,
   result,
   repo,
+  agentId,
   runId,
   runDir,
   handoffPath,
@@ -703,6 +720,7 @@ async function processRunnerHandoff({
   task: TaskDetail;
   result: LaunchRunnerResult;
   repo: ConnectedRepo;
+  agentId: string;
   runId: string;
   runDir: string;
   handoffPath: string;
@@ -719,8 +737,18 @@ async function processRunnerHandoff({
   const reportedRun = runStore.getRun(runId);
   const latestReport = reportedRun?.reports[reportedRun.reports.length - 1] ?? null;
   if (!reportedRun?.reportedHandoff && latestReport?.status === "blocked") {
+    const blocker = blockedMetadataFromRun(reportedRun, latestReport.summary);
+    await blockTaskAwaitingUser({
+      baseUrl,
+      apiKey,
+      fetchImpl,
+      taskId: task.id,
+      runId,
+      agentId,
+      blocker,
+    });
     return {
-      status: "waiting_for_human",
+      status: "awaiting_user",
       exitCode: result.exitCode,
       summary: latestReport.summary,
     };
@@ -733,10 +761,23 @@ async function processRunnerHandoff({
       reportedHandoff: reportedRun.reportedHandoff,
     });
     if (reportedHandoff.target === "user") {
+      await blockTaskAwaitingUser({
+        baseUrl,
+        apiKey,
+        fetchImpl,
+        taskId: task.id,
+        runId,
+        agentId,
+        blocker: {
+          reason: reportedHandoff.reason,
+          actionRequired: reportedHandoff.actionRequired,
+          resumeInstructions: reportedHandoff.resumeInstructions,
+        },
+      });
       return {
-        status: "waiting_for_human",
+        status: "awaiting_user",
         exitCode: result.exitCode,
-        summary: `${reportedHandoff.reason}: ${reportedHandoff.actionRequired}`,
+        summary: reportedHandoff.summary,
       };
     }
     if (result.status !== "succeeded") {
@@ -759,6 +800,37 @@ async function processRunnerHandoff({
     });
   }
 
+  if (result.status === "awaiting_user") {
+    const summary = result.summary ?? "Runner is waiting for manual continuation.";
+    const blocker = {
+      reason: "manual_runner_continuation",
+      actionRequired: "Continue the task in the external runner.",
+      resumeInstructions: "After the manual work is complete, report completion or resolve the blocker to start a fresh run.",
+    };
+    const updated = runStore.reportRun(runId, {
+      status: "blocked",
+      summary,
+      ...blocker,
+    });
+    if (!updated) {
+      throw new Error(`Agent run ${runId} disappeared while recording manual continuation.`);
+    }
+    await blockTaskAwaitingUser({
+      baseUrl,
+      apiKey,
+      fetchImpl,
+      taskId: task.id,
+      runId,
+      agentId,
+      blocker,
+    });
+    return {
+      status: "awaiting_user",
+      exitCode: result.exitCode,
+      summary,
+    };
+  }
+
   if (result.status !== "succeeded") {
     return result;
   }
@@ -769,10 +841,23 @@ async function processRunnerHandoff({
     reportedHandoff: null,
   });
   if (handoff.target === "user") {
+    await blockTaskAwaitingUser({
+      baseUrl,
+      apiKey,
+      fetchImpl,
+      taskId: task.id,
+      runId,
+      agentId,
+      blocker: {
+        reason: handoff.reason,
+        actionRequired: handoff.actionRequired,
+        resumeInstructions: handoff.resumeInstructions,
+      },
+    });
     return {
-      status: "waiting_for_human",
+      status: "awaiting_user",
       exitCode: result.exitCode,
-      summary: `${handoff.reason}: ${handoff.actionRequired}`,
+      summary: handoff.summary,
     };
   }
 
@@ -912,11 +997,7 @@ function validateLocalRunReport(
   value: unknown,
   expectedRunId: string,
   lineNumber: number,
-): {
-  status: "progress" | "blocked" | "completed";
-  summary: string;
-  handoff?: Record<string, unknown> | null;
-} {
+): AgentRunReportInput {
   if (!isRecord(value)) {
     throw new Error(`Runner report line ${lineNumber} must be a JSON object.`);
   }
@@ -931,6 +1012,13 @@ function validateLocalRunReport(
     throw new Error(`Runner report line ${lineNumber} status must be progress, blocked, or completed.`);
   }
   const summary = requiredReportString(value.summary, lineNumber, "summary");
+  const blockedMetadata = status === "blocked"
+    ? {
+      reason: requiredReportString(value.reason, lineNumber, "reason"),
+      actionRequired: requiredReportString(value.actionRequired, lineNumber, "actionRequired"),
+      resumeInstructions: requiredReportString(value.resumeInstructions, lineNumber, "resumeInstructions"),
+    }
+    : null;
   const handoff = value.handoff;
   let normalizedHandoff: Record<string, unknown> | null | undefined;
   if (handoff === undefined) {
@@ -942,11 +1030,21 @@ function validateLocalRunReport(
   } else {
     throw new Error(`Runner report line ${lineNumber} handoff must be an object or null.`);
   }
-  return {
-    status,
-    summary,
-    ...(normalizedHandoff !== undefined ? { handoff: normalizedHandoff } : {}),
-  };
+  const report: AgentRunReportInput = status === "blocked"
+    ? {
+      status,
+      summary,
+      reason: blockedMetadata.reason,
+      actionRequired: blockedMetadata.actionRequired,
+      resumeInstructions: blockedMetadata.resumeInstructions,
+      ...(normalizedHandoff !== undefined ? { handoff: normalizedHandoff } : {}),
+    }
+    : {
+      status,
+      summary,
+      ...(normalizedHandoff !== undefined ? { handoff: normalizedHandoff } : {}),
+    };
+  return report;
 }
 
 function requiredReportString(value: unknown, lineNumber: number, fieldName: string): string {
@@ -997,6 +1095,7 @@ async function validateRunnerHandoff(value: unknown, worktreePath: string): Prom
       summary: requiredString(value.summary, "summary"),
       reason: requiredString(value.reason, "reason"),
       actionRequired: requiredString(value.actionRequired, "actionRequired"),
+      resumeInstructions: requiredString(value.resumeInstructions, "resumeInstructions"),
     };
   }
   if (value.target === "agentrail") {
@@ -1171,6 +1270,74 @@ async function submitTask({
   });
 }
 
+interface BlockedReportMetadata {
+  reason: string;
+  actionRequired: string;
+  resumeInstructions: string;
+}
+
+function validateBlockedReportFlags(flags: AgentReportFlags, stderr: Writer): BlockedReportMetadata | false {
+  const missing = [
+    ["--reason", flags.reason],
+    ["--action-required", flags.actionRequired],
+    ["--resume-instructions", flags.resumeInstructions],
+  ].filter(([, value]) => typeof value !== "string" || value.trim().length === 0).map(([flag]) => flag);
+  if (missing.length > 0) {
+    stderr.write(`agentrail agent report --status blocked requires ${missing.join(", ")}.\n`);
+    return false;
+  }
+  return {
+    reason: flags.reason!.trim(),
+    actionRequired: flags.actionRequired!.trim(),
+    resumeInstructions: flags.resumeInstructions!.trim(),
+  };
+}
+
+function blockedMetadataFromRun(run: AgentRunRecord, summary: string): BlockedReportMetadata {
+  if (run.userAction) {
+    return {
+      reason: run.userAction.reason,
+      actionRequired: run.userAction.actionRequired,
+      resumeInstructions: run.userAction.resumeInstructions,
+    };
+  }
+  throw new Error(`Blocked report for run ${run.runId} is missing structured user-action metadata: ${summary}`);
+}
+
+async function blockTaskAwaitingUser({
+  baseUrl,
+  apiKey,
+  fetchImpl,
+  taskId,
+  runId,
+  agentId,
+  blocker,
+}: {
+  baseUrl: string;
+  apiKey: string;
+  fetchImpl: typeof globalThis.fetch;
+  taskId: string;
+  runId: string;
+  agentId: string;
+  blocker: BlockedReportMetadata;
+}): Promise<unknown> {
+  return await fetchJson<JsonEnvelope<unknown>>({
+    baseUrl,
+    route: `/tasks/${taskId}/blocker`,
+    apiKey,
+    fetchImpl,
+    method: "POST",
+    body: {
+      sourceRunId: runId,
+      sourceAgentId: agentId,
+      reason: blocker.reason,
+      actionRequired: blocker.actionRequired,
+      resumeInstructions: blocker.resumeInstructions,
+    },
+    idempotencyKey: `agent-run-blocker:${runId}`,
+  });
+}
+
 async function fetchJson<T>({
   baseUrl,
   route,
@@ -1302,13 +1469,13 @@ function buildPrompt({
     `Do not edit AGENTS.md, CLAUDE.md, AgentRail recipe files, or other instruction/config files unless the task explicitly requires it.`,
     `Do not hand-roll AgentRail API calls, push branches, or create pull requests directly; use agentrail agent report for status updates.`,
     `Report meaningful progress with: agentrail agent report --status progress --summary "short update".`,
-    `If blocked by missing credentials, provider access, sandbox limits, or validation failures, report: agentrail agent report --status blocked --summary "what user action is needed".`,
+    `If blocked by missing credentials, provider access, sandbox limits, or validation failures, report: agentrail agent report --status blocked --summary "what user action is needed" --reason "short reason" --action-required "what the user must do" --resume-instructions "how to continue after the user acts".`,
     `For any blocker, also write a target "user" handoff file; if the report command fails, the handoff file is AgentRail's recovery path.`,
     `When the work is ready, commit locally and write the handoff JSON file at the handoff path.`,
     `After writing the handoff file, report completion with: agentrail agent report --status completed --summary "short completion summary" --handoff-file "$AGENTRAIL_HANDOFF_PATH".`,
     `Use target "agentrail" when AgentRail should publish the commit, or target "user" when user action is required.`,
     `AgentRail handoff shape: {"version":1,"target":"agentrail","summary":"...","commitSha":"...","checks":[],"artifacts":[]}.`,
-    `User handoff shape: {"version":1,"target":"user","summary":"...","reason":"...","actionRequired":"..."}.`,
+    `User handoff shape: {"version":1,"target":"user","summary":"...","reason":"...","actionRequired":"...","resumeInstructions":"..."}.`,
     `Do not expose secrets in output.`,
   ].filter(Boolean).join("\n");
 }
@@ -1416,7 +1583,7 @@ async function defaultLaunchRunner(params: LaunchRunnerParams): Promise<LaunchRu
       });
       child.unref();
       return {
-        status: "waiting_for_human",
+        status: "awaiting_user",
         exitCode: null,
         summary: "Opened Cursor for manual continuation.",
       };
@@ -1693,6 +1860,15 @@ function parseAgentReportArgs(argv: string[]): AgentReportFlags {
       case "--summary":
         flags.summary = nextValue(argv, ++index, arg);
         break;
+      case "--reason":
+        flags.reason = nextValue(argv, ++index, arg);
+        break;
+      case "--action-required":
+        flags.actionRequired = nextValue(argv, ++index, arg);
+        break;
+      case "--resume-instructions":
+        flags.resumeInstructions = nextValue(argv, ++index, arg);
+        break;
       case "--handoff-file":
         flags.handoffFile = nextValue(argv, ++index, arg);
         break;
@@ -1809,6 +1985,10 @@ function renderAgentReportUsage(): string {
     "",
     "Flags:",
     "  --run-id <run_...>        Defaults to AGENTRAIL_RUN_ID.",
+    "  --reason <text>           Required with --status blocked.",
+    "  --action-required <text>  Required with --status blocked.",
+    "  --resume-instructions <text>",
+    "                            Required with --status blocked.",
     "  --handoff-file <path>     Include a handoff JSON payload.",
     "  --json",
     "",
