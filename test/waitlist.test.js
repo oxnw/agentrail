@@ -1,6 +1,6 @@
 // @ts-nocheck
 import http from "node:http";
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { WaitlistStore, WaitlistValidationError } from "../src/waitlist-store.ts";
 import { createServer } from "../src/app.ts";
@@ -115,6 +115,116 @@ describe("POST /waitlist endpoint", () => {
     const text = await res.text();
     assert.ok(text.includes("AgentRail"));
     assert.ok(text.includes("waitlist"));
+  });
+});
+
+describe("POST /waitlist Loops tracking", () => {
+  let agentRailServer;
+  let baseUrl;
+  let loopsServer;
+  let loopsBaseUrl;
+  let loopsStatusCode;
+  let loopsRequests;
+
+  before(async () => {
+    const { TaskEventStore } = await import("../src/task-event-store.ts");
+
+    loopsServer = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        loopsRequests.push({
+          method: req.method,
+          url: req.url,
+          headers: req.headers,
+          body: body.length > 0 ? JSON.parse(body) : null
+        });
+        res.writeHead(loopsStatusCode, { "content-type": "application/json" });
+        res.end(JSON.stringify(
+          loopsStatusCode >= 200 && loopsStatusCode < 300
+            ? { success: true, id: "loops_contact_123" }
+            : { success: false, message: "Loops rejected the contact" }
+        ));
+      });
+    });
+    await new Promise((resolve) => loopsServer.listen(0, "127.0.0.1", resolve));
+    loopsBaseUrl = `http://127.0.0.1:${loopsServer.address().port}/api`;
+
+    agentRailServer = createServer({
+      store: new TaskEventStore(),
+      loopsApiKey: "loops_test_key",
+      loopsWaitlistMailingListId: "loops_waitlist_list",
+      loopsApiBaseUrl: loopsBaseUrl
+    });
+    await new Promise((resolve) => agentRailServer.listen(0, "127.0.0.1", resolve));
+    baseUrl = `http://127.0.0.1:${agentRailServer.address().port}`;
+  });
+
+  beforeEach(() => {
+    loopsStatusCode = 200;
+    loopsRequests = [];
+  });
+
+  after(async () => {
+    await new Promise((resolve) => agentRailServer.close(resolve));
+    await new Promise((resolve) => loopsServer.close(resolve));
+  });
+
+  it("upserts waitlist signups into Loops", async () => {
+    const res = await fetch(`${baseUrl}/waitlist`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "LoopsUser@Example.COM",
+        name: "Ada Lovelace",
+        teamName: "Analytical Engines",
+        teamSize: 3,
+        agentFramework: "Codex",
+        message: "We want hosted coordination."
+      })
+    });
+
+    assert.equal(res.status, 201);
+    assert.equal(loopsRequests.length, 1);
+    assert.equal(loopsRequests[0].method, "PUT");
+    assert.equal(loopsRequests[0].url, "/api/v1/contacts/update");
+    assert.equal(loopsRequests[0].headers.authorization, "Bearer loops_test_key");
+    assert.equal(loopsRequests[0].body.email, "loopsuser@example.com");
+    assert.equal(loopsRequests[0].body.firstName, "Ada");
+    assert.equal(loopsRequests[0].body.lastName, "Lovelace");
+    assert.equal(loopsRequests[0].body.source, "AgentRail waitlist");
+    assert.equal(loopsRequests[0].body.agentrailWaitlist, true);
+    assert.equal(loopsRequests[0].body.teamName, "Analytical Engines");
+    assert.equal(loopsRequests[0].body.teamSize, 3);
+    assert.equal(loopsRequests[0].body.agentFramework, "Codex");
+    assert.equal(loopsRequests[0].body.message, "We want hosted coordination.");
+    assert.deepEqual(loopsRequests[0].body.mailingLists, { loops_waitlist_list: true });
+    assert.equal(Object.hasOwn(loopsRequests[0].body, "subscribed"), false);
+  });
+
+  it("returns 502 when configured Loops tracking fails", async () => {
+    loopsStatusCode = 500;
+
+    const res = await fetch(`${baseUrl}/waitlist`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "loops-failure@example.com" })
+    });
+
+    assert.equal(res.status, 502);
+    const body = await res.json();
+    assert.equal(body.error.code, "waitlist_tracking_failed");
+
+    loopsStatusCode = 200;
+    const retry = await fetch(`${baseUrl}/waitlist`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "loops-failure@example.com" })
+    });
+    assert.equal(retry.status, 200);
+    assert.equal(loopsRequests.length, 2);
   });
 });
 

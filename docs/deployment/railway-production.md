@@ -45,15 +45,17 @@ Set these Railway service variables before the first production cut:
 | `AGENTRAIL_PUBLIC_BASE_URL` | `https://api.agentrail.app/v1` | Keeps generated links and SDK examples aligned with Cloud |
 | `AGENTRAIL_LOG_FORMAT` | `json` | Structured logs for incident response |
 | `AGENTRAIL_OBSERVABILITY` | `true` | Emit request-level observability lines |
-| `BREVO_API_KEY` | secret | Waitlist email delivery |
-| `BREVO_FROM_EMAIL` | `waitlist@agentrail.app` | Verified sender |
-| `BREVO_FROM_NAME` | `AgentRail` | Stable sender identity |
+| `LOOPS_API_KEY` | secret | Durable waitlist contact tracking |
+| `LOOPS_WAITLIST_MAILING_LIST_ID` | Loops list ID | Add signups to the Cloud waitlist list |
 
 Optional production variables:
 
 - `GITHUB_TOKEN` if live GitHub-backed task sources are enabled
 - `CIRCLECI_TOKEN` and `CIRCLECI_WEBHOOK_SECRET` if CircleCI status is enabled
 - `AGENTRAIL_EVENT_STORE_PATH` only if persistent local event storage is added later
+- `BREVO_API_KEY`, `SENDGRID_API_KEY`, or `RESEND_API_KEY` only if waitlist
+  confirmation emails are deliberately re-enabled. The current launch path
+  tracks signups in Loops and shows on-page confirmation only.
 
 ## DNS Plan
 

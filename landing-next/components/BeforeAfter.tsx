@@ -12,6 +12,14 @@ function isoProject(x: number, y: number, z = 0): [number, number] {
 
 type Pt = [number, number];
 
+function fmt(value: number, digits = 3): string {
+  return value.toFixed(digits);
+}
+
+function svgPathPoint([x, y]: Pt): string {
+  return `${fmt(x)} ${fmt(y)}`;
+}
+
 function boxVerts(ox: number, oy: number, w: number, d: number, h: number, unit: number) {
   const pt = (x: number, y: number, z: number): Pt => {
     const [sx, sy] = isoProject(x, y, z);
@@ -246,7 +254,7 @@ function ChaosLine({ from, to, seed = 0, animate, intensity = 1 }: { from: Pt; t
   const dx = to[0]-from[0], dy = to[1]-from[1];
   const c1: Pt = [from[0]+dx*0.25+(r(seed+1)-0.5)*220*intensity, from[1]+dy*0.25+(r(seed+2)-0.5)*80*intensity];
   const c2: Pt = [from[0]+dx*0.75+(r(seed+3)-0.5)*220*intensity, from[1]+dy*0.75+(r(seed+4)-0.5)*80*intensity];
-  const path = `M ${from[0]} ${from[1]} C ${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${to[0]} ${to[1]}`;
+  const path = `M ${svgPathPoint(from)} C ${svgPathPoint(c1)} ${svgPathPoint(c2)} ${svgPathPoint(to)}`;
   const a = Math.atan2(to[1]-c2[1], to[0]-c2[0]);
   const sz = 5;
   const arrowPts = polyStr([to, [to[0]-Math.cos(a-0.5)*sz, to[1]-Math.sin(a-0.5)*sz], [to[0]-Math.cos(a+0.5)*sz, to[1]-Math.sin(a+0.5)*sz]]);
@@ -255,7 +263,7 @@ function ChaosLine({ from, to, seed = 0, animate, intensity = 1 }: { from: Pt; t
     <g>
       <path d={path} fill="none" stroke="#e8741f" strokeOpacity={0.18} strokeWidth={5} strokeLinecap="round" filter="url(#orangeGlow)" />
       <path d={path} fill="none" stroke="#e8741f" strokeWidth={1.6} strokeDasharray="4 4" strokeLinecap="round">
-        {animate && <animate attributeName="stroke-dashoffset" from="0" to="-160" dur={`${3+r(seed)*2}s`} repeatCount="indefinite" />}
+        {animate && <animate attributeName="stroke-dashoffset" from="0" to="-160" dur={`${(3+r(seed)*2).toFixed(2)}s`} repeatCount="indefinite" />}
       </path>
       <polygon points={arrowPts} fill="#e8741f" />
     </g>
@@ -268,12 +276,11 @@ function RailLine({ from, to, animate, viaY }: { from: Pt; to: Pt; animate: bool
   if (viaY != null) {
     const c1: Pt = [from[0], from[1]+(viaY-from[1])*0.55];
     const c2: Pt = [to[0], viaY+(to[1]-viaY)*0.45];
-    path = `M ${from[0]} ${from[1]} C ${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${to[0]} ${to[1]}`;
+    path = `M ${svgPathPoint(from)} C ${svgPathPoint(c1)} ${svgPathPoint(c2)} ${svgPathPoint(to)}`;
   } else {
     const my = (from[1]+to[1])/2;
-    path = `M ${from[0]} ${from[1]} C ${from[0]} ${my} ${to[0]} ${my} ${to[0]} ${to[1]}`;
+    path = `M ${svgPathPoint(from)} C ${fmt(from[0])} ${fmt(my)} ${fmt(to[0])} ${fmt(my)} ${svgPathPoint(to)}`;
   }
-  const a = Math.atan2(to[1]-(to[1]-12), 0);
   const sz = 4.5;
   const ref: Pt = [to[0], to[1]-12];
   const da = Math.atan2(to[1]-ref[1], to[0]-ref[0]);

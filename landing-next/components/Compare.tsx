@@ -176,12 +176,18 @@ export default function Compare() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: email.trim() }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: { alreadyExists?: boolean; error?: { message?: string } } = {};
+      try {
+        data = text.trim().length > 0 ? JSON.parse(text) : {};
+      } catch {
+        data = {};
+      }
       if (res.ok) {
         setMessage(
           data.alreadyExists
             ? "You're already on the list — we'll be in touch!"
-            : "You're on the list! Check your inbox for a confirmation."
+            : "You're on the list. We'll reach out when Cloud opens."
         );
         if (!data.alreadyExists) setEmail("");
       } else {

@@ -19,7 +19,8 @@ import {
   AgentRailEventSubscriptionStore,
   ValidationError
 } from "./event-subscription-store.ts";
-import { WaitlistStore, WaitlistValidationError } from "./waitlist-store.ts";
+import { LoopsWaitlistSink, LoopsWaitlistTrackingError } from "./loops-waitlist-sink.ts";
+import { WaitlistStore, WaitlistValidationError, type WaitlistEntry } from "./waitlist-store.ts";
 import { createOperationTimer, logNarrative } from "./structured-logger.ts";
 import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
 import type { LinearIssueSourceAdapter } from "./linear-issue-source-adapter.ts";
@@ -35,6 +36,9 @@ const MAX_AGENT_RUN_LIST_LIMIT = 100;
 
 type LinearIssueSourceAdapterLike = Partial<Pick<LinearIssueSourceAdapter, "ingest" | "receiveWebhook" | "createComment" | "updateIssueState" | "importIssue" | "refreshIssue">>;
 type LinearCommentWebhookAdapterLike = Partial<Pick<LinearCommentWebhookAdapter, "receiveWebhook">>;
+type WaitlistTrackingSink = {
+  trackSignup(entry: WaitlistEntry): Promise<unknown> | unknown;
+};
 type TaskLifecycleStoreLike = {
   getTask?(taskId: string): unknown;
   getRawTask?(taskId: string): TaskRecord | null;
@@ -68,8 +72,12 @@ export interface CreateServerOptions {
   eventSubscriptionStore?: AgentRailEventSubscriptionStore | null;
   taskLifecycleStore?: unknown;
   waitlistStore?: WaitlistStore | null;
+  waitlistTrackingSink?: WaitlistTrackingSink | null;
   publicBaseUrl?: string | null;
   fallbackMode?: boolean;
+  loopsApiKey?: string | null;
+  loopsWaitlistMailingListId?: string | null;
+  loopsApiBaseUrl?: string;
   emailWebhookUrl?: string | null;
   emailWebhookToken?: string | null;
   resendApiKey?: string | null;
@@ -98,8 +106,12 @@ export function createServer({
   eventSubscriptionStore = null,
   taskLifecycleStore = null,
   waitlistStore = null,
+  waitlistTrackingSink = null,
   publicBaseUrl = process.env.AGENTRAIL_PUBLIC_BASE_URL || null,
   fallbackMode = false,
+  loopsApiKey = process.env.LOOPS_API_KEY || null,
+  loopsWaitlistMailingListId = process.env.LOOPS_WAITLIST_MAILING_LIST_ID || null,
+  loopsApiBaseUrl,
   emailWebhookUrl = process.env.WAITLIST_EMAIL_WEBHOOK_URL || null,
   emailWebhookToken = process.env.WAITLIST_EMAIL_WEBHOOK_TOKEN || null,
   resendApiKey = process.env.RESEND_API_KEY || null,
@@ -112,6 +124,11 @@ export function createServer({
 }: CreateServerOptions) {
   const resolvedEventSubscriptionStore = eventSubscriptionStore ?? new AgentRailEventSubscriptionStore({ now });
   const resolvedWaitlistStore = waitlistStore ?? new WaitlistStore({ now });
+  const resolvedWaitlistTrackingSink = waitlistTrackingSink ?? createLoopsWaitlistSink({
+    apiKey: loopsApiKey,
+    mailingListId: loopsWaitlistMailingListId,
+    apiBaseUrl: loopsApiBaseUrl,
+  });
   const resolvedLinearIssueSourceAdapter = linearIssueSourceAdapter ?? linearIntakeAdapter;
 
   return http.createServer((request, response) => {
@@ -134,6 +151,7 @@ export function createServer({
       authStore,
       taskLifecycleStore,
       waitlistStore: resolvedWaitlistStore,
+      waitlistTrackingSink: resolvedWaitlistTrackingSink,
       publicBaseUrl,
       fallbackMode,
       emailWebhookUrl,
@@ -160,6 +178,25 @@ export function createServer({
         })
       );
     });
+  });
+}
+
+function createLoopsWaitlistSink({
+  apiKey,
+  mailingListId,
+  apiBaseUrl,
+}: {
+  apiKey: string | null;
+  mailingListId: string | null;
+  apiBaseUrl?: string;
+}): WaitlistTrackingSink | null {
+  if (!apiKey?.trim()) {
+    return null;
+  }
+  return new LoopsWaitlistSink({
+    apiKey,
+    mailingListId,
+    ...(apiBaseUrl?.trim() ? { apiBaseUrl: apiBaseUrl.trim() } : {}),
   });
 }
 
@@ -192,6 +229,7 @@ async function routeRequest({
   authStore,
   taskLifecycleStore,
   waitlistStore,
+  waitlistTrackingSink = null,
   publicBaseUrl = null,
   fallbackMode = false,
   emailWebhookUrl = null,
@@ -271,7 +309,7 @@ async function routeRequest({
 
   if (request.method === "POST" && pathname === "/waitlist") {
     obs.operation = "waitlist_signup";
-    await handleWaitlistSignup({ request, response, waitlistStore: waitlistStore as WaitlistStore, emailWebhookUrl, emailWebhookToken, resendApiKey, resendFromEmail, sendgridApiKey, sendgridFromEmail, brevoApiKey, brevoFromEmail, brevoFromName });
+    await handleWaitlistSignup({ request, response, waitlistStore: waitlistStore as WaitlistStore, waitlistTrackingSink, emailWebhookUrl, emailWebhookToken, resendApiKey, resendFromEmail, sendgridApiKey, sendgridFromEmail, brevoApiKey, brevoFromEmail, brevoFromName });
     return;
   }
 
@@ -2778,6 +2816,7 @@ interface WaitlistSignupOptions {
   request: http.IncomingMessage;
   response: http.ServerResponse;
   waitlistStore: WaitlistStore;
+  waitlistTrackingSink: WaitlistTrackingSink | null;
   emailWebhookUrl: string | null;
   emailWebhookToken: string | null;
   resendApiKey: string | null;
@@ -2789,10 +2828,14 @@ interface WaitlistSignupOptions {
   brevoFromName: string;
 }
 
-async function handleWaitlistSignup({ request, response, waitlistStore, emailWebhookUrl, emailWebhookToken, resendApiKey, resendFromEmail, sendgridApiKey, sendgridFromEmail, brevoApiKey, brevoFromEmail, brevoFromName }: WaitlistSignupOptions) {
+async function handleWaitlistSignup({ request, response, waitlistStore, waitlistTrackingSink, emailWebhookUrl, emailWebhookToken, resendApiKey, resendFromEmail, sendgridApiKey, sendgridFromEmail, brevoApiKey, brevoFromEmail, brevoFromName }: WaitlistSignupOptions) {
   try {
     const payload = await readJsonBody(request);
     const result = waitlistStore.addEntry(payload as { email: string; name?: string | null; teamName?: string | null; teamSize?: number | null; agentFramework?: string | null; message?: string | null }, request.headers["idempotency-key"] as string | undefined);
+
+    if (waitlistTrackingSink) {
+      await waitlistTrackingSink.trackSignup(result.entry);
+    }
 
     let confirmationEmail = "skipped";
     if (!result.alreadyExists) {
@@ -2850,6 +2893,24 @@ async function handleWaitlistSignup({ request, response, waitlistStore, emailWeb
       });
       response.end(JSON.stringify({
         error: { code: error.code, message: error.message, details: {} }
+      }));
+      return;
+    }
+
+    if (error instanceof LoopsWaitlistTrackingError) {
+      response.writeHead(502, {
+        "content-type": "application/json",
+        "access-control-allow-origin": "*"
+      });
+      response.end(JSON.stringify({
+        error: {
+          code: error.code,
+          message: "Unable to track waitlist signup. Please try again.",
+          details: {
+            provider: error.provider,
+            statusCode: error.responseStatus
+          }
+        }
       }));
       return;
     }
