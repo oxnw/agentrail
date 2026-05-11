@@ -25,6 +25,7 @@ import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts"
 import type { LinearIssueSourceAdapter } from "./linear-issue-source-adapter.ts";
 import type { LinearCommentWebhookAdapter } from "./linear-comment-webhook-adapter.ts";
 import type { AgentRunReportInput, AgentRunStore, AgentRunStatus } from "./agent-run-store.ts";
+import type { AwaitingUserNotification, AwaitingUserNotifier } from "./desktop-notifier.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -78,6 +79,7 @@ export interface CreateServerOptions {
   brevoApiKey?: string | null;
   brevoFromEmail?: string;
   brevoFromName?: string;
+  awaitingUserNotifier?: AwaitingUserNotifier | null;
 }
 
 export function createServer({
@@ -106,7 +108,8 @@ export function createServer({
   sendgridFromEmail = process.env.SENDGRID_FROM_EMAIL || "AgentRail <waitlist@agentrail.app>",
   brevoApiKey = process.env.BREVO_API_KEY || null,
   brevoFromEmail = process.env.BREVO_FROM_EMAIL || "waitlist@agentrail.app",
-  brevoFromName = process.env.BREVO_FROM_NAME || "AgentRail"
+  brevoFromName = process.env.BREVO_FROM_NAME || "AgentRail",
+  awaitingUserNotifier = null
 }: CreateServerOptions) {
   const webhookStore = new TaskWebhookSubscriptionStore({ now });
   const resolvedWaitlistStore = waitlistStore ?? new WaitlistStore({ now });
@@ -142,7 +145,8 @@ export function createServer({
       sendgridFromEmail,
       brevoApiKey,
       brevoFromEmail,
-      brevoFromName
+      brevoFromName,
+      awaitingUserNotifier
     }).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       response.writeHead(500, {
@@ -200,7 +204,8 @@ async function routeRequest({
   sendgridFromEmail = "AgentRail <waitlist@agentrail.app>",
   brevoApiKey = null,
   brevoFromEmail = "waitlist@agentrail.app",
-  brevoFromName = "AgentRail"
+  brevoFromName = "AgentRail",
+  awaitingUserNotifier = null
 }: RouteRequestOptions) {
   const resolvedLinearIssueSourceAdapter = linearIssueSourceAdapter;
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -625,6 +630,7 @@ async function routeRequest({
       taskLifecycleStore,
       runId: agentRunReportMatch[1],
       principal,
+      awaitingUserNotifier,
     });
     return;
   }
@@ -778,6 +784,7 @@ async function routeRequest({
       taskLifecycleStore,
       taskId: blockTaskMatch[1],
       sourceAgentId: principal?.agent?.id ?? null,
+      awaitingUserNotifier,
     });
     return;
   }
@@ -1293,9 +1300,10 @@ interface ReportAgentRunOptions {
   taskLifecycleStore: unknown;
   runId: string;
   principal: ReturnType<AgentAuthStore["authenticate"]> | null;
+  awaitingUserNotifier?: AwaitingUserNotifier | null;
 }
 
-async function handleReportAgentRun({ request, response, agentRunStore, taskLifecycleStore, runId, principal }: ReportAgentRunOptions) {
+async function handleReportAgentRun({ request, response, agentRunStore, taskLifecycleStore, runId, principal, awaitingUserNotifier = null }: ReportAgentRunOptions) {
   if (!agentRunStore) {
     writeError(response, 404, "not_found", "Agent run store is not configured.", {
       availableActions: []
@@ -1392,6 +1400,8 @@ async function handleReportAgentRun({ request, response, agentRunStore, taskLife
   if (payload.handoff !== undefined) {
     report.handoff = payload.handoff === null ? null : payload.handoff as Record<string, unknown>;
   }
+  let previousBlockedTask: TaskRecord | null = null;
+  let blockedTaskNotification: AwaitingUserNotification | null = null;
   if (report.status === "blocked") {
     const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null | undefined;
     if (!lifecycle || typeof lifecycle.blockTaskAwaitingUser !== "function") {
@@ -1400,8 +1410,11 @@ async function handleReportAgentRun({ request, response, agentRunStore, taskLife
       });
       return;
     }
+    previousBlockedTask = typeof lifecycle.getRawTask === "function"
+      ? lifecycle.getRawTask(run.taskId)
+      : null;
     try {
-      await lifecycle.blockTaskAwaitingUser(
+      const blockedTaskBody = await lifecycle.blockTaskAwaitingUser(
         run.taskId,
         {
           sourceRunId: run.runId,
@@ -1413,6 +1426,7 @@ async function handleReportAgentRun({ request, response, agentRunStore, taskLife
         `agent-run-blocker:${run.runId}`,
         run.agentId,
       );
+      blockedTaskNotification = awaitingUserNotificationFromTaskResponse(blockedTaskBody);
     } catch (error) {
       if (error instanceof TaskLifecycleError) {
         writeError(response, error.statusCode, error.code, error.message, error.details);
@@ -1439,6 +1453,17 @@ async function handleReportAgentRun({ request, response, agentRunStore, taskLife
       availableActions: ["list_agent_runs"]
     });
     return;
+  }
+
+  if (report.status === "blocked" && updated.userAction && !isBlockedByRun(previousBlockedTask, updated.runId)) {
+    void notifyAwaitingUser(awaitingUserNotifier, blockedTaskNotification ?? {
+      runId: updated.runId,
+      taskId: updated.taskId,
+      taskIdentifier: updated.taskIdentifier,
+      reason: updated.userAction.reason,
+      actionRequired: updated.userAction.actionRequired,
+      resumeInstructions: updated.userAction.resumeInstructions,
+    });
   }
 
   writeJson(response, 202, {
@@ -1483,6 +1508,68 @@ async function rollbackBlockedReportTask({
       },
     });
   }
+}
+
+async function notifyAwaitingUser(
+  awaitingUserNotifier: AwaitingUserNotifier | null | undefined,
+  notification: AwaitingUserNotification,
+): Promise<void> {
+  if (!awaitingUserNotifier) {
+    return;
+  }
+
+  try {
+    await awaitingUserNotifier(notification);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.emitWarning(`Failed to send AgentRail desktop notification: ${message}`);
+    logNarrative({
+      title: "Desktop notification failed",
+      message,
+      operation: "awaiting_user_notification",
+      taskId: notification.taskId,
+      runId: notification.runId,
+      errorClass: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+function isBlockedByRun(task: TaskRecord | null | undefined, runId: string): boolean {
+  return task?.status === "blocked"
+    && task.blocker?.kind === "awaiting_user"
+    && task.blocker.sourceRunId === runId;
+}
+
+function awaitingUserNotificationFromTaskResponse(value: unknown): AwaitingUserNotification | null {
+  if (!isRecord(value) || !isRecord(value.data)) {
+    return null;
+  }
+  const task = value.data;
+  const blocker = task.blocker;
+  if (!isRecord(blocker)) {
+    return null;
+  }
+  if (blocker.kind !== "awaiting_user") {
+    return null;
+  }
+  if (
+    typeof blocker.sourceRunId !== "string"
+    || typeof task.id !== "string"
+    || typeof task.identifier !== "string"
+    || typeof blocker.reason !== "string"
+    || typeof blocker.actionRequired !== "string"
+    || typeof blocker.resumeInstructions !== "string"
+  ) {
+    return null;
+  }
+  return {
+    runId: blocker.sourceRunId,
+    taskId: task.id,
+    taskIdentifier: task.identifier,
+    reason: blocker.reason,
+    actionRequired: blocker.actionRequired,
+    resumeInstructions: blocker.resumeInstructions,
+  };
 }
 
 function validateRequiredPayloadString(payload: Record<string, unknown>, fieldName: string): string | Error {
@@ -1983,6 +2070,7 @@ interface StartTaskOptions extends SubmitTaskOptions {
 
 interface BlockTaskAwaitingUserOptions extends SubmitTaskOptions {
   sourceAgentId: string | null;
+  awaitingUserNotifier?: AwaitingUserNotifier | null;
 }
 
 interface ResolveTaskBlockerOptions extends SubmitTaskOptions {
@@ -2019,7 +2107,7 @@ async function handleStartTask({ request, response, taskLifecycleStore, taskId, 
   }
 }
 
-async function handleBlockTaskAwaitingUser({ request, response, taskLifecycleStore, taskId, sourceAgentId }: BlockTaskAwaitingUserOptions) {
+async function handleBlockTaskAwaitingUser({ request, response, taskLifecycleStore, taskId, sourceAgentId, awaitingUserNotifier = null }: BlockTaskAwaitingUserOptions) {
   if (!taskLifecycleStore || typeof (taskLifecycleStore as { blockTaskAwaitingUser?: unknown }).blockTaskAwaitingUser !== "function") {
     writeError(response, 404, "not_found", "Task source not found.", {
       availableActions: ["list_my_tasks"]
@@ -2029,14 +2117,22 @@ async function handleBlockTaskAwaitingUser({ request, response, taskLifecycleSto
 
   try {
     const payload = await readJsonBody(request);
-    const body = await (taskLifecycleStore as {
+    const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike & {
       blockTaskAwaitingUser: (taskId: string, payload: unknown, key: string | undefined, sourceAgentId: string | null) => Promise<unknown> | unknown;
-    }).blockTaskAwaitingUser(
+    };
+    const previousTask = typeof lifecycle.getRawTask === "function"
+      ? lifecycle.getRawTask(taskId)
+      : null;
+    const body = await lifecycle.blockTaskAwaitingUser(
       taskId,
       payload,
       request.headers["idempotency-key"] as string | undefined,
       sourceAgentId,
     );
+    const notification = awaitingUserNotificationFromTaskResponse(body);
+    if (notification && !isBlockedByRun(previousTask, notification.runId)) {
+      void notifyAwaitingUser(awaitingUserNotifier, notification);
+    }
     writeJson(response, 202, body);
   } catch (error) {
     if (error instanceof TaskLifecycleError) {

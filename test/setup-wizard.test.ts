@@ -35,6 +35,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
     { kind: "input", value: "http://127.0.0.1:4100" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
+    { kind: "confirm", value: true },
     { kind: "confirm", value: false },
     { kind: "confirm", value: false },
   ]);
@@ -68,13 +69,14 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   await rm(agentrailHome, { recursive: true, force: true });
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "confirm", "confirm", "confirm", "confirm"]);
+  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "confirm", "confirm", "confirm", "confirm", "confirm"]);
   assert.equal(prompt.notes[0]?.title, "Review setup plan");
   assert.match(prompt.notes[0]?.body ?? "", /AgentRail is ready to create its local home and connect your first repo\./);
   assert.match(prompt.notes[0]?.body ?? "", /Setup choices:/);
   assert.match(prompt.notes[0]?.body ?? "", /GitHub repo: https:\/\/github\.com\/custom\/agentrail/);
   assert.match(prompt.notes[0]?.body ?? "", /Provider mode: real/);
   assert.match(prompt.notes[0]?.body ?? "", /Local API base URL: http:\/\/127\.0\.0\.1:4100/);
+  assert.match(prompt.notes[0]?.body ?? "", /Desktop notifications: enabled/);
   assert.equal(prompt.messages[0], `AgentRail home: ${agentrailHome}`);
   assert.equal(prompt.messages[1], "Detected repo you can connect: /tmp/agentrail");
   assert.equal(prompt.messages[2], "GitHub repo detected: https://github.com/oxnw/agentrail • default branch: main");
@@ -88,6 +90,8 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.match(prompt.notes[1]?.body ?? "", /`agentrail server start`/);
   assert.equal(prompt.interactions[0]?.message, "Which local repo should AgentRail connect first?");
   assert.equal(prompt.interactions[1]?.message, "Primary GitHub repo URL");
+  assert.equal(prompt.interactions[5]?.message, "Enable desktop notifications when AgentRail needs you?");
+  assert.equal(prompt.interactions[5]?.defaultValue, true);
   assert.doesNotMatch(stdout.toString(), /AgentRail local setup/i);
   assert.doesNotMatch(stdout.toString(), /Local git repo detected:/);
   assert.doesNotMatch(stdout.toString(), /Review setup plan/i);
@@ -102,6 +106,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.equal(writes[0]?.config.repos[0]?.defaultBranch, "develop");
   assert.equal(writes[0]?.config.server.baseUrl, "http://127.0.0.1:4100");
   assert.equal(writes[0]?.config.providers.github.mode, "real");
+  assert.equal(writes[0]?.config.notifications.desktop.enabled, true);
 });
 
 test("runCli can connect GitHub during init with a hidden token prompt and shows provider follow-up commands", async () => {
@@ -116,6 +121,7 @@ test("runCli can connect GitHub during init with a hidden token prompt and shows
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
     { kind: "confirm", value: false },
+    { kind: "confirm", value: true },
     { kind: "confirm", value: true },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
@@ -176,6 +182,7 @@ test("runCli lets the user cancel instead of writing files at the final confirma
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
     { kind: "confirm", value: false },
+    { kind: "confirm", value: true },
     { kind: "confirm", value: false },
   ]);
   let didWrite = false;
@@ -218,6 +225,7 @@ test("runCli re-prompts when the GitHub repo input is not a valid owner/repo or 
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
     { kind: "confirm", value: false },
+    { kind: "confirm", value: true },
     { kind: "confirm", value: false },
   ]);
 
@@ -265,6 +273,7 @@ test("runCli normalizes .git suffix from GitHub repo input", async () => {
     { kind: "input", value: "http://127.0.0.1:3000" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
+    { kind: "confirm", value: true },
     { kind: "confirm", value: false },
     { kind: "confirm", value: false },
   ]);
@@ -304,6 +313,7 @@ test("runCli print-only mode does not show file-write next steps", async () => {
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
     { kind: "confirm", value: false },
+    { kind: "confirm", value: true },
   ]);
   let didWrite = false;
 
@@ -460,6 +470,7 @@ test("runCli validates --yes safe defaults against the target repo", async () =>
   assert.equal(stderr.toString(), "");
   assert.equal(writes.length, 1);
   assert.equal(writes[0]?.homePath, agentrailHome);
+  assert.equal(writes[0]?.config.notifications.desktop.enabled, false);
 });
 
 test("createPromptSession wraps Clack with AgentRail branding", async () => {

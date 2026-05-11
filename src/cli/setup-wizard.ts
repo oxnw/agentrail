@@ -26,6 +26,7 @@ export interface InitFlags {
   repoAllowlist?: string[];
   defaultBranch?: string;
   markdownExport?: boolean;
+  desktopNotifications?: boolean;
 }
 
 export interface SetupWizardResult {
@@ -92,6 +93,10 @@ export async function runSetupWizard({
     message: "Enable Markdown/Obsidian export?",
     defaultValue: false,
   });
+  const desktopNotifications = flags.desktopNotifications ?? await prompt.confirm({
+    message: "Enable desktop notifications when AgentRail needs you?",
+    defaultValue: true,
+  });
 
   const config = createSetupConfig({
     cwd,
@@ -108,6 +113,7 @@ export async function runSetupWizard({
     repoAllowlist,
     defaultBranch,
     markdownExport,
+    desktopNotifications,
   });
   await prompt.note({
     title: "Review setup plan",
@@ -122,6 +128,7 @@ export async function runSetupWizard({
       `- Local API base URL: ${baseUrl}`,
       `- Provider mode: ${providerMode}`,
       `- Markdown export: ${markdownExport ? "enabled" : "disabled"}`,
+      `- Desktop notifications: ${desktopNotifications ? "enabled" : "disabled"}`,
       "",
       "Nothing is written until you answer yes.",
     ].join("\n"),
@@ -243,7 +250,8 @@ export function acceptedDefaultsFromFlags(flags: InitFlags): boolean {
     || !flags.repo
     || !flags.repoAllowlist?.length
     || !flags.defaultBranch
-    || flags.markdownExport === undefined;
+    || flags.markdownExport === undefined
+    || flags.desktopNotifications === undefined;
 }
 
 export function createSetupConfigFromFlags({
@@ -274,5 +282,8 @@ export function createSetupConfigFromFlags({
     repoAllowlist: flags.repoAllowlist,
     defaultBranch: flags.defaultBranch,
     markdownExport: flags.markdownExport,
+    // Non-interactive setup may run in automation; require an explicit opt-in
+    // instead of enabling local OS notifications by default.
+    desktopNotifications: flags.desktopNotifications ?? false,
   });
 }

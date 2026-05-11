@@ -8,6 +8,7 @@ import { AgentProfileStore } from "../agent-profile-store.ts";
 import { loadEnvFile } from "../env-file.ts";
 import { TaskEventStore } from "../task-event-store.ts";
 import { buildRuntime } from "../server-runtime.ts";
+import { createDesktopAwaitingUserNotifier } from "../desktop-notifier.ts";
 import { operatorEnvPathForHome, providerEnvPathForHome } from "./agentrail-home.ts";
 import type { SetupConfig } from "./setup-config.ts";
 
@@ -199,6 +200,7 @@ export async function withTemporaryLocalServer<T>({
       now,
       publicBaseUrl,
       fallbackMode: false,
+      awaitingUserNotifier: createTemporaryAwaitingUserNotifier(config.notifications?.desktop?.enabled === true),
     });
     try {
       await runtime.deliveryController?.start();
@@ -326,6 +328,16 @@ async function listen(
     };
     attach(port);
   });
+}
+
+function createTemporaryAwaitingUserNotifier(enabled: boolean) {
+  try {
+    return createDesktopAwaitingUserNotifier({ enabled });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.emitWarning(`Failed to create temporary awaitingUserNotifier: ${message}`);
+    return null;
+  }
 }
 
 function closeServer(server: ReturnType<typeof createServer>): Promise<void> {

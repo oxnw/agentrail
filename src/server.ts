@@ -6,9 +6,10 @@ import { createServer } from "./app.ts";
 import { AgentAuthStore } from "./agent-auth-store.ts";
 import { AgentRunStore } from "./agent-run-store.ts";
 import { configPathForHome, defaultAgentRailHome, type ConnectedRepo } from "./cli/agentrail-home.ts";
-import { loadEnvFile } from "./env-file.ts";
+import { loadEnvFile, parseSimpleEnv } from "./env-file.ts";
 import { TaskEventStore } from "./task-event-store.ts";
 import { buildRuntime } from "./server-runtime.ts";
+import { createDesktopAwaitingUserNotifier, parseDesktopNotificationsEnabled } from "./desktop-notifier.ts";
 
 loadDotEnv();
 
@@ -19,6 +20,7 @@ const publicBaseUrl =
 const storagePath = process.env.AGENTRAIL_EVENT_STORE_PATH;
 const authStorePath = process.env.AGENTRAIL_AGENT_AUTH_STORE_PATH;
 const agentRunStorePath = process.env.AGENTRAIL_AGENT_RUNS_STORE_PATH;
+const desktopNotificationsEnabled = parseDesktopNotificationsEnabled(process.env.AGENTRAIL_DESKTOP_NOTIFICATIONS);
 
 const fallbackMode = (process.env.AGENTRAIL_FALLBACK_MODE ?? "false").toLowerCase() === "true";
 
@@ -94,6 +96,7 @@ export function startServer() {
       now,
       publicBaseUrl,
       fallbackMode,
+      awaitingUserNotifier: createDesktopAwaitingUserNotifier({ enabled: desktopNotificationsEnabled }),
     });
 
     server.listen(port, host, () => {
@@ -116,13 +119,28 @@ export function startServer() {
 
 function loadDotEnv() {
   try {
+    const explicitEnvKeys = new Set(Object.keys(process.env));
     const agentrailHome = process.env.AGENTRAIL_HOME || defaultAgentRailHome();
+    // Precedence: explicit process env wins, then the selected AgentRail home
+    // env files override cwd defaults so setup-generated config is stable from
+    // any invocation directory.
     loadEnvFile(".env");
     loadEnvFile(".agentrail/server.env");
-    loadEnvFile(path.join(agentrailHome, "server.env"));
-    loadEnvFile(path.join(agentrailHome, "provider.env"));
+    loadHomeEnvFile(path.join(agentrailHome, "server.env"), explicitEnvKeys);
+    loadHomeEnvFile(path.join(agentrailHome, "provider.env"), explicitEnvKeys);
   } catch {
     // .env loading is convenience-only; environment variables still work.
+  }
+}
+
+function loadHomeEnvFile(filePath: string, explicitEnvKeys: Set<string>): void {
+  const content = readFileIfExists(filePath);
+  if (!content) return;
+
+  for (const [key, value] of Object.entries(parseSimpleEnv(content))) {
+    if (!explicitEnvKeys.has(key)) {
+      process.env[key] = value;
+    }
   }
 }
 

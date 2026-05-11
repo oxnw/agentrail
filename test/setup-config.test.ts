@@ -41,6 +41,7 @@ test("createSetupConfig derives server defaults from repo detection", () => {
   assert.deepEqual(config.repos.map((repo) => repo.slug), ["oxnw/agentrail"]);
   assert.equal(config.repos[0].defaultBranch, "main");
   assert.equal(config.exports.markdown.enabled, false);
+  assert.equal(config.notifications.desktop.enabled, false);
 });
 
 test("normalizeSetupConfigLike fills agent run store path for older file configs", () => {
@@ -63,6 +64,34 @@ test("normalizeSetupConfigLike fills agent run store path for older file configs
   assert.ok(config);
   assert.ok(config.persistence);
   assert.equal(config.persistence.agentRunStorePath, "stores/agent-runs.json");
+  assert.equal(config.notifications?.desktop?.enabled, false);
+});
+
+test("normalizeSetupConfigLike treats null notifications as missing", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    persistence: {
+      kind: "file",
+    },
+    providers: {},
+    notifications: null,
+    repos: [],
+  } as unknown as Parameters<typeof normalizeSetupConfigLike>[0]);
+
+  assert.ok(config);
+  assert.equal(config.notifications?.desktop?.enabled, false);
+});
+
+test("createSetupConfig enables desktop notifications when requested", () => {
+  const config = createSetupConfig({
+    cwd: detectedRepo.repoPath,
+    detectedRepo,
+    interactionMode: "interactive",
+    acceptedDefaults: false,
+    desktopNotifications: true,
+  });
+
+  assert.equal(config.notifications.desktop.enabled, true);
 });
 
 test("normalizeSetupConfigLike preserves explicit agent run store paths", () => {
@@ -207,6 +236,7 @@ test("buildInitCommand renders an equivalent non-interactive command", () => {
     interactionMode: "interactive",
     acceptedDefaults: false,
     markdownExport: true,
+    desktopNotifications: true,
   });
 
   const command = buildInitCommand(config);
@@ -217,5 +247,6 @@ test("buildInitCommand renders an equivalent non-interactive command", () => {
   assert.match(command, /--repo '\/tmp\/agentrail'/);
   assert.match(command, /--repo-allowlist oxnw\/agentrail/);
   assert.match(command, /--markdown-export/);
+  assert.match(command, /--desktop-notifications/);
   assert.doesNotMatch(command, /--provider-mode/);
 });

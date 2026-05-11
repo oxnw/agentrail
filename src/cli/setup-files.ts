@@ -57,6 +57,7 @@ function renderServerEnv(config: SetupConfig, homePath: string): string {
     `AGENTRAIL_HOST=${config.server.host}`,
     `AGENTRAIL_PORT=${config.server.port}`,
     `AGENTRAIL_PUBLIC_BASE_URL=${config.server.baseUrl}`,
+    `AGENTRAIL_DESKTOP_NOTIFICATIONS=${config.notifications.desktop.enabled ? "true" : "false"}`,
   ];
 
   if (config.persistence.kind === "file") {
@@ -200,6 +201,10 @@ function renderPortableInitCommand(config: SetupConfig): string {
 
   if (config.exports.markdown.enabled) {
     parts.push("--markdown-export");
+  }
+
+  if (config.notifications.desktop.enabled) {
+    parts.push("--desktop-notifications");
   }
 
   return parts.join(" ");

@@ -66,6 +66,7 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.doesNotMatch(envExample, /CIRCLECI_WEBHOOK_SECRET=/);
   assert.match(serverEnv, new RegExp(`AGENTRAIL_AGENT_AUTH_STORE_PATH=${escapeForRegExp(path.join(homePath, "stores", "agent-auth.json"))}`));
   assert.match(serverEnv, new RegExp(`AGENTRAIL_AGENT_RUNS_STORE_PATH=${escapeForRegExp(path.join(homePath, "stores", "agent-runs.json"))}`));
+  assert.match(serverEnv, /AGENTRAIL_DESKTOP_NOTIFICATIONS=false/);
   assert.doesNotMatch(serverEnv, /AGENTRAIL_PROVIDER_IDENTITY_MAPPINGS_STORE_PATH=/);
   assert.match(serverEnv, new RegExp(`AGENTRAIL_TASK_STORE_PATH=${escapeForRegExp(path.join(homePath, "stores", "tasks.json"))}`));
   assert.equal(existsSync(envPath), false);

@@ -59,6 +59,12 @@ Start the local API:
 agentrail server start
 ```
 
+Runtime configuration precedence is explicit environment variables first, then
+the selected `AGENTRAIL_HOME` files such as `server.env` and `provider.env`,
+then convenience cwd files such as `.env` and `.agentrail/server.env`.
+This keeps the setup-generated home config stable even when you start AgentRail
+from a different directory.
+
 In another terminal, verify setup:
 
 ```bash
