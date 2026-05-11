@@ -16,6 +16,8 @@ export interface SetupConfigLike {
   persistence?: {
     kind?: string;
     agentRunStorePath?: string;
+    eventSubscriptionStorePath?: string;
+    eventDeliveryStorePath?: string;
   };
   providers?: {
     github?: {
@@ -54,7 +56,9 @@ export interface SetupConfigLike {
   };
 }
 
-const DEFAULT_AGENT_RUN_STORE_PATH = "stores/agent-runs.json";
+export const DEFAULT_AGENT_RUN_STORE_PATH = "stores/agent-runs.json";
+export const DEFAULT_EVENT_SUBSCRIPTION_STORE_PATH = "stores/event-subscriptions.json";
+export const DEFAULT_EVENT_DELIVERY_STORE_PATH = "stores/event-deliveries.json";
 
 export function defaultAgentRailHome(): string {
   return path.join(os.homedir(), ".agentrail");
@@ -162,19 +166,23 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
   };
 }
 
+function normalizeStorePath(value: unknown, defaultPath: string): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed.length > 0 ? trimmed : defaultPath;
+}
+
 function normalizePersistence(persistence: SetupConfigLike["persistence"]): SetupConfigLike["persistence"] {
   if (!persistence || persistence.kind !== "file") {
     return persistence;
   }
-  const trimmedAgentRunStorePath = typeof persistence.agentRunStorePath === "string"
-    ? persistence.agentRunStorePath.trim()
-    : "";
-  const agentRunStorePath = trimmedAgentRunStorePath.length > 0
-    ? trimmedAgentRunStorePath
-    : DEFAULT_AGENT_RUN_STORE_PATH;
+  const agentRunStorePath = normalizeStorePath(persistence.agentRunStorePath, DEFAULT_AGENT_RUN_STORE_PATH);
+  const eventSubscriptionStorePath = normalizeStorePath(persistence.eventSubscriptionStorePath, DEFAULT_EVENT_SUBSCRIPTION_STORE_PATH);
+  const eventDeliveryStorePath = normalizeStorePath(persistence.eventDeliveryStorePath, DEFAULT_EVENT_DELIVERY_STORE_PATH);
   return {
     ...persistence,
     agentRunStorePath,
+    eventSubscriptionStorePath,
+    eventDeliveryStorePath,
   };
 }
 

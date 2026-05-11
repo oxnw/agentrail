@@ -12,7 +12,7 @@ from .models import TaskLifecycleEvent
 
 
 class WebhookHeaders(TypedDict):
-    x_agentrail_webhook_id: str
+    x_agentrail_subscription_id: str
     x_agentrail_event_id: str
     x_agentrail_event_type: str
     x_agentrail_delivery_id: str

@@ -14,7 +14,17 @@ async function listen(server) {
   return `http://${address.address}:${address.port}`;
 }
 
-test("POST /task-webhook-subscriptions creates a normalized subscription and replays the accepted response for the same idempotency key", async (t) => {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 5_000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+test("POST /event-subscriptions creates a normalized subscription and replays the accepted response for the same idempotency key", async (t) => {
   const now = new Date("2026-05-01T03:20:00Z");
   const server = createServer({
     store: new TaskEventStore(),
@@ -28,7 +38,7 @@ test("POST /task-webhook-subscriptions creates a normalized subscription and rep
   const baseUrl = await listen(server);
   const payload = {
     url: "https://agents.example.com/webhooks/task-events",
-    eventTypes: ["task.reviewed", "task.updated", "task.shipped", "task.updated"],
+    eventTypes: ["task.awaiting_user", "task.reviewed", "task.updated", "task.shipped", "task.updated"],
     secret: "whsec_live_agentrail_contract_001",
     description: "Primary automation endpoint for task lifecycle updates.",
     filters: {
@@ -36,11 +46,11 @@ test("POST /task-webhook-subscriptions creates a normalized subscription and rep
     }
   };
 
-  const response = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const response = await fetchWithTimeout(`${baseUrl}/event-subscriptions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Idempotency-Key": "whsub-AGEA-16-v1"
+      "Idempotency-Key": "evsub-AGEA-16-v1"
     },
     body: JSON.stringify(payload)
   });
@@ -48,9 +58,10 @@ test("POST /task-webhook-subscriptions creates a normalized subscription and rep
   assert.equal(response.status, 201);
 
   const firstBody = await response.json();
-  assert.match(firstBody.data.id, /^whsub_/);
+  assert.match(firstBody.data.id, /^evsub_/);
   assert.equal(firstBody.data.status, "active");
   assert.deepEqual(firstBody.data.eventTypes, [
+    "task.awaiting_user",
     "task.reviewed",
     "task.shipped",
     "task.updated"
@@ -65,11 +76,11 @@ test("POST /task-webhook-subscriptions creates a normalized subscription and rep
   assert.deepEqual(firstBody.data.availableActions, ["deactivate"]);
   assert.deepEqual(firstBody.availableActions, ["deactivate"]);
 
-  const replayResponse = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const replayResponse = await fetchWithTimeout(`${baseUrl}/event-subscriptions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Idempotency-Key": "whsub-AGEA-16-v1"
+      "Idempotency-Key": "evsub-AGEA-16-v1"
     },
     body: JSON.stringify(payload)
   });
@@ -78,15 +89,15 @@ test("POST /task-webhook-subscriptions creates a normalized subscription and rep
   const replayBody = await replayResponse.json();
   assert.deepEqual(replayBody, firstBody);
 
-  const duplicateResponse = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const duplicateResponse = await fetchWithTimeout(`${baseUrl}/event-subscriptions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Idempotency-Key": "whsub-AGEA-16-v2"
+      "Idempotency-Key": "evsub-AGEA-16-v2"
     },
     body: JSON.stringify({
       ...payload,
-      eventTypes: ["task.updated", "task.shipped", "task.reviewed"],
+      eventTypes: ["task.updated", "task.shipped", "task.reviewed", "task.awaiting_user"],
       filters: {
         taskIds: ["tsk_a", "tsk_b"]
       }
@@ -103,7 +114,7 @@ test("POST /task-webhook-subscriptions creates a normalized subscription and rep
   assert.equal(duplicateBody.error.details.subscriptionId, firstBody.data.id);
 });
 
-test("DELETE /task-webhook-subscriptions/{subscriptionId} disables the subscription and clears available actions", async (t) => {
+test("DELETE /event-subscriptions/{subscriptionId} disables the subscription and clears available actions", async (t) => {
   const now = new Date("2026-05-01T03:20:00Z");
   const server = createServer({
     store: new TaskEventStore(),
@@ -116,11 +127,11 @@ test("DELETE /task-webhook-subscriptions/{subscriptionId} disables the subscript
 
   const baseUrl = await listen(server);
 
-  const createResponse = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const createResponse = await fetchWithTimeout(`${baseUrl}/event-subscriptions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Idempotency-Key": "whsub-AGEA-16-delete-v1"
+      "Idempotency-Key": "evsub-AGEA-16-delete-v1"
     },
     body: JSON.stringify({
       url: "https://agents.example.com/webhooks/task-events",
@@ -132,8 +143,8 @@ test("DELETE /task-webhook-subscriptions/{subscriptionId} disables the subscript
   assert.equal(createResponse.status, 201);
   const createdBody = await createResponse.json();
 
-  const deleteResponse = await fetch(
-    `${baseUrl}/task-webhook-subscriptions/${createdBody.data.id}`,
+  const deleteResponse = await fetchWithTimeout(
+    `${baseUrl}/event-subscriptions/${createdBody.data.id}`,
     {
       method: "DELETE"
     }
@@ -148,7 +159,42 @@ test("DELETE /task-webhook-subscriptions/{subscriptionId} disables the subscript
   assert.deepEqual(deletedBody.availableActions, []);
 });
 
-test("GET /task-webhook-subscriptions lists subscriptions and GET /task-webhook-subscriptions/{subscriptionId} returns a snapshot", async (t) => {
+test("POST /event-subscriptions rejects unsupported event types", async (t) => {
+  const server = createServer({
+    store: new TaskEventStore(),
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const baseUrl = await listen(server);
+  const response = await fetchWithTimeout(`${baseUrl}/event-subscriptions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "Idempotency-Key": "evsub-unsupported-event-type-v1",
+    },
+    body: JSON.stringify({
+      url: "https://agents.example.com/webhooks/task-events",
+      eventTypes: ["agent.run.completed"],
+      secret: "whsec_live_agentrail_contract_001",
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "validation_error");
+  assert.equal(body.error.details.eventType, "agent.run.completed");
+  assert.deepEqual(body.error.details.supportedEventTypes, [
+    "task.updated",
+    "task.reviewed",
+    "task.shipped",
+    "task.awaiting_user",
+  ]);
+});
+
+test("GET /event-subscriptions lists subscriptions and GET /event-subscriptions/{subscriptionId} returns a snapshot", async (t) => {
   const now = new Date("2026-05-01T03:25:00Z");
   const server = createServer({
     store: new TaskEventStore(),
@@ -160,11 +206,11 @@ test("GET /task-webhook-subscriptions lists subscriptions and GET /task-webhook-
   });
 
   const baseUrl = await listen(server);
-  const createPrimary = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const createPrimary = await fetchWithTimeout(`${baseUrl}/event-subscriptions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Idempotency-Key": "whsub-AGEA-17-list-v1"
+      "Idempotency-Key": "evsub-AGEA-17-list-v1"
     },
     body: JSON.stringify({
       url: "https://agents.example.com/webhooks/primary",
@@ -175,11 +221,11 @@ test("GET /task-webhook-subscriptions lists subscriptions and GET /task-webhook-
       }
     })
   });
-  const createSecondary = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const createSecondary = await fetchWithTimeout(`${baseUrl}/event-subscriptions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Idempotency-Key": "whsub-AGEA-17-list-v2"
+      "Idempotency-Key": "evsub-AGEA-17-list-v2"
     },
     body: JSON.stringify({
       url: "https://agents.example.com/webhooks/secondary",
@@ -193,15 +239,15 @@ test("GET /task-webhook-subscriptions lists subscriptions and GET /task-webhook-
   const primaryBody = await createPrimary.json();
   const secondaryBody = await createSecondary.json();
 
-  const deleteResponse = await fetch(
-    `${baseUrl}/task-webhook-subscriptions/${secondaryBody.data.id}`,
+  const deleteResponse = await fetchWithTimeout(
+    `${baseUrl}/event-subscriptions/${secondaryBody.data.id}`,
     {
       method: "DELETE"
     }
   );
   assert.equal(deleteResponse.status, 202);
 
-  const listResponse = await fetch(`${baseUrl}/task-webhook-subscriptions`);
+  const listResponse = await fetchWithTimeout(`${baseUrl}/event-subscriptions`);
 
   assert.equal(listResponse.status, 200);
   const listBody = await listResponse.json();
@@ -213,8 +259,8 @@ test("GET /task-webhook-subscriptions lists subscriptions and GET /task-webhook-
   assert.equal(listBody.data[1].status, "disabled");
   assert.deepEqual(listBody.availableActions, ["create"]);
 
-  const getResponse = await fetch(
-    `${baseUrl}/task-webhook-subscriptions/${secondaryBody.data.id}`
+  const getResponse = await fetchWithTimeout(
+    `${baseUrl}/event-subscriptions/${secondaryBody.data.id}`
   );
 
   assert.equal(getResponse.status, 200);

@@ -363,6 +363,15 @@ export class AgentTaskQueue {
         availableActions: updated.availableActions,
         blocker: updated.blocker,
       });
+      await this.appendTaskEvent("task.awaiting_user", updated, {
+        status: updated.status,
+        previousStatus: existing.status,
+        changedFields: ["status", "availableActions", "blocker", "updatedAt"],
+        actor: { id: resolvedSourceAgentId, role: "agent" },
+        summary: "Task is awaiting user input.",
+        availableActions: updated.availableActions,
+        blocker: updated.blocker,
+      });
     } catch (error) {
       try {
         this.store.upsertTask(existing);

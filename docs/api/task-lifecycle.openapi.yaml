@@ -973,29 +973,29 @@ paths:
                       details:
                         idempotencyKey: ship-AGEA-2-v1
                         availableActions: [retry]
-  /task-webhook-subscriptions:
+  /event-subscriptions:
     get:
       tags: [Task Events]
-      operationId: listTaskWebhookSubscriptions
-      summary: List task lifecycle webhook subscriptions
+      operationId: listEventSubscriptions
+      summary: List AgentRail event subscriptions
       description: |
-        Lists durable webhook subscriptions for operational visibility.
+        Lists durable event subscriptions for operational visibility.
         Requires a key with `webhooks:read`; creating or disabling
         subscriptions still requires `webhooks:write`.
       responses:
         '200':
-          description: Webhook subscriptions listed
+          description: Event subscriptions listed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskWebhookSubscriptionListResponse'
+                $ref: '#/components/schemas/EventSubscriptionListResponse'
               examples:
                 default:
                   value:
                     data:
-                      - id: whsub_01JY5046P0GQF33KKV80M0X19A
+                      - id: evsub_01JY5046P0GQF33KKV80M0X19A
                         url: https://agents.example.com/webhooks/task-events
-                        eventTypes: [task.updated, task.reviewed, task.shipped]
+                        eventTypes: [task.awaiting_user, task.updated, task.reviewed, task.shipped]
                         filters:
                           taskIds:
                             - tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
@@ -1007,7 +1007,7 @@ paths:
                           maxBackoffSeconds: 3600
                         createdAt: '2026-05-01T03:20:00Z'
                         availableActions: [deactivate]
-                      - id: whsub_01JY505D3N3NQ96Z4BNC5S40A1
+                      - id: evsub_01JY505D3N3NQ96Z4BNC5S40A1
                         url: https://agents.example.com/webhooks/archive
                         eventTypes: [task.shipped]
                         filters:
@@ -1027,10 +1027,10 @@ paths:
           $ref: '#/components/responses/InsufficientScope'
     post:
       tags: [Task Events]
-      operationId: createTaskWebhookSubscription
-      summary: Register durable webhook delivery for task lifecycle events
+      operationId: createEventSubscription
+      summary: Register durable webhook delivery for AgentRail events
       description: |
-        Creates a persistent webhook subscription.
+        Creates a persistent event subscription.
         Delivery is at-least-once. Consumers MUST deduplicate on event `id`.
         Safe to retry with the same `Idempotency-Key` and identical request body.
       parameters:
@@ -1040,12 +1040,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TaskWebhookSubscriptionCreateRequest'
+              $ref: '#/components/schemas/EventSubscriptionCreateRequest'
             examples:
               default:
                 value:
                   url: https://agents.example.com/webhooks/task-events
-                  eventTypes: [task.updated, task.reviewed, task.shipped]
+                  eventTypes: [task.awaiting_user, task.updated, task.reviewed, task.shipped]
                   secret: whsec_live_agentrail_contract_001
                   description: Primary automation endpoint for task lifecycle updates.
                   filters:
@@ -1053,18 +1053,18 @@ paths:
                       - tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
       responses:
         '201':
-          description: Webhook subscription created
+          description: Event subscription created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskWebhookSubscriptionResponse'
+                $ref: '#/components/schemas/EventSubscriptionResponse'
               examples:
                 default:
                   value:
                     data:
-                      id: whsub_01JY5046P0GQF33KKV80M0X19A
+                      id: evsub_01JY5046P0GQF33KKV80M0X19A
                       url: https://agents.example.com/webhooks/task-events
-                      eventTypes: [task.updated, task.reviewed, task.shipped]
+                      eventTypes: [task.awaiting_user, task.updated, task.reviewed, task.shipped]
                       filters:
                         taskIds:
                           - tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
@@ -1092,7 +1092,7 @@ paths:
                       code: conflict
                       message: An active subscription already exists for this endpoint and filter set.
                       details:
-                        subscriptionId: whsub_01JY5046P0GQF33KKV80M0X19A
+                        subscriptionId: evsub_01JY5046P0GQF33KKV80M0X19A
                         availableActions: [deactivate]
                 idempotency_mismatch:
                   value:
@@ -1365,28 +1365,28 @@ paths:
                         availableActions: [retry]
         '404':
           $ref: '#/components/responses/NotFound'
-  /task-webhook-subscriptions/{subscriptionId}:
+  /event-subscriptions/{subscriptionId}:
     get:
       tags: [Task Events]
-      operationId: getTaskWebhookSubscription
-      summary: Get a task lifecycle webhook subscription
+      operationId: getEventSubscription
+      summary: Get an AgentRail event subscription
       description: |
-        Returns the current snapshot for one durable webhook subscription.
+        Returns the current snapshot for one durable event subscription.
         Requires a key with `webhooks:read`.
       parameters:
-        - $ref: '#/components/parameters/WebhookSubscriptionIdPath'
+        - $ref: '#/components/parameters/EventSubscriptionIdPath'
       responses:
         '200':
-          description: Webhook subscription found
+          description: Event subscription found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskWebhookSubscriptionResponse'
+                $ref: '#/components/schemas/EventSubscriptionResponse'
               examples:
                 default:
                   value:
                     data:
-                      id: whsub_01JY5046P0GQF33KKV80M0X19A
+                      id: evsub_01JY5046P0GQF33KKV80M0X19A
                       url: https://agents.example.com/webhooks/task-events
                       eventTypes: [task.updated, task.reviewed, task.shipped]
                       filters:
@@ -1409,22 +1409,25 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       tags: [Task Events]
-      operationId: deactivateTaskWebhookSubscription
-      summary: Deactivate a task lifecycle webhook subscription
+      operationId: deactivateEventSubscription
+      summary: Deactivate an AgentRail event subscription
+      description: |
+        Disables future webhook deliveries for the subscription. Existing
+        terminal delivery records are retained for auditability.
       parameters:
-        - $ref: '#/components/parameters/WebhookSubscriptionIdPath'
+        - $ref: '#/components/parameters/EventSubscriptionIdPath'
       responses:
         '202':
           description: Subscription deactivation accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskWebhookSubscriptionResponse'
+                $ref: '#/components/schemas/EventSubscriptionResponse'
               examples:
                 default:
                   value:
                     data:
-                      id: whsub_01JY5046P0GQF33KKV80M0X19A
+                      id: evsub_01JY5046P0GQF33KKV80M0X19A
                       url: https://agents.example.com/webhooks/task-events
                       eventTypes: [task.updated, task.reviewed, task.shipped]
                       filters:
@@ -1513,7 +1516,7 @@ webhooks:
         `X-AgentRail-Event-Id` remains stable across retries. `X-AgentRail-Delivery-Id`
         changes on each attempt.
       parameters:
-        - $ref: '#/components/parameters/AgentRailWebhookIdHeader'
+        - $ref: '#/components/parameters/AgentRailSubscriptionIdHeader'
         - $ref: '#/components/parameters/AgentRailEventIdHeader'
         - $ref: '#/components/parameters/AgentRailEventTypeHeader'
         - $ref: '#/components/parameters/AgentRailDeliveryIdHeader'
@@ -1548,6 +1551,38 @@ webhooks:
                     links:
                       task: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
                       reviewFeedback: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback
+              task_awaiting_user:
+                value:
+                  id: evt_01JY50B4K7QNY3BMCPX2B27HP4
+                  type: task.awaiting_user
+                  occurredAt: '2026-05-01T03:22:11Z'
+                  sequence: 4122
+                  taskVersion: 9
+                  traceId: trc_01JY50B09Z0GH7G99Q0PF8P5NB
+                  data:
+                    taskId: tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                    taskIdentifier: AGEA-13
+                    status: blocked
+                    previousStatus: in_progress
+                    changedFields: [status, availableActions, blocker, updatedAt]
+                    actor:
+                      id: agt_cto
+                      role: agent
+                    summary: Task is awaiting user input.
+                    availableActions: [resolve_blocker]
+                    blocker:
+                      kind: awaiting_user
+                      sourceRunId: run_01JY50B0C8CC4G9YHD04J0ECBP
+                      sourceAgentId: agt_cto
+                      reason: Missing production credentials.
+                      actionRequired: Connect the production deploy token.
+                      resumeInstructions: Resolve the blocker after the token is available.
+                      createdAt: '2026-05-01T03:22:11Z'
+                    links:
+                      task: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V
+                      reviewFeedback: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/review-feedback
+                      ciStatus: https://api.agentrail.app/v1/tasks/tsk_01JY4X8Q6J5Q3P7M0N2K3R4T5V/ci-status
+                      shipOperation: null
               task_shipped:
                 value:
                   id: evt_01JY50F8SQ4C1T3DJ2TGM4G69K
@@ -1601,14 +1636,14 @@ components:
         type: string
         pattern: '^tsk_[A-Za-z0-9]+$'
       description: Stable task ID
-    WebhookSubscriptionIdPath:
+    EventSubscriptionIdPath:
       in: path
       name: subscriptionId
       required: true
       schema:
         type: string
-        pattern: '^whsub_[A-Za-z0-9]+$'
-      description: Stable webhook subscription ID
+        pattern: '^evsub_[A-Za-z0-9]+$'
+      description: Stable event subscription ID
     IdempotencyKeyHeader:
       in: header
       name: Idempotency-Key
@@ -1671,14 +1706,14 @@ components:
         maximum: 60
         default: 20
       description: Idle keepalive cadence for the SSE stream.
-    AgentRailWebhookIdHeader:
+    AgentRailSubscriptionIdHeader:
       in: header
-      name: X-AgentRail-Webhook-Id
+      name: X-AgentRail-Subscription-Id
       required: true
       schema:
         type: string
-        pattern: '^whsub_[A-Za-z0-9]+$'
-      description: The webhook subscription that triggered the delivery.
+        pattern: '^evsub_[A-Za-z0-9]+$'
+      description: The event subscription that triggered the delivery.
     AgentRailEventIdHeader:
       in: header
       name: X-AgentRail-Event-Id
@@ -3037,7 +3072,7 @@ components:
               $ref: '#/components/schemas/AvailableActions'
         availableActions:
           $ref: '#/components/schemas/AvailableActions'
-    TaskWebhookSubscriptionCreateRequest:
+    EventSubscriptionCreateRequest:
       type: object
       additionalProperties: false
       required: [url, eventTypes, secret]
@@ -3071,7 +3106,7 @@ components:
               items:
                 type: string
                 pattern: '^tsk_[A-Za-z0-9]+$'
-    TaskWebhookSubscription:
+    EventSubscription:
       type: object
       additionalProperties: false
       required:
@@ -3127,7 +3162,7 @@ components:
           format: date-time
         availableActions:
           $ref: '#/components/schemas/AvailableActions'
-    TaskWebhookSubscriptionListResponse:
+    EventSubscriptionListResponse:
       type: object
       additionalProperties: false
       required: [data, availableActions]
@@ -3135,21 +3170,21 @@ components:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/TaskWebhookSubscription'
+            $ref: '#/components/schemas/EventSubscription'
         availableActions:
           $ref: '#/components/schemas/AvailableActions'
-    TaskWebhookSubscriptionResponse:
+    EventSubscriptionResponse:
       type: object
       additionalProperties: false
       required: [data, availableActions]
       properties:
         data:
-          $ref: '#/components/schemas/TaskWebhookSubscription'
+          $ref: '#/components/schemas/EventSubscription'
         availableActions:
           $ref: '#/components/schemas/AvailableActions'
     TaskEventType:
       type: string
-      enum: [task.updated, task.reviewed, task.shipped]
+      enum: [task.updated, task.reviewed, task.shipped, task.awaiting_user]
     TaskEventActor:
       type: object
       additionalProperties: false
@@ -3218,6 +3253,52 @@ components:
           maxLength: 280
         availableActions:
           $ref: '#/components/schemas/AvailableActions'
+        blocker:
+          anyOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/TaskBlocker'
+        links:
+          $ref: '#/components/schemas/TaskEventLinks'
+    TaskAwaitingUserEventData:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - taskIdentifier
+        - status
+        - previousStatus
+        - changedFields
+        - actor
+        - summary
+        - availableActions
+        - blocker
+        - links
+      properties:
+        taskId:
+          type: string
+        taskIdentifier:
+          type: string
+        status:
+          type: string
+          enum: [blocked]
+        previousStatus:
+          type: [string, 'null']
+          enum: [todo, in_progress, in_review, blocked, done, cancelled, null]
+        changedFields:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+        actor:
+          $ref: '#/components/schemas/TaskEventActor'
+        summary:
+          type: string
+          maxLength: 280
+        availableActions:
+          $ref: '#/components/schemas/AvailableActions'
+        blocker:
+          $ref: '#/components/schemas/TaskBlocker'
         links:
           $ref: '#/components/schemas/TaskEventLinks'
     TaskReviewedEventData:
@@ -3316,6 +3397,33 @@ components:
           type: [string, 'null']
         data:
           $ref: '#/components/schemas/TaskUpdatedEventData'
+    TaskAwaitingUserEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, occurredAt, sequence, taskVersion, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: task.awaiting_user
+        occurredAt:
+          type: string
+          format: date-time
+        sequence:
+          type: integer
+          minimum: 1
+          description: |
+            Global monotonic sequence within the task lifecycle outbox, shared
+            by webhook delivery and SSE replay cursors. It is not the task-local
+            ordering key; use `taskVersion` for per-task ordering.
+        taskVersion:
+          type: integer
+          minimum: 1
+        traceId:
+          type: [string, 'null']
+        data:
+          $ref: '#/components/schemas/TaskAwaitingUserEventData'
     TaskReviewedEvent:
       type: object
       additionalProperties: false
@@ -3373,12 +3481,14 @@ components:
     TaskLifecycleEventEnvelope:
       oneOf:
         - $ref: '#/components/schemas/TaskUpdatedEvent'
+        - $ref: '#/components/schemas/TaskAwaitingUserEvent'
         - $ref: '#/components/schemas/TaskReviewedEvent'
         - $ref: '#/components/schemas/TaskShippedEvent'
       discriminator:
         propertyName: type
         mapping:
           task.updated: '#/components/schemas/TaskUpdatedEvent'
+          task.awaiting_user: '#/components/schemas/TaskAwaitingUserEvent'
           task.reviewed: '#/components/schemas/TaskReviewedEvent'
           task.shipped: '#/components/schemas/TaskShippedEvent'
     ErrorResponse:

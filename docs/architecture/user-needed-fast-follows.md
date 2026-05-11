@@ -11,7 +11,8 @@ can survive context compaction and be implemented as separate pull requests.
   and startup/shutdown summaries.
 - Add one-shot desktop notifications for tasks that transition to user-needed
   state.
-- Add optional webhook notifications for user-needed state transitions.
+- Add generic AgentRail event subscriptions with webhook delivery, including
+  user-needed state transitions.
 - Add stale-run / reclaimability policy so abandoned runs do not leave zombie
   tasks behind.
 - Add richer resume metadata for user-needed tasks, including explicit action
@@ -105,13 +106,17 @@ Add one-shot local desktop notifications when a run transitions to
 This should depend on PR 1 so notifications can use the canonical state and
 structured user-action metadata instead of parsing free-text summaries.
 
-### PR 3: Webhook Notifications
+### PR 3: AgentRail Event Subscriptions
 
-Add optional webhook notifications for user-needed state transitions.
+Add generic AgentRail event subscriptions with webhook delivery. PR 3 should
+not create a user-needed-only webhook surface; it should introduce
+`/event-subscriptions` as the opt-in subscription API for current and future
+AgentRail events.
 
 This should follow desktop notifications because it needs more configuration,
-delivery, retry, and dedupe decisions. It should use the same canonical
-transition event as desktop notifications.
+delivery, retry, and dedupe decisions. It should include `task.awaiting_user`
+as a first event type while keeping the subscription model broad enough for
+`task.updated`, `task.reviewed`, `task.shipped`, and future events.
 
 ### PR 4: Stale Run And Reclaimability Policy
 
@@ -136,7 +141,7 @@ with the state/metadata foundation.
 1. Implement PR 1 first. It creates the model and UX foundation.
 2. Implement desktop notifications next as the smallest useful interruption
    channel.
-3. Implement webhook notifications after local notifications prove the event
-   shape.
+3. Implement AgentRail event subscriptions after local notifications prove the
+   user-needed event shape.
 4. Implement stale-run / reclaimability policy last, after `awaiting_user` and
    resume metadata exist.

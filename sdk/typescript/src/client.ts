@@ -5,6 +5,9 @@ import type {
   AgentApiKeyRotateRequest,
   AgentApiKeyUsageResponse,
   AgentRailClientOptions,
+  EventSubscriptionCreateRequest,
+  EventSubscriptionListResponse,
+  EventSubscriptionResponse,
   LinearTaskCommentRequest,
   LinearTaskCommentResponse,
   LinearTaskWorkflowStateRequest,
@@ -158,38 +161,63 @@ export class AgentRailClient {
     });
   }
 
-  // ── Webhooks ───────────────────────────────────────────────────
+  // ── Event Subscriptions ────────────────────────────────────────
+
+  async listEventSubscriptions(): Promise<EventSubscriptionListResponse> {
+    return this.request("GET", "/event-subscriptions");
+  }
+
+  async getEventSubscription(
+    subscriptionId: string,
+  ): Promise<EventSubscriptionResponse> {
+    return this.request(
+      "GET",
+      `/event-subscriptions/${encodeURIComponent(subscriptionId)}`,
+    );
+  }
+
+  async createEventSubscription(
+    request: EventSubscriptionCreateRequest,
+    idempotencyKey: string,
+  ): Promise<EventSubscriptionResponse> {
+    return this.request("POST", "/event-subscriptions", {
+      body: request,
+      headers: { "Idempotency-Key": idempotencyKey },
+    });
+  }
+
+  async deactivateEventSubscription(
+    subscriptionId: string,
+  ): Promise<EventSubscriptionResponse> {
+    return this.request(
+      "DELETE",
+      `/event-subscriptions/${encodeURIComponent(subscriptionId)}`,
+    );
+  }
+
+  // ── Webhook aliases ────────────────────────────────────────────
 
   async listWebhookSubscriptions(): Promise<TaskWebhookSubscriptionListResponse> {
-    return this.request("GET", "/task-webhook-subscriptions");
+    return this.listEventSubscriptions();
   }
 
   async getWebhookSubscription(
     subscriptionId: string,
   ): Promise<TaskWebhookSubscriptionResponse> {
-    return this.request(
-      "GET",
-      `/task-webhook-subscriptions/${encodeURIComponent(subscriptionId)}`,
-    );
+    return this.getEventSubscription(subscriptionId);
   }
 
   async createWebhookSubscription(
     request: TaskWebhookSubscriptionCreateRequest,
     idempotencyKey: string,
   ): Promise<TaskWebhookSubscriptionResponse> {
-    return this.request("POST", "/task-webhook-subscriptions", {
-      body: request,
-      headers: { "Idempotency-Key": idempotencyKey },
-    });
+    return this.createEventSubscription(request, idempotencyKey);
   }
 
   async deactivateWebhookSubscription(
     subscriptionId: string,
   ): Promise<TaskWebhookSubscriptionResponse> {
-    return this.request(
-      "DELETE",
-      `/task-webhook-subscriptions/${encodeURIComponent(subscriptionId)}`,
-    );
+    return this.deactivateEventSubscription(subscriptionId);
   }
 
   // ── Event Stream ───────────────────────────────────────────────

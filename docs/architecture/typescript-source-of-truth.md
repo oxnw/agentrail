@@ -17,6 +17,8 @@ Runtime source duplicates removed from `src/`:
 - `agent-task-queue.js` / `agent-task-queue.ts`
 - `app.js` / `app.ts`
 - `circleci-status-adapter.js` / `circleci-status-adapter.ts`
+- `event-delivery-worker.js` / `event-delivery-worker.ts`
+- `event-subscription-store.js` / `event-subscription-store.ts`
 - `github-actions-ci-adapter.js` / `github-actions-ci-adapter.ts`
 - `github-issue-intake-adapter.js` / `github-issue-intake-adapter.ts`
 - `github-review-feedback-adapter.js` / `github-review-feedback-adapter.ts`
@@ -29,8 +31,6 @@ Runtime source duplicates removed from `src/`:
 - `task-event-store.js` / `task-event-store.ts`
 - `task-lifecycle-errors.js` / `task-lifecycle-errors.ts`
 - `task-store.js` / `task-store.ts`
-- `task-webhook-delivery-worker.js` / `task-webhook-delivery-worker.ts`
-- `task-webhook-store.js` / `task-webhook-store.ts`
 - `waitlist-store.js` / `waitlist-store.ts`
 
 SDK source duplicates removed from `sdk/typescript/src/`:

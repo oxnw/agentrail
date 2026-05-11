@@ -132,13 +132,17 @@ class ShipStatus(str, Enum):
 
 class TaskEventType(str, Enum):
     TASK_UPDATED = "task.updated"
+    TASK_AWAITING_USER = "task.awaiting_user"
     TASK_REVIEWED = "task.reviewed"
     TASK_SHIPPED = "task.shipped"
 
 
-class WebhookSubscriptionStatus(str, Enum):
+class EventSubscriptionStatus(str, Enum):
     ACTIVE = "active"
     DISABLED = "disabled"
+
+
+WebhookSubscriptionStatus = EventSubscriptionStatus
 
 
 class FlakyConfidence(str, Enum):
@@ -284,6 +288,18 @@ class AgentApiKeyUsageResponse(BaseModel):
 # ── Tasks ──────────────────────────────────────────────────────────
 
 
+class TaskBlocker(BaseModel):
+    kind: Literal["awaiting_user"]
+    source_run_id: str = Field(alias="sourceRunId")
+    source_agent_id: str = Field(alias="sourceAgentId")
+    reason: str
+    action_required: str = Field(alias="actionRequired")
+    resume_instructions: str = Field(alias="resumeInstructions")
+    created_at: datetime = Field(alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
 class TaskSummary(BaseModel):
     id: str
     identifier: str
@@ -292,6 +308,7 @@ class TaskSummary(BaseModel):
     priority: TaskPriority
     due_at: datetime | None = Field(default=None, alias="dueAt")
     updated_at: datetime = Field(alias="updatedAt")
+    blocker: TaskBlocker | None = None
     available_actions: list[str] = Field(alias="availableActions")
 
     model_config = {"populate_by_name": True}
@@ -366,6 +383,7 @@ class TaskDetail(BaseModel):
     routing_decision_id: str | None = Field(default=None, alias="routingDecisionId")
     routing_reason: TaskRoutingReason | None = Field(default=None, alias="routingReason")
     routing_confidence: float | None = Field(default=None, alias="routingConfidence")
+    blocker: TaskBlocker | None = None
     available_actions: list[str] = Field(alias="availableActions")
 
     model_config = {"populate_by_name": True}
@@ -724,6 +742,14 @@ class TaskWebhookSubscriptionListResponse(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+EventSubscriptionCreateRequest = TaskWebhookSubscriptionCreateRequest
+EventSubscriptionData = TaskWebhookSubscriptionData
+EventSubscriptionListResponse = TaskWebhookSubscriptionListResponse
+EventSubscriptionResponse = TaskWebhookSubscriptionResponse
+EventSubscriptionFilters = WebhookFilters
+EventSubscriptionRetryPolicy = WebhookRetryPolicy
+
+
 # ── Task Events ────────────────────────────────────────────────────
 
 
@@ -750,6 +776,22 @@ class TaskUpdatedEventData(BaseModel):
     actor: TaskEventActor
     summary: str
     available_actions: list[str] = Field(alias="availableActions")
+    blocker: TaskBlocker | None = None
+    links: TaskEventLinks
+
+    model_config = {"populate_by_name": True}
+
+
+class TaskAwaitingUserEventData(BaseModel):
+    task_id: str = Field(alias="taskId")
+    task_identifier: str = Field(alias="taskIdentifier")
+    status: Literal["blocked"]
+    previous_status: TaskStatus | None = Field(alias="previousStatus")
+    changed_fields: list[str] = Field(alias="changedFields")
+    actor: TaskEventActor
+    summary: str
+    available_actions: list[str] = Field(alias="availableActions")
+    blocker: TaskBlocker
     links: TaskEventLinks
 
     model_config = {"populate_by_name": True}
@@ -794,6 +836,18 @@ class TaskUpdatedEvent(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class TaskAwaitingUserEvent(BaseModel):
+    id: str
+    type: Literal["task.awaiting_user"]
+    occurred_at: datetime = Field(alias="occurredAt")
+    sequence: int
+    task_version: int = Field(alias="taskVersion")
+    trace_id: str | None = Field(alias="traceId")
+    data: TaskAwaitingUserEventData
+
+    model_config = {"populate_by_name": True}
+
+
 class TaskReviewedEvent(BaseModel):
     id: str
     type: Literal["task.reviewed"]
@@ -819,6 +873,6 @@ class TaskShippedEvent(BaseModel):
 
 
 TaskLifecycleEvent = Annotated[
-    Union[TaskUpdatedEvent, TaskReviewedEvent, TaskShippedEvent],
+    Union[TaskUpdatedEvent, TaskAwaitingUserEvent, TaskReviewedEvent, TaskShippedEvent],
     Field(discriminator="type"),
 ]

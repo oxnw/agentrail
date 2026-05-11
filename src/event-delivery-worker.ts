@@ -3,11 +3,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import {
-  type WebhookEvent,
-  type WebhookSubscription,
+  type AgentRailEvent,
+  type AgentRailEventSubscription,
   eventMatchesSubscription,
   signatureForPayload
-} from "./task-webhook-store.ts";
+} from "./event-subscription-store.ts";
 
 export const DELIVERY_SCHEDULE_SECONDS = [0, 10, 30, 90, 300, 900, 1800, 3600] as const;
 
@@ -26,25 +26,26 @@ export interface DeliveryRecord {
 }
 
 export interface TaskEventStore {
-  getEventsAfter(sequence: number, filters?: unknown): WebhookEvent[];
+  getEventsAfter(sequence: number, filters?: unknown): AgentRailEvent[];
+  subscribe?(listener: (event: AgentRailEvent) => void): () => void;
 }
 
-export interface TaskWebhookStore {
-  listActiveSubscriptions(): WebhookSubscription[];
+export interface EventSubscriptionStore {
+  listActiveSubscriptions(): AgentRailEventSubscription[];
   deactivateSubscription(subscriptionId: string, reason: string): unknown;
 }
 
-export interface TaskWebhookDeliveryWorkerOptions {
+export interface AgentRailEventDeliveryWorkerOptions {
   eventStore: TaskEventStore;
-  webhookStore: TaskWebhookStore;
+  eventSubscriptionStore: EventSubscriptionStore;
   fetch?: typeof globalThis.fetch;
   now?: () => Date;
   storagePath?: string;
 }
 
-export class TaskWebhookDeliveryWorker {
+export class AgentRailEventDeliveryWorker {
   private eventStore: TaskEventStore;
-  private webhookStore: TaskWebhookStore;
+  private eventSubscriptionStore: EventSubscriptionStore;
   private fetchFn: typeof globalThis.fetch;
   private now: () => Date;
   private storagePath: string | undefined;
@@ -52,13 +53,13 @@ export class TaskWebhookDeliveryWorker {
 
   constructor({
     eventStore,
-    webhookStore,
+    eventSubscriptionStore,
     fetch: fetchImpl = globalThis.fetch,
     now = () => new Date(),
     storagePath
-  }: TaskWebhookDeliveryWorkerOptions) {
+  }: AgentRailEventDeliveryWorkerOptions) {
     this.eventStore = eventStore;
-    this.webhookStore = webhookStore;
+    this.eventSubscriptionStore = eventSubscriptionStore;
     this.fetchFn = fetchImpl;
     this.now = now;
     this.storagePath = storagePath;
@@ -67,11 +68,14 @@ export class TaskWebhookDeliveryWorker {
 
   async processDueDeliveries(): Promise<void> {
     const events = this.eventStore.getEventsAfter(0);
-    const subscriptions = this.webhookStore.listActiveSubscriptions();
+    const subscriptions = this.eventSubscriptionStore.listActiveSubscriptions();
     const currentTime = this.now();
+    const disabledSubscriptionIds = new Set<string>();
 
     for (const event of events) {
       for (const subscription of subscriptions) {
+        if (disabledSubscriptionIds.has(subscription.id)) continue;
+        if (event.sequence <= subscription.createdAfterSequence) continue;
         if (!eventMatchesSubscription(event, subscription)) continue;
         const deliveryKey = toDeliveryKey(event.id, subscription.id);
         const delivery =
@@ -81,11 +85,13 @@ export class TaskWebhookDeliveryWorker {
         if (isTerminal(delivery.status)) continue;
 
         if (delivery.nextAttemptAt !== null && new Date(delivery.nextAttemptAt).getTime() > currentTime.getTime()) {
-          this.setDelivery(deliveryKey, delivery);
           continue;
         }
 
-        await this.deliverEvent({ deliveryKey, delivery, event, subscription, currentTime });
+        const status = await this.deliverEvent({ deliveryKey, delivery, event, subscription, currentTime });
+        if (status === "disabled") {
+          disabledSubscriptionIds.add(subscription.id);
+        }
       }
     }
   }
@@ -109,10 +115,10 @@ export class TaskWebhookDeliveryWorker {
   }: {
     deliveryKey: string;
     delivery: DeliveryRecord;
-    event: WebhookEvent;
-    subscription: WebhookSubscription;
+    event: AgentRailEvent;
+    subscription: AgentRailEventSubscription;
     currentTime: Date;
-  }): Promise<void> {
+  }): Promise<DeliveryStatus> {
     const attempt = delivery.attempt + 1;
     const rawBody = JSON.stringify(event);
     const deliveryId = createId("dlv");
@@ -122,7 +128,7 @@ export class TaskWebhookDeliveryWorker {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-agentrail-webhook-id": subscription.id,
+          "x-agentrail-subscription-id": subscription.id,
           "x-agentrail-event-id": event.id,
           "x-agentrail-event-type": event.type,
           "x-agentrail-delivery-id": deliveryId,
@@ -132,7 +138,7 @@ export class TaskWebhookDeliveryWorker {
         body: rawBody
       });
 
-      if (response.status === 200 || response.status === 202) {
+      if (response.status >= 200 && response.status < 300) {
         this.setDelivery(deliveryKey, {
           ...delivery,
           attempt,
@@ -142,11 +148,11 @@ export class TaskWebhookDeliveryWorker {
           lastResponseStatus: response.status,
           updatedAt: currentTime.toISOString()
         });
-        return;
+        return "delivered";
       }
 
       if (response.status === 410) {
-        this.webhookStore.deactivateSubscription(subscription.id, "remote_gone");
+        this.eventSubscriptionStore.deactivateSubscription(subscription.id, "remote_gone");
         this.setDelivery(deliveryKey, {
           ...delivery,
           attempt,
@@ -156,15 +162,14 @@ export class TaskWebhookDeliveryWorker {
           lastResponseStatus: response.status,
           updatedAt: currentTime.toISOString()
         });
-        return;
+        return "disabled";
       }
 
       if (response.status >= 500) {
-        this.recordRetryableFailure({
+        return this.recordRetryableFailure({
           deliveryKey, delivery, attempt, deliveryId, currentTime,
           responseStatus: response.status
         });
-        return;
       }
 
       this.setDelivery(deliveryKey, {
@@ -176,8 +181,9 @@ export class TaskWebhookDeliveryWorker {
         lastResponseStatus: response.status,
         updatedAt: currentTime.toISOString()
       });
+      return "failed";
     } catch (error) {
-      this.recordRetryableFailure({
+      return this.recordRetryableFailure({
         deliveryKey, delivery, attempt, deliveryId, currentTime,
         responseStatus: null,
         lastError: error instanceof Error ? error.message : String(error)
@@ -201,7 +207,7 @@ export class TaskWebhookDeliveryWorker {
     currentTime: Date;
     responseStatus: number | null;
     lastError?: string | null;
-  }): void {
+  }): DeliveryStatus {
     if (attempt >= DELIVERY_SCHEDULE_SECONDS.length) {
       this.setDelivery(deliveryKey, {
         ...delivery,
@@ -213,7 +219,7 @@ export class TaskWebhookDeliveryWorker {
         lastError,
         updatedAt: currentTime.toISOString()
       });
-      return;
+      return "exhausted";
     }
     this.setDelivery(deliveryKey, {
       ...delivery,
@@ -227,6 +233,7 @@ export class TaskWebhookDeliveryWorker {
       lastError,
       updatedAt: currentTime.toISOString()
     });
+    return "pending";
   }
 
   private persist(): void {
@@ -240,9 +247,72 @@ export class TaskWebhookDeliveryWorker {
   }
 }
 
+export interface AgentRailEventDeliveryControllerOptions {
+  eventStore: TaskEventStore;
+  worker: Pick<AgentRailEventDeliveryWorker, "processDueDeliveries">;
+  intervalMs?: number;
+}
+
+export class AgentRailEventDeliveryController {
+  private eventStore: TaskEventStore;
+  private worker: Pick<AgentRailEventDeliveryWorker, "processDueDeliveries">;
+  private intervalMs: number;
+  private unsubscribe: (() => void) | null = null;
+  private interval: NodeJS.Timeout | null = null;
+  private inFlight: Promise<void> | null = null;
+  private rerunRequested = false;
+
+  constructor({ eventStore, worker, intervalMs = 10_000 }: AgentRailEventDeliveryControllerOptions) {
+    this.eventStore = eventStore;
+    this.worker = worker;
+    this.intervalMs = intervalMs;
+  }
+
+  start(): void {
+    if (this.interval) return;
+    this.unsubscribe = this.eventStore.subscribe?.(() => {
+      this.scheduleRun();
+    }) ?? null;
+    this.interval = setInterval(() => {
+      this.scheduleRun();
+    }, this.intervalMs);
+    this.scheduleRun();
+  }
+
+  async stop(): Promise<void> {
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    await this.inFlight;
+  }
+
+  private scheduleRun(): void {
+    if (this.inFlight) {
+      this.rerunRequested = true;
+      return;
+    }
+
+    this.inFlight = this.worker.processDueDeliveries()
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        process.emitWarning(`AgentRail event delivery failed: ${message}`);
+      })
+      .finally(() => {
+        this.inFlight = null;
+        if (this.rerunRequested) {
+          this.rerunRequested = false;
+          this.scheduleRun();
+        }
+      });
+  }
+}
+
 function createPendingDelivery(
-  event: WebhookEvent,
-  subscription: WebhookSubscription,
+  event: AgentRailEvent,
+  subscription: AgentRailEventSubscription,
   currentTime: Date
 ): DeliveryRecord {
   return {
@@ -276,5 +346,11 @@ interface LoadedState {
 
 function loadState(storagePath: string | undefined): LoadedState {
   if (!storagePath || !existsSync(storagePath)) return {};
-  return JSON.parse(readFileSync(storagePath, "utf8")) as LoadedState;
+  try {
+    return JSON.parse(readFileSync(storagePath, "utf8")) as LoadedState;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.emitWarning(`Failed to load AgentRail event delivery state at ${storagePath}: ${message}`);
+    return {};
+  }
 }

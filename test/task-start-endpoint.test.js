@@ -286,9 +286,13 @@ test("POST /tasks/{id}/blocker records blocker metadata and returns blocked task
   assert.deepEqual(stored?.availableActions, ["resolve_blocker"]);
   assert.deepEqual(stored?.blocker, result.body.data.blocker);
 
-  assert.equal(eventStore.events.length, 1);
+  assert.equal(eventStore.events.length, 2);
   assert.equal(eventStore.events[0].type, "task.updated");
   assert.deepEqual(eventStore.events[0].data.changedFields, ["status", "availableActions", "blocker", "updatedAt"]);
+  assert.equal(eventStore.events[1].type, "task.awaiting_user");
+  assert.equal(eventStore.events[1].data.status, "blocked");
+  assert.equal(eventStore.events[1].data.previousStatus, "in_progress");
+  assert.deepEqual(eventStore.events[1].data.blocker, result.body.data.blocker);
 });
 
 test("POST /tasks/{id}/resolve-blocker clears blocker and returns todo start action", async (t) => {
@@ -576,7 +580,7 @@ test("POST /tasks/{id}/blocker is idempotent with the same key and payload", asy
   assert.equal(first.response.status, 202);
   assert.equal(second.response.status, 202);
   assert.deepEqual(first.body, second.body);
-  assert.equal(eventStore.events.length, 1);
+  assert.equal(eventStore.events.length, 2);
 });
 
 test("POST /tasks/{id}/resolve-blocker is idempotent with the same key and payload", async (t) => {
@@ -630,5 +634,5 @@ test("POST /tasks/{id}/resolve-blocker is idempotent with the same key and paylo
   assert.equal(first.response.status, 202);
   assert.equal(second.response.status, 202);
   assert.deepEqual(first.body, second.body);
-  assert.equal(eventStore.events.length, 2);
+  assert.equal(eventStore.events.length, 3);
 });

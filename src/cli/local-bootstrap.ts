@@ -6,6 +6,8 @@ import { AgentRunStore } from "../agent-run-store.ts";
 import { createServer } from "../app.ts";
 import { AgentProfileStore } from "../agent-profile-store.ts";
 import { loadEnvFile } from "../env-file.ts";
+import { AgentRailEventDeliveryController, AgentRailEventDeliveryWorker } from "../event-delivery-worker.ts";
+import { AgentRailEventSubscriptionStore } from "../event-subscription-store.ts";
 import { TaskEventStore } from "../task-event-store.ts";
 import { buildRuntime } from "../server-runtime.ts";
 import { operatorEnvPathForHome, providerEnvPathForHome } from "./agentrail-home.ts";
@@ -22,6 +24,8 @@ interface ResolvedLocalPaths {
   taskStorePath: string;
   authStorePath: string;
   agentRunStorePath: string;
+  eventSubscriptionStorePath: string;
+  eventDeliveryStorePath: string;
   agentProfileStorePath: string;
   routingRuleStorePath: string;
   routingAuditStorePath: string;
@@ -62,7 +66,7 @@ export async function ensureLocalOperatorBootstrap({
       displayName: "Local Operator",
       role: "operator",
     },
-    scopes: ["auth:admin", "routing:admin", "routing:read", "tasks:read", "tasks:write", "usage:read"],
+    scopes: ["auth:admin", "routing:admin", "routing:read", "tasks:read", "tasks:write", "usage:read", "webhooks:read", "webhooks:write"],
   }, buildOperatorBootstrapIdempotencyKey(existing.AGENTRAIL_OPERATOR_KEY_ID));
 
   await mkdir(path.dirname(operatorEnvPath), { recursive: true });
@@ -140,6 +144,8 @@ export async function withTemporaryLocalServer<T>({
     "AGENTRAIL_TASK_STORE_PATH",
     "AGENTRAIL_AGENT_PROFILES_STORE_PATH",
     "AGENTRAIL_AGENT_RUNS_STORE_PATH",
+    "AGENTRAIL_EVENT_SUBSCRIPTION_STORE_PATH",
+    "AGENTRAIL_EVENT_DELIVERY_STORE_PATH",
     "AGENTRAIL_ROUTING_RULES_STORE_PATH",
     "AGENTRAIL_ROUTING_AUDIT_STORE_PATH",
     "AGENTRAIL_OBSERVABILITY",
@@ -153,6 +159,8 @@ export async function withTemporaryLocalServer<T>({
   process.env.AGENTRAIL_TASK_STORE_PATH = paths.taskStorePath;
   process.env.AGENTRAIL_AGENT_PROFILES_STORE_PATH = paths.agentProfileStorePath;
   process.env.AGENTRAIL_AGENT_RUNS_STORE_PATH = paths.agentRunStorePath;
+  process.env.AGENTRAIL_EVENT_SUBSCRIPTION_STORE_PATH = paths.eventSubscriptionStorePath;
+  process.env.AGENTRAIL_EVENT_DELIVERY_STORE_PATH = paths.eventDeliveryStorePath;
   process.env.AGENTRAIL_ROUTING_RULES_STORE_PATH = paths.routingRuleStorePath;
   process.env.AGENTRAIL_ROUTING_AUDIT_STORE_PATH = paths.routingAuditStorePath;
   process.env.AGENTRAIL_OBSERVABILITY = "false";
@@ -183,9 +191,24 @@ export async function withTemporaryLocalServer<T>({
     });
     const authStore = new AgentAuthStore({ now, storagePath: paths.authStorePath });
     const agentRunStore = new AgentRunStore({ now, storagePath: paths.agentRunStorePath });
+    const eventSubscriptionStore = new AgentRailEventSubscriptionStore({
+      now,
+      storagePath: paths.eventSubscriptionStorePath,
+    });
+    const eventDeliveryWorker = new AgentRailEventDeliveryWorker({
+      eventStore,
+      eventSubscriptionStore,
+      now,
+      storagePath: paths.eventDeliveryStorePath,
+    });
+    const eventDeliveryController = new AgentRailEventDeliveryController({
+      eventStore,
+      worker: eventDeliveryWorker,
+    });
     const server = createServer({
       store: eventStore,
       agentRunStore,
+      eventSubscriptionStore,
       taskLifecycleStore: runtime.taskLifecycleStore,
       ciStatusAdapter: runtime.ciStatusAdapter,
       githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET || null,
@@ -202,6 +225,7 @@ export async function withTemporaryLocalServer<T>({
     });
     try {
       await runtime.deliveryController?.start();
+      await eventDeliveryController.start();
       const listenResult = await listen(
         server,
         0,
@@ -226,6 +250,7 @@ export async function withTemporaryLocalServer<T>({
       return await handler({ baseUrl });
     } finally {
       await runtime.deliveryController?.stop();
+      await eventDeliveryController.stop();
       await closeServer(server);
     }
   } finally {
@@ -243,6 +268,8 @@ function resolveLocalPaths(homePath: string, config: SetupConfig): ResolvedLocal
     taskStorePath: path.resolve(homePath, config.persistence.taskStorePath),
     authStorePath: path.resolve(homePath, config.persistence.authStorePath),
     agentRunStorePath: path.resolve(homePath, config.persistence.agentRunStorePath),
+    eventSubscriptionStorePath: path.resolve(homePath, config.persistence.eventSubscriptionStorePath),
+    eventDeliveryStorePath: path.resolve(homePath, config.persistence.eventDeliveryStorePath),
     agentProfileStorePath: path.resolve(homePath, config.persistence.agentProfileStorePath),
     routingRuleStorePath: path.resolve(homePath, config.persistence.routingRuleStorePath),
     routingAuditStorePath: path.resolve(homePath, config.persistence.routingAuditStorePath),

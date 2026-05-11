@@ -125,7 +125,7 @@ test("agent keys bootstrap admin access, gate protected routes by scope, and exp
   const ciBody = await ciResponse.json();
   assert.equal(ciBody.data.overallStatus, "passed");
 
-  const webhookResponse = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const webhookResponse = await fetch(`${baseUrl}/event-subscriptions`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${ciKeyBody.data.apiKey}`,
@@ -169,7 +169,7 @@ test("agent keys bootstrap admin access, gate protected routes by scope, and exp
   assert.equal(webhookReadKeyResponse.status, 201);
   const webhookReadKeyBody = await webhookReadKeyResponse.json();
 
-  const webhookListResponse = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const webhookListResponse = await fetch(`${baseUrl}/event-subscriptions`, {
     headers: {
       authorization: `Bearer ${webhookReadKeyBody.data.apiKey}`
     }
@@ -180,7 +180,7 @@ test("agent keys bootstrap admin access, gate protected routes by scope, and exp
   assert.deepEqual(webhookListBody.data, []);
   assert.deepEqual(webhookListBody.availableActions, ["create"]);
 
-  const webhookCreateWithReadKeyResponse = await fetch(`${baseUrl}/task-webhook-subscriptions`, {
+  const webhookCreateWithReadKeyResponse = await fetch(`${baseUrl}/event-subscriptions`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${webhookReadKeyBody.data.apiKey}`,

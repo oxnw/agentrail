@@ -10,28 +10,40 @@ const RETRY_POLICY = {
 
 type RetryPolicy = typeof RETRY_POLICY;
 
-export interface WebhookFilterSet {
+export const AGENTRAIL_EVENT_TYPES = [
+  "task.updated",
+  "task.reviewed",
+  "task.shipped",
+  "task.awaiting_user",
+] as const;
+
+export type AgentRailEventType = typeof AGENTRAIL_EVENT_TYPES[number];
+
+const AGENTRAIL_EVENT_TYPE_SET = new Set<string>(AGENTRAIL_EVENT_TYPES);
+
+export interface EventSubscriptionFilterSet {
   taskIds: string[];
 }
 
-export interface WebhookSubscription {
+export interface AgentRailEventSubscription {
   id: string;
   url: string;
-  eventTypes: string[];
-  filters: WebhookFilterSet;
+  eventTypes: AgentRailEventType[];
+  filters: EventSubscriptionFilterSet;
   secret: string;
   description: string | null;
   status: "active" | "disabled";
   createdAt: string;
+  createdAfterSequence: number;
   disabledAt: string | null;
   disableReason: string | null;
 }
 
-export interface SubscriptionData {
+export interface EventSubscriptionData {
   id: string;
   url: string;
-  eventTypes: string[];
-  filters: WebhookFilterSet;
+  eventTypes: AgentRailEventType[];
+  filters: EventSubscriptionFilterSet;
   status: "active" | "disabled";
   signingAlgorithm: "hmac_sha256";
   retryPolicy: RetryPolicy;
@@ -39,14 +51,14 @@ export interface SubscriptionData {
   availableActions: string[];
 }
 
-export interface SubscriptionResponse {
-  data: SubscriptionData;
+export interface EventSubscriptionResponse {
+  data: EventSubscriptionData;
   availableActions: string[];
 }
 
 export interface IdempotencyEntry {
   requestFingerprint: string;
-  response: SubscriptionResponse;
+  response: EventSubscriptionResponse;
 }
 
 export class ValidationError extends Error {
@@ -61,17 +73,21 @@ export class ConflictError extends Error {
   constructor(message: string, details: Record<string, unknown> = {}) { super(message); this.details = details; }
 }
 
-export interface CreateSubscriptionPayload {
+export interface CreateEventSubscriptionPayload {
   url: string;
-  eventTypes: string[];
+  eventTypes: AgentRailEventType[];
   secret: string;
   description?: string | null;
   filters?: { taskIds?: string[] } | null;
 }
 
-export interface TaskWebhookSubscriptionStoreOptions {
+export interface AgentRailEventSubscriptionStoreOptions {
   now?: () => Date;
   storagePath?: string;
+}
+
+export interface CreateEventSubscriptionOptions {
+  createdAfterSequence?: number;
 }
 
 function validateIdempotencyKey(idempotencyKey: string): void {
@@ -80,31 +96,47 @@ function validateIdempotencyKey(idempotencyKey: string): void {
 }
 
 function stableStringify(value: unknown): string {
+  if (value === undefined) return "null";
   if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
   if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(",")}}`;
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .sort()
+      .filter((key) => record[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`);
+    return `{${entries.join(",")}}`;
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? "null";
 }
 
 function createId(prefix: string): string { return `${prefix}_${crypto.randomBytes(10).toString("hex")}`; }
 
+function normalizeCreatedAfterSequence(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
 interface LoadedState {
-  subscriptions?: WebhookSubscription[];
+  subscriptions?: AgentRailEventSubscription[];
   idempotencyEntries?: Array<[string, IdempotencyEntry]>;
 }
 
 function loadState(storagePath: string | undefined): LoadedState {
   if (!storagePath || !existsSync(storagePath)) return {};
-  return JSON.parse(readFileSync(storagePath, "utf8")) as LoadedState;
+  try {
+    return JSON.parse(readFileSync(storagePath, "utf8")) as LoadedState;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.emitWarning(`Failed to load AgentRail event subscription state at ${storagePath}: ${message}`);
+    return {};
+  }
 }
 
 type NormalizedCreateRequest = {
-  url: string; eventTypes: string[]; secret: string;
-  description: string | null; filters: WebhookFilterSet;
+  url: string; eventTypes: AgentRailEventType[]; secret: string;
+  description: string | null; filters: EventSubscriptionFilterSet;
 };
 
-function normalizeCreateRequest(payload: CreateSubscriptionPayload | unknown): NormalizedCreateRequest {
+function normalizeCreateRequest(payload: CreateEventSubscriptionPayload | unknown): NormalizedCreateRequest {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     throw new ValidationError("Request body must be a JSON object.");
   const p = payload as Record<string, unknown>;
@@ -119,9 +151,16 @@ function normalizeCreateRequest(payload: CreateSubscriptionPayload | unknown): N
   }
   if (!Array.isArray(p.eventTypes) || p.eventTypes.length === 0)
     throw new ValidationError("`eventTypes` must contain at least one event type.");
-  const normalizedEventTypes = [...new Set(p.eventTypes as string[])].sort();
-  if (normalizedEventTypes.some((eventType) => typeof eventType !== "string"))
+  if (p.eventTypes.some((eventType) => typeof eventType !== "string"))
     throw new ValidationError("`eventTypes` must contain only strings.");
+  const normalizedEventTypes = [...new Set(p.eventTypes as string[])].sort();
+  const unsupportedEventType = normalizedEventTypes.find((eventType) => !AGENTRAIL_EVENT_TYPE_SET.has(eventType));
+  if (unsupportedEventType) {
+    throw new ValidationError("`eventTypes` contains an unsupported event type.", {
+      eventType: unsupportedEventType,
+      supportedEventTypes: [...AGENTRAIL_EVENT_TYPES],
+    });
+  }
   if (typeof p.secret !== "string" || p.secret.length < 16 || p.secret.length > 128)
     throw new ValidationError("`secret` must be between 16 and 128 characters.");
   const rawFilters = p.filters;
@@ -134,14 +173,14 @@ function normalizeCreateRequest(payload: CreateSubscriptionPayload | unknown): N
     throw new ValidationError("`filters.taskIds` must contain only strings.");
   return {
     url: p.url,
-    eventTypes: normalizedEventTypes,
+    eventTypes: normalizedEventTypes as AgentRailEventType[],
     secret: p.secret,
     description: typeof p.description === "string" ? p.description : null,
     filters: { taskIds: normalizedTaskIds }
   };
 }
 
-function toSubscriptionResponse(subscription: WebhookSubscription): SubscriptionResponse {
+function toSubscriptionResponse(subscription: AgentRailEventSubscription): EventSubscriptionResponse {
   const availableActions = subscription.status === "active" ? ["deactivate"] : [];
   return {
     data: {
@@ -159,21 +198,28 @@ function toSubscriptionResponse(subscription: WebhookSubscription): Subscription
   };
 }
 
-export class TaskWebhookSubscriptionStore {
+export class AgentRailEventSubscriptionStore {
   private now: () => Date;
   private storagePath: string | undefined;
-  private subscriptions: WebhookSubscription[];
+  private subscriptions: AgentRailEventSubscription[];
   private idempotencyEntries: Map<string, IdempotencyEntry>;
 
-  constructor({ now = () => new Date(), storagePath }: TaskWebhookSubscriptionStoreOptions = {}) {
+  constructor({ now = () => new Date(), storagePath }: AgentRailEventSubscriptionStoreOptions = {}) {
     this.now = now;
     this.storagePath = storagePath;
     const state = loadState(storagePath);
-    this.subscriptions = state.subscriptions ?? [];
+    this.subscriptions = (state.subscriptions ?? []).map((subscription) => ({
+      ...subscription,
+      createdAfterSequence: normalizeCreatedAfterSequence(subscription.createdAfterSequence),
+    }));
     this.idempotencyEntries = new Map(state.idempotencyEntries ?? []);
   }
 
-  createSubscription(payload: CreateSubscriptionPayload, idempotencyKey: string): SubscriptionResponse {
+  createSubscription(
+    payload: CreateEventSubscriptionPayload,
+    idempotencyKey: string,
+    options: CreateEventSubscriptionOptions = {},
+  ): EventSubscriptionResponse {
     validateIdempotencyKey(idempotencyKey);
     const normalizedRequest = normalizeCreateRequest(payload);
     const requestFingerprint = stableStringify(normalizedRequest);
@@ -201,8 +247,8 @@ export class TaskWebhookSubscriptionStore {
         { subscriptionId: duplicate.id, availableActions: ["deactivate"] }
       );
     }
-    const subscription: WebhookSubscription = {
-      id: createId("whsub"),
+    const subscription: AgentRailEventSubscription = {
+      id: createId("evsub"),
       url: normalizedRequest.url,
       eventTypes: normalizedRequest.eventTypes,
       filters: normalizedRequest.filters,
@@ -210,6 +256,7 @@ export class TaskWebhookSubscriptionStore {
       description: normalizedRequest.description,
       status: "active",
       createdAt: this.now().toISOString(),
+      createdAfterSequence: normalizeCreatedAfterSequence(options.createdAfterSequence),
       disabledAt: null,
       disableReason: null
     };
@@ -220,7 +267,7 @@ export class TaskWebhookSubscriptionStore {
     return structuredClone(response);
   }
 
-  deactivateSubscription(subscriptionId: string, disableReason = "manual_deactivate"): SubscriptionResponse | null {
+  deactivateSubscription(subscriptionId: string, disableReason = "manual_deactivate"): EventSubscriptionResponse | null {
     const subscription = this.subscriptions.find((entry) => entry.id === subscriptionId);
     if (!subscription) return null;
     if (subscription.status !== "disabled") {
@@ -232,20 +279,20 @@ export class TaskWebhookSubscriptionStore {
     return toSubscriptionResponse(subscription);
   }
 
-  listSubscriptions(): { data: SubscriptionData[]; availableActions: ["create"] } {
+  listSubscriptions(): { data: EventSubscriptionData[]; availableActions: ["create"] } {
     return {
       data: this.subscriptions.map((subscription) => toSubscriptionResponse(subscription).data),
       availableActions: ["create"]
     };
   }
 
-  getSubscription(subscriptionId: string): SubscriptionResponse | null {
+  getSubscription(subscriptionId: string): EventSubscriptionResponse | null {
     const subscription = this.subscriptions.find((entry) => entry.id === subscriptionId);
     if (!subscription) return null;
     return toSubscriptionResponse(subscription);
   }
 
-  listActiveSubscriptions(): WebhookSubscription[] {
+  listActiveSubscriptions(): AgentRailEventSubscription[] {
     return this.subscriptions
       .filter((subscription) => subscription.status === "active")
       .map((subscription) => structuredClone(subscription));
@@ -269,16 +316,17 @@ export class TaskWebhookSubscriptionStore {
   }
 }
 
-export interface WebhookEvent {
+export interface AgentRailEvent {
   id: string;
   type: string;
-  data: { taskId: string; [key: string]: unknown };
+  sequence: number;
+  data: { taskId?: string; [key: string]: unknown };
 }
 
-export function eventMatchesSubscription(event: WebhookEvent, subscription: WebhookSubscription): boolean {
-  if (!subscription.eventTypes.includes(event.type)) return false;
+export function eventMatchesSubscription(event: AgentRailEvent, subscription: AgentRailEventSubscription): boolean {
+  if (!subscription.eventTypes.includes(event.type as AgentRailEventType)) return false;
   const taskIds = subscription.filters.taskIds;
-  if (taskIds.length > 0 && !taskIds.includes(event.data.taskId)) return false;
+  if (taskIds.length > 0 && (!event.data.taskId || !taskIds.includes(event.data.taskId))) return false;
   return true;
 }
 

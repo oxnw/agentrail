@@ -169,7 +169,7 @@ try {
 }
 ```
 
-## Webhooks
+## Event Subscriptions
 
 Register a webhook subscription and verify incoming events:
 
@@ -177,21 +177,21 @@ Register a webhook subscription and verify incoming events:
 import { AgentRailClient, parseWebhookEvent } from "@agentrail-core/sdk";
 
 // Register
-const sub = await client.createWebhookSubscription(
+const sub = await client.createEventSubscription(
   {
     url: "https://my-app.example.com/webhooks/tasks",
-    eventTypes: ["task.updated", "task.reviewed", "task.shipped"],
+    eventTypes: ["task.awaiting_user", "task.updated", "task.reviewed", "task.shipped"],
     secret: "whsec_my_secret_at_least_16",
   },
-  "webhook-sub-v1",
+  "event-sub-v1",
 );
 
-const subscriptions = await client.listWebhookSubscriptions();
-const current = await client.getWebhookSubscription(sub.data.id);
+const subscriptions = await client.listEventSubscriptions();
+const current = await client.getEventSubscription(sub.data.id);
 
 // Verify and parse incoming webhook (e.g. in an Express handler)
 const event = parseWebhookEvent(rawBody, "whsec_my_secret_at_least_16", {
-  "x-agentrail-webhook-id": req.headers["x-agentrail-webhook-id"],
+  "x-agentrail-subscription-id": req.headers["x-agentrail-subscription-id"],
   "x-agentrail-event-id": req.headers["x-agentrail-event-id"],
   "x-agentrail-event-type": req.headers["x-agentrail-event-type"],
   "x-agentrail-delivery-id": req.headers["x-agentrail-delivery-id"],
@@ -200,6 +200,9 @@ const event = parseWebhookEvent(rawBody, "whsec_my_secret_at_least_16", {
 });
 
 switch (event.type) {
+  case "task.awaiting_user":
+    console.log(`User needed: ${event.data.blocker.actionRequired}`);
+    break;
   case "task.updated":
     console.log(`Task ${event.data.taskIdentifier} → ${event.data.status}`);
     break;
