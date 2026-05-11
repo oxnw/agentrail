@@ -2850,7 +2850,7 @@ async function sendBrevoConfirmation({ entry, apiKey, fromEmail, fromName }: { e
 <p style="font-size:18px;font-weight:600">You're on the AgentRail waitlist.</p>
 <p>Hi ${name},</p>
 <p>Thanks for signing up! We'll reach out when Cloud opens — you're in line.</p>
-<p>In the meantime, the OSS package is ready to use today:</p>
+<p>In the meantime, the source-available package is ready to use today:</p>
 <pre style="background:#f4f4f4;padding:12px;border-radius:6px">npm install agentrail</pre>
 <p style="margin-top:32px;color:#666;font-size:13px">
   — The AgentRail team<br/>
@@ -2890,7 +2890,7 @@ async function sendResendConfirmation({ entry, apiKey, from }: { entry: { name: 
 <p style="font-size:18px;font-weight:600">You're on the AgentRail waitlist.</p>
 <p>Hi ${name},</p>
 <p>Thanks for signing up! We'll reach out when Cloud opens — you're in line.</p>
-<p>In the meantime, the OSS package is ready to use today:</p>
+<p>In the meantime, the source-available package is ready to use today:</p>
 <pre style="background:#f4f4f4;padding:12px;border-radius:6px">npm install agentrail</pre>
 <p style="margin-top:32px;color:#666;font-size:13px">
   — The AgentRail team<br/>
@@ -2930,7 +2930,7 @@ async function sendSendGridConfirmation({ entry, apiKey, from }: { entry: { name
 <p style="font-size:18px;font-weight:600">You're on the AgentRail waitlist.</p>
 <p>Hi ${name},</p>
 <p>Thanks for signing up! We'll reach out when Cloud opens — you're in line.</p>
-<p>In the meantime, the OSS package is ready to use today:</p>
+<p>In the meantime, the source-available package is ready to use today:</p>
 <pre style="background:#f4f4f4;padding:12px;border-radius:6px">npm install agentrail</pre>
 <p style="margin-top:32px;color:#666;font-size:13px">
   — The AgentRail team<br/>

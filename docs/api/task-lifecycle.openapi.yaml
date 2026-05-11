@@ -4,8 +4,7 @@ info:
   version: 0.3.0
   summary: Agent-first API for issue -> PR -> CI -> review -> ship
   license:
-    name: Apache 2.0
-    identifier: Apache-2.0
+    name: AgentRail Source-Available License 1.1
   description: |
     Contract for agent-native developer workflow operations.
     Response shapes are optimized for token efficiency and include `availableActions`
@@ -14,7 +13,7 @@ info:
     SDKs can consume one discriminated union regardless of transport.
 servers:
   - url: http://127.0.0.1:3000
-    description: Local OSS self-hosted server
+    description: Local source-available self-hosted server
   - url: https://api.agentrail.app/v1
     description: Future AgentRail Cloud API
 security:

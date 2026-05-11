@@ -11,7 +11,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "SEE LICENSE IN ../../LICENSE",
   "type": "commonjs",
   "dependencies": {
     "@octokit/rest": "^22.0.1",

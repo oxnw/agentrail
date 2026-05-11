@@ -206,8 +206,8 @@ routing, and provider state.
 
 ## Release Boundary
 
-This public repo is the OSS runtime: local server, CLI, SDKs, provider adapters,
-OpenAPI contracts, and self-managed setup docs.
+This public repo is the source-available runtime: local server, CLI, SDKs,
+provider adapters, OpenAPI contracts, and self-managed setup docs.
 
 AgentRail Cloud is planned as the managed team/fleet layer, not merely a hosted
 copy of this Node process. Cloud should own managed connectors, shared run

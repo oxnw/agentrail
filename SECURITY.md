@@ -6,8 +6,9 @@ sensitive.
 
 ## Supported Versions
 
-This repository is currently a `0.x` OSS release candidate. Security fixes are
-accepted against `main` until versioned release branches exist.
+This repository is currently a `0.x` source-available release candidate.
+Security fixes are accepted against `main` until versioned release branches
+exist.
 
 ## Reporting a Vulnerability
 

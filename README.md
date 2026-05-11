@@ -1,17 +1,17 @@
 # AgentRail
 
 [![CI](https://github.com/oxnw/agentrail/actions/workflows/ci.yml/badge.svg)](https://github.com/oxnw/agentrail/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: Source-Available](https://img.shields.io/badge/License-Source--Available-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)](https://nodejs.org/)
 
 AgentRail is a local-first control plane for coding agents. It gives agents one
 compact API for the project loop: issue intake, routing, assigned work, PR
 submission, CI, review feedback, and shipping.
 
-The OSS repo is a self-managed single-instance runtime. It is built for local
-evaluation and self-hosting. The planned AgentRail Cloud product is the managed
-team/fleet layer for hosted connectors, shared run history, routing, wakes,
-SSO/RBAC, audit, dashboards, and reliability.
+The source-available repo is a self-managed single-instance runtime. It is
+built for local evaluation and self-hosting. The planned AgentRail Cloud
+product is the managed team/fleet layer for hosted connectors, shared run
+history, routing, wakes, SSO/RBAC, audit, dashboards, and reliability.
 
 ## What Agents Get
 
@@ -161,4 +161,4 @@ agentrail --help
 
 ## License
 
-Apache-2.0. See [LICENSE](./LICENSE).
+AgentRail is source-available software, not open source. See [LICENSE](./LICENSE).
