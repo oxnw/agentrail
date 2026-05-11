@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 export default function Hero() {
   return (
     <div
@@ -155,7 +157,7 @@ export default function Hero() {
                     <path d="M3 6h6m0 0L6 3m3 3L6 9" />
                   </svg>
                 </a>
-                <a
+                <Link
                   href="/docs"
                   style={{
                     display: "inline-flex",
@@ -181,7 +183,7 @@ export default function Hero() {
                     <path d="M4 3l-3 3.5L4 10M9 3l3 3.5L9 10" />
                   </svg>
                   Read the docs
-                </a>
+                </Link>
               </div>
 
               <div

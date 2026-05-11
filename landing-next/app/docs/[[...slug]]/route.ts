@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const MINTLIFY_BASE = 'https://agentrail.mintlify.app';
+const MINTLIFY_BASE = 'https://agentrail.mintlify.dev/docs';
 const CUSTOM_HOST = 'agentrail.app';
 
 const FORWARD_HEADERS = ['content-type', 'cache-control', 'etag', 'last-modified', 'vary'];
@@ -11,9 +11,10 @@ export async function GET(
 ) {
   const { slug } = await params;
   const path = slug ? slug.join('/') : '';
+  const upstreamPath = path ? `/${path}` : '';
   const { search } = new URL(request.url);
 
-  const upstream = await fetch(`${MINTLIFY_BASE}/${path}${search}`, {
+  const upstream = await fetch(`${MINTLIFY_BASE}${upstreamPath}${search}`, {
     headers: {
       'x-forwarded-host': CUSTOM_HOST,
       'x-forwarded-proto': 'https',

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function CTA() {
   return (
     <section
@@ -136,7 +138,7 @@ export default function CTA() {
               <path d="M3 6h6m0 0L6 3m3 3L6 9" />
             </svg>
           </a>
-          <a
+          <Link
             href="/docs"
             style={{
               display: "inline-flex",
@@ -152,7 +154,7 @@ export default function CTA() {
             }}
           >
             Read the docs
-          </a>
+          </Link>
         </div>
       </div>
     </section>
