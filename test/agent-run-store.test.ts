@@ -26,6 +26,7 @@ function makeRun(runId: string, status: AgentRunStatus = "starting") {
     updatedAt: "2026-05-09T10:00:01.000Z",
     exitCode: null,
     summary: null,
+    userAction: null,
     launch: {
       executable: "codex",
       args: ["exec", "--cd", "/tmp/worktree"],
@@ -65,11 +66,11 @@ test("AgentRunStore persists and reloads runs", async (t) => {
 });
 
 test("AgentRunStore filters and counts active runs", () => {
-  // Active runs are starting/running/waiting_for_human; terminal states such as failed are inactive.
+  // Active runs are starting/running only; awaiting_user is historical and must not consume capacity.
   const store = new AgentRunStore();
   store.createRun(makeRun("run_active", "running"));
   store.createRun({
-    ...makeRun("run_other", "waiting_for_human"),
+    ...makeRun("run_other", "awaiting_user"),
     taskId: "tsk_456",
   });
   store.createRun({
@@ -77,8 +78,8 @@ test("AgentRunStore filters and counts active runs", () => {
     taskId: "tsk_789",
   });
 
-  assert.equal(store.countActiveRuns("agt_claudia"), 2);
-  assert.equal(store.findActiveRunByTask("agt_claudia", "tsk_456")?.runId, "run_other");
+  assert.equal(store.countActiveRuns("agt_claudia"), 1);
+  assert.equal(store.findActiveRunByTask("agt_claudia", "tsk_456"), null);
   assert.equal(store.findActiveRunByTask("agt_claudia", "tsk_789"), null);
   assert.deepEqual(
     store.listRuns({ status: "failed" }).map((run) => run.runId),
@@ -135,11 +136,23 @@ test("AgentRunStore trims report summaries and can clear reported handoff", () =
   const withHandoff = store.reportRun("run_handoff", {
     status: "blocked",
     summary: "  Needs GitHub token  ",
+    reason: "  Missing GitHub token  ",
+    actionRequired: "  Add token  ",
+    resumeInstructions: "  Re-run after token is configured  ",
     handoff: { target: "user", actionRequired: "Add token" },
   });
+  assert.equal(withHandoff?.status, "awaiting_user");
   assert.equal(withHandoff?.summary, "Needs GitHub token");
   assert.equal(withHandoff?.reports[0].summary, "Needs GitHub token");
   assert.deepEqual(withHandoff?.reportedHandoff, { target: "user", actionRequired: "Add token" });
+  assert.deepEqual(withHandoff?.userAction, {
+    kind: "awaiting_user",
+    taskId: "tsk_123",
+    reason: "Missing GitHub token",
+    actionRequired: "Add token",
+    resumeInstructions: "Re-run after token is configured",
+    createdAt: "2026-05-09T10:08:00.000Z",
+  });
 
   const cleared = store.reportRun("run_handoff", {
     status: "progress",
@@ -148,6 +161,55 @@ test("AgentRunStore trims report summaries and can clear reported handoff", () =
   });
   assert.equal(cleared?.summary, "Token added");
   assert.equal(cleared?.reportedHandoff, null);
+  assert.deepEqual(cleared?.userAction, withHandoff?.userAction);
+});
+
+test("AgentRunStore requires structured user-needed fields for blocked reports", () => {
+  const store = new AgentRunStore();
+  store.createRun(makeRun("run_blocked_validation", "running"));
+
+  assert.throws(
+    () => store.reportRun("run_blocked_validation", {
+      status: "blocked",
+      summary: "Blocked",
+      reason: "Missing token",
+      actionRequired: "Add token",
+    } as unknown as Parameters<AgentRunStore["reportRun"]>[1]),
+    /resumeInstructions/,
+  );
+  assert.throws(
+    () => store.reportRun("run_blocked_validation", {
+      status: "blocked",
+      summary: "Blocked",
+      actionRequired: "Add token",
+      resumeInstructions: "Resume after setup.",
+    } as unknown as Parameters<AgentRunStore["reportRun"]>[1]),
+    /reason/,
+  );
+  assert.throws(
+    () => store.reportRun("run_blocked_validation", {
+      status: "blocked",
+      summary: "Blocked",
+      reason: "Missing token",
+      resumeInstructions: "Resume after setup.",
+    } as unknown as Parameters<AgentRunStore["reportRun"]>[1]),
+    /actionRequired/,
+  );
+  for (const field of ["reason", "actionRequired", "resumeInstructions"] as const) {
+    assert.throws(
+      () => store.reportRun("run_blocked_validation", {
+        status: "blocked",
+        summary: "Blocked",
+        reason: "Missing token",
+        actionRequired: "Add token",
+        resumeInstructions: "Resume after setup.",
+        [field]: "   ",
+      }),
+      new RegExp(field),
+    );
+  }
+  assert.equal(store.getRun("run_blocked_validation")?.status, "running");
+  assert.equal(store.getRun("run_blocked_validation")?.reports.length, 0);
 });
 
 test("AgentRunStore ignores invalid persisted state", async (t) => {
@@ -167,6 +229,23 @@ test("AgentRunStore ignores invalid persisted state", async (t) => {
   const store = new AgentRunStore({ storagePath });
   assert.equal(store.getRun("run_bad"), null);
   assert.equal(store.getRun("run_good")?.runId, "run_good");
+});
+
+test("AgentRunStore backfills missing nullable userAction on persisted runs", async (t) => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-run-store-missing-user-action-"));
+  const storagePath = path.join(tempDir, "agent-runs.json");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const persistedRun = { ...makeRun("run_missing_user_action", "running") } as Record<string, unknown>;
+  delete persistedRun.userAction;
+  await writeFile(storagePath, JSON.stringify({ runs: [persistedRun] }), "utf8");
+
+  const store = new AgentRunStore({ storagePath });
+  const loaded = store.getRun("run_missing_user_action");
+  assert.ok(loaded);
+  assert.equal(loaded.userAction, null);
 });
 
 test("AgentRunStore handles malformed JSON gracefully", async (t) => {

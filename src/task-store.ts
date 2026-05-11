@@ -29,6 +29,20 @@ export type TaskPriority = "low" | "medium" | "high" | "critical";
 export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "manual_triage";
 export type CiOverallStatus = "passed" | "failed" | "running" | "queued" | "cancelled" | "skipped" | "neutral" | "error";
 
+export interface TaskBlocker {
+  kind: "awaiting_user";
+  sourceRunId: string;
+  sourceAgentId: string;
+  reason: string;
+  actionRequired: string;
+  resumeInstructions: string;
+  createdAt: string;
+}
+
+type TaskBlockerStringField = Exclude<{
+  [K in keyof TaskBlocker]: TaskBlocker[K] extends string ? K : never;
+}[keyof TaskBlocker], "kind">;
+
 export interface TaskSourceAudit {
   sourceRef: string;
   changeReason: string;
@@ -72,6 +86,7 @@ export interface TaskRecord {
   latestSubmissionId: string | null;
   // Legacy flat mirror of `ci?.overallStatus`; keep synchronized for compatibility reads.
   ciStatus: CiOverallStatus | null;
+  blocker: TaskBlocker | null;
   ci?: TaskCiState | null;
   reviewOutcome: string | null;
   shipOperation: ShipOperation | null;
@@ -167,6 +182,7 @@ export interface TaskSummary {
   dueAt: string | null;
   updatedAt: string;
   availableActions: string[];
+  blocker: TaskBlocker | null;
 }
 
 export type { LinearTaskSource, RepoTaskSource, TaskSource } from "./task-source.ts";
@@ -181,7 +197,7 @@ interface PersistedState {
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isPersistedState(value: unknown): value is PersistedState {
@@ -275,9 +291,45 @@ function persistState(storagePath: string | undefined, tasks: Map<string, TaskRe
   writeFileSync(storagePath, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
+function normalizeTaskBlocker(value: unknown): TaskBlocker | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isObject(value) || value.kind !== "awaiting_user") {
+    throw new Error("Task blocker must be an awaiting_user object.");
+  }
+  const sourceRunId = requiredTaskBlockerString(value, "sourceRunId");
+  const sourceAgentId = requiredTaskBlockerString(value, "sourceAgentId");
+  const reason = requiredTaskBlockerString(value, "reason");
+  const actionRequired = requiredTaskBlockerString(value, "actionRequired");
+  const resumeInstructions = requiredTaskBlockerString(value, "resumeInstructions");
+  const createdAt = requiredTaskBlockerString(value, "createdAt");
+  if (Number.isNaN(Date.parse(createdAt))) {
+    throw new Error("Task blocker field `createdAt` must be a valid ISO date string.");
+  }
+  return {
+    kind: "awaiting_user",
+    sourceRunId,
+    sourceAgentId,
+    reason,
+    actionRequired,
+    resumeInstructions,
+    createdAt,
+  };
+}
+
+function requiredTaskBlockerString(value: Record<string, unknown>, field: TaskBlockerStringField): string {
+  const fieldValue = value[field];
+  if (typeof fieldValue !== "string" || fieldValue.trim().length === 0) {
+    throw new Error(`Task blocker field \`${field}\` must be a non-empty string.`);
+  }
+  return fieldValue.trim();
+}
+
 function normalizePersistedTaskRecord(record: TaskRecord): TaskRecord {
   const normalized: TaskRecord = {
     ...record,
+    blocker: normalizeTaskBlocker(record.blocker),
     source: normalizeTaskSource(record.source),
   };
   if ((record.assignmentSource as string | null | undefined) === "provider_assignee_mapping") {
@@ -308,7 +360,8 @@ function toTaskSummary(task: TaskRecord): TaskSummary {
     priority: task.priority,
     dueAt: task.dueAt,
     updatedAt: task.updatedAt,
-    availableActions: task.availableActions.filter((action) => ["start", "submit", "ship"].includes(action)),
+    availableActions: task.availableActions.filter((action) => ["start", "submit", "ship", "resolve_blocker"].includes(action)),
+    blocker: task.blocker ? structuredClone(task.blocker) : null,
   };
 }
 
@@ -454,6 +507,7 @@ export class TaskStore {
       submissions: partial.submissions ?? [],
       latestSubmissionId: partial.latestSubmissionId ?? null,
       ciStatus,
+      blocker: normalizeTaskBlocker(partial.blocker),
       ci,
       reviewOutcome: partial.reviewOutcome ?? null,
       shipOperation: partial.shipOperation ?? null,
@@ -481,6 +535,7 @@ export class TaskStore {
     const validatedRecord: TaskRecord = {
       ...record,
       ciStatus: syncCiStatus(record.ciStatus, record.ci),
+      blocker: normalizeTaskBlocker(record.blocker),
       source: normalizeTaskSource(record.source),
     };
     if (existing) {
@@ -504,6 +559,7 @@ export class TaskStore {
       id: existing.id,
       ci,
       ciStatus: syncCiStatus(ciStatusInput, ci),
+      blocker: "blocker" in patch ? normalizeTaskBlocker(patch.blocker) : existing.blocker ?? null,
       source,
       version: existing.version + 1,
       updatedAt: this.now().toISOString(),

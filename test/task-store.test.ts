@@ -44,6 +44,7 @@ function makePersistedTask(
     submissions: partial.submissions ?? [],
     latestSubmissionId: partial.latestSubmissionId ?? null,
     ciStatus: partial.ciStatus ?? null,
+    blocker: partial.blocker ?? null,
     reviewOutcome: partial.reviewOutcome ?? null,
     shipOperation: partial.shipOperation ?? null,
     rollbackOperation: partial.rollbackOperation ?? null,
@@ -236,6 +237,133 @@ test("TaskStore supports status filtering", () => {
 
   const all = store.listTasks();
   assert.equal(all.data.length, 2);
+});
+
+test("TaskStore creates tasks with nullable blocker and includes it in summaries", () => {
+  const store = new TaskStore({ now });
+  const task = store.createTask(makeTask({ identifier: "B-1", title: "No blocker" }));
+
+  assert.equal(task.blocker, null);
+  assert.equal(store.getTask(task.id)?.blocker, null);
+  assert.equal(store.listTasks().data[0].blocker, null);
+});
+
+test("TaskStore persists and reloads structured awaiting-user blockers", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-taskstore-blocker-"));
+  const storagePath = path.join(tempDir, "tasks.ndjson");
+  const blocker = {
+    kind: "awaiting_user" as const,
+    sourceRunId: "run_123",
+    sourceAgentId: "agt_claudia",
+    reason: "Missing credentials",
+    actionRequired: "Add the GitHub token",
+    resumeInstructions: "Resume the run after the token is configured.",
+    createdAt: "2026-05-01T03:26:00.000Z",
+  };
+
+  try {
+    const firstStore = new TaskStore({ now, storagePath });
+    const task = firstStore.createTask(makeTask({
+      identifier: "B-2",
+      title: "Blocked task",
+      status: "blocked",
+      availableActions: ["resolve_blocker"],
+      blocker,
+    }));
+
+    const secondStore = new TaskStore({ now, storagePath });
+    assert.deepEqual(secondStore.getTask(task.id)?.blocker, blocker);
+    assert.deepEqual(secondStore.listTasks().data[0].blocker, blocker);
+    assert.deepEqual(secondStore.listTasks().data[0].availableActions, ["resolve_blocker"]);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("TaskStore validates and clears structured awaiting-user blockers on update", () => {
+  const store = new TaskStore({ now });
+  const task = store.createTask(makeTask({ identifier: "B-3", title: "Update blocker" }));
+  const blocker = {
+    kind: "awaiting_user" as const,
+    sourceRunId: "  run_456  ",
+    sourceAgentId: "  agt_claudia  ",
+    reason: "  Missing credentials  ",
+    actionRequired: "  Add the GitHub token  ",
+    resumeInstructions: "  Resume after setup  ",
+    createdAt: "  2026-05-01T03:26:00.000Z  ",
+  };
+
+  const blocked = store.updateTask(task.id, { status: "blocked", blocker });
+  assert.deepEqual(blocked?.blocker, {
+    kind: "awaiting_user",
+    sourceRunId: "run_456",
+    sourceAgentId: "agt_claudia",
+    reason: "Missing credentials",
+    actionRequired: "Add the GitHub token",
+    resumeInstructions: "Resume after setup",
+    createdAt: "2026-05-01T03:26:00.000Z",
+  });
+
+  const cleared = store.updateTask(task.id, { status: "todo", blocker: null });
+  assert.equal(cleared?.blocker, null);
+});
+
+test("TaskStore task summaries clone blocker metadata", () => {
+  const store = new TaskStore({ now });
+  const task = store.createTask(makeTask({
+    identifier: "B-4",
+    title: "Summary blocker clone",
+    status: "blocked",
+    blocker: {
+      kind: "awaiting_user",
+      sourceRunId: "run_789",
+      sourceAgentId: "agt_claudia",
+      reason: "Missing credentials",
+      actionRequired: "Add the GitHub token",
+      resumeInstructions: "Resume after setup",
+      createdAt: "2026-05-01T03:26:00.000Z",
+    },
+  }));
+
+  const summary = store.listTasks().data[0];
+  assert.ok(summary.blocker);
+  summary.blocker!.reason = "Mutated outside store";
+
+  assert.equal(store.getTask(task.id)?.blocker?.reason, "Missing credentials");
+});
+
+test("TaskStore rejects malformed awaiting-user blockers", () => {
+  const store = new TaskStore({ now });
+  const task = store.createTask(makeTask({ identifier: "B-5", title: "Invalid blocker" }));
+
+  assert.throws(
+    () => store.updateTask(task.id, {
+      blocker: {
+        kind: "awaiting_user",
+        sourceRunId: "run_789",
+        sourceAgentId: "agt_claudia",
+        reason: "Missing credentials",
+        actionRequired: "   ",
+        resumeInstructions: "Resume after setup",
+        createdAt: "2026-05-01T03:26:00.000Z",
+      },
+    }),
+    /actionRequired/,
+  );
+  assert.throws(
+    () => store.updateTask(task.id, {
+      blocker: {
+        kind: "awaiting_user",
+        sourceRunId: "run_bad_date",
+        sourceAgentId: "agt_claudia",
+        reason: "Missing credentials",
+        actionRequired: "Add the GitHub token",
+        resumeInstructions: "Resume after setup",
+        createdAt: "not-a-date",
+      },
+    }),
+    /createdAt/,
+  );
 });
 
 test("TaskStore supports pagination", () => {

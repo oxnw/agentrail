@@ -16,10 +16,19 @@ export type AgentRunStatus =
   | "running"
   | "succeeded"
   | "failed"
-  | "waiting_for_human"
+  | "awaiting_user"
   | "cancelled";
 
 export type AgentRunReportStatus = "progress" | "blocked" | "completed";
+
+export interface AgentRunUserAction {
+  kind: "awaiting_user";
+  taskId: string;
+  reason: string;
+  actionRequired: string;
+  resumeInstructions: string;
+  createdAt: string;
+}
 
 export interface AgentRunReport {
   status: AgentRunReportStatus;
@@ -47,6 +56,7 @@ export interface AgentRunRecord {
   updatedAt: string;
   exitCode: number | null;
   summary: string | null;
+  userAction: AgentRunUserAction | null;
   reports: AgentRunReport[];
   reportedHandoff: Record<string, unknown> | null;
   launch: {
@@ -56,8 +66,23 @@ export interface AgentRunRecord {
 }
 
 export type AgentRunInput =
-  Omit<AgentRunRecord, "reports" | "reportedHandoff">
-  & Partial<Pick<AgentRunRecord, "reports" | "reportedHandoff">>;
+  Omit<AgentRunRecord, "reports" | "reportedHandoff" | "userAction">
+  & Partial<Pick<AgentRunRecord, "reports" | "reportedHandoff" | "userAction">>;
+
+export type AgentRunReportInput =
+  | {
+    status: Exclude<AgentRunReportStatus, "blocked">;
+    summary: string;
+    handoff?: Record<string, unknown> | null;
+  }
+  | {
+    status: "blocked";
+    summary: string;
+    reason: string;
+    actionRequired: string;
+    resumeInstructions: string;
+    handoff?: Record<string, unknown> | null;
+  };
 
 interface PersistedState {
   runs?: AgentRunRecord[];
@@ -73,14 +98,13 @@ const RUN_STATUSES = new Set<AgentRunStatus>([
   "running",
   "succeeded",
   "failed",
-  "waiting_for_human",
+  "awaiting_user",
   "cancelled",
 ]);
 
 const ACTIVE_RUN_STATUSES = new Set<AgentRunStatus>([
   "starting",
   "running",
-  "waiting_for_human",
 ]);
 
 const REPORT_STATUSES = new Set<AgentRunReportStatus>([
@@ -140,6 +164,22 @@ function normalizeRunReport(value: unknown): AgentRunReport | null {
   };
 }
 
+function normalizeRunUserAction(value: unknown): AgentRunUserAction | null {
+  if (value === null) return null;
+  if (!isRecord(value)) return null;
+  if (value.kind !== "awaiting_user" || !isString(value.taskId)) return null;
+  if (!isString(value.reason) || !isString(value.actionRequired)) return null;
+  if (!isString(value.resumeInstructions) || !isString(value.createdAt)) return null;
+  return {
+    kind: "awaiting_user",
+    taskId: value.taskId,
+    reason: value.reason,
+    actionRequired: value.actionRequired,
+    resumeInstructions: value.resumeInstructions,
+    createdAt: value.createdAt,
+  };
+}
+
 function normalizeRunRecord(value: unknown): AgentRunRecord | null {
   if (!isRecord(value)) return null;
   if (!isString(value.runId) || !isString(value.agentId) || !isString(value.runner)) return null;
@@ -148,6 +188,8 @@ function normalizeRunRecord(value: unknown): AgentRunRecord | null {
   if (!isString(value.createdAt) || !isNullableString(value.startedAt) || !isNullableString(value.finishedAt) || !isString(value.updatedAt)) return null;
   if (!isNullableNumber(value.exitCode) || !isNullableString(value.summary)) return null;
   if (!RUN_STATUSES.has(value.status as AgentRunStatus)) return null;
+  const userAction = value.userAction === undefined ? null : normalizeRunUserAction(value.userAction);
+  if (value.userAction !== undefined && value.userAction !== null && userAction === null) return null;
   const reports = Array.isArray(value.reports)
     ? value.reports.map((entry) => normalizeRunReport(entry))
     : [];
@@ -180,6 +222,7 @@ function normalizeRunRecord(value: unknown): AgentRunRecord | null {
     updatedAt: value.updatedAt,
     exitCode: value.exitCode,
     summary: value.summary,
+    userAction,
     reports: reports as AgentRunReport[],
     reportedHandoff: value.reportedHandoff === undefined || value.reportedHandoff === null
       ? null
@@ -377,7 +420,10 @@ export class AgentRunStore {
       if (this.runs.has(run.runId)) {
         throw new Error(`Agent run ${run.runId} already exists.`);
       }
-      const normalized = normalizeRunRecord(run);
+      const normalized = normalizeRunRecord({
+        ...run,
+        userAction: run.userAction ?? null,
+      });
       if (!normalized) {
         throw new Error("Invalid agent run record.");
       }
@@ -409,11 +455,7 @@ export class AgentRunStore {
     });
   }
 
-  reportRun(runId: string, report: {
-    status: AgentRunReportStatus;
-    summary: string;
-    handoff?: Record<string, unknown> | null;
-  }): AgentRunRecord | null {
+  reportRun(runId: string, report: AgentRunReportInput): AgentRunRecord | null {
     return this.withStorageLock(() => {
       const existing = this.runs.get(runId);
       if (!existing) return null;
@@ -425,12 +467,33 @@ export class AgentRunStore {
       }
       const trimmedSummary = report.summary.trim();
       const timestamp = this.now().toISOString();
+      let userAction = existing.userAction;
+      if (report.status === "blocked") {
+        if (typeof report.reason !== "string" || report.reason.trim().length === 0) {
+          throw new Error("Agent run blocked report reason must be a non-empty string.");
+        }
+        if (typeof report.actionRequired !== "string" || report.actionRequired.trim().length === 0) {
+          throw new Error("Agent run blocked report actionRequired must be a non-empty string.");
+        }
+        if (typeof report.resumeInstructions !== "string" || report.resumeInstructions.trim().length === 0) {
+          throw new Error("Agent run blocked report resumeInstructions must be a non-empty string.");
+        }
+        userAction = {
+          kind: "awaiting_user",
+          taskId: existing.taskId,
+          reason: report.reason.trim(),
+          actionRequired: report.actionRequired.trim(),
+          resumeInstructions: report.resumeInstructions.trim(),
+          createdAt: timestamp,
+        };
+      }
       const handoffWasProvided = report.handoff !== undefined;
       const handoff = report.handoff === undefined ? null : report.handoff;
       const updated = normalizeRunRecord({
         ...existing,
-        status: report.status === "blocked" ? "waiting_for_human" : existing.status,
+        status: report.status === "blocked" ? "awaiting_user" : existing.status,
         summary: trimmedSummary,
+        userAction,
         reports: [
           ...existing.reports,
           {

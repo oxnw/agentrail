@@ -16,6 +16,7 @@ import { runProviderCommand } from "./provider-management.ts";
 import { detectRepoContext } from "./repo-detection.ts";
 import { buildInitCommand, createSetupConfig, validateSafeDefaults, type DetectedRepoContext, type SetupConfig } from "./setup-config.ts";
 import { writeSetupFiles, type WriteSetupFilesResult } from "./setup-files.ts";
+import { runTaskResolveBlocker } from "./task-blocker.ts";
 import { runTaskSourceRepair } from "./task-source-repair.ts";
 import {
   acceptedDefaultsFromFlags,
@@ -155,6 +156,14 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
 
     if (command === "task" && args[0] === "source" && args[1] === "repair") {
       return await runTaskSourceRepair(args.slice(2), {
+        cwd,
+        stdout,
+        stderr,
+      });
+    }
+
+    if (command === "task" && args[0] === "resolve-blocker") {
+      return await runTaskResolveBlocker(args.slice(1), {
         cwd,
         stdout,
         stderr,
@@ -628,6 +637,7 @@ function writeUsage(output: Writer) {
     "  agentrail agent report --status <progress|blocked|completed> --summary <text>",
     "  agentrail agent status [--agent-id <id>] [--json]",
     "  agentrail task source repair --task-id <tsk_...> --file <json> [flags]",
+    "  agentrail task resolve-blocker --task-id <tsk_...> --resolution-summary <text> [flags]",
     "",
     "Flags:",
     "  --mode server",
@@ -642,6 +652,8 @@ function writeUsage(output: Writer) {
     "  --setup-api-key <key>",
     "  --task-id <tsk_...>",
     "  --file <json>",
+    "  --resolution-summary <text>",
+    "  --json",
   ].join("\n"));
   output.write("\n");
 }

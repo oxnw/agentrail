@@ -3,13 +3,14 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createServer } from "../src/app.ts";
 import { AgentAuthStore } from "../src/agent-auth-store.ts";
 import { AgentRunStore } from "../src/agent-run-store.ts";
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
+import { runAgentReport } from "../src/cli/agent-runner.ts";
 import { runCli } from "../src/cli/index.ts";
 import { createSetupConfig } from "../src/cli/setup-config.ts";
 import { writeSetupFiles } from "../src/cli/setup-files.ts";
@@ -40,6 +41,7 @@ interface UserHandoff {
   summary: string;
   reason: string;
   actionRequired: string;
+  resumeInstructions: string;
 }
 
 type HandoffPayload = AgentRailHandoff | UserHandoff;
@@ -399,7 +401,18 @@ test("agent report posts progress using runner environment", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-report-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
-  const harness = await createHarness({ agentRunStorePath });
+  const harness = await createHarness({
+    agentRunStorePath,
+    submitTask: async (taskId) => ({
+      data: {
+        taskId,
+        submissionId: "sub_resolved_blocker",
+        prUrl: "https://github.com/oxnw/agentrail/pull/456",
+        prNumber: 456,
+      },
+      availableActions: ["view_ci_status", "view_review_feedback"],
+    }),
+  });
   const runStore = new AgentRunStore({ storagePath: agentRunStorePath });
   runStore.createRun({
     runId: "run_cli_report",
@@ -527,10 +540,140 @@ test("agent report writes a local report file inside managed runner env", async 
   });
 });
 
+test("agent report writes blocked metadata to local report files", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-local-blocked-report-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const reportPath = path.join(homePath, "runs", "run_local_blocked_report", "reports.jsonl");
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousEnv = {
+    AGENTRAIL_HOME: process.env.AGENTRAIL_HOME,
+    AGENTRAIL_BASE_URL: process.env.AGENTRAIL_BASE_URL,
+    AGENTRAIL_API_KEY: process.env.AGENTRAIL_API_KEY,
+    AGENTRAIL_RUN_ID: process.env.AGENTRAIL_RUN_ID,
+    AGENTRAIL_RUN_REPORT_PATH: process.env.AGENTRAIL_RUN_REPORT_PATH,
+  };
+  process.env.AGENTRAIL_HOME = homePath;
+  delete process.env.AGENTRAIL_BASE_URL;
+  delete process.env.AGENTRAIL_API_KEY;
+  process.env.AGENTRAIL_RUN_ID = "run_local_blocked_report";
+  process.env.AGENTRAIL_RUN_REPORT_PATH = reportPath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  const exitCode = await runCli([
+    "agent",
+    "report",
+    "--status",
+    "blocked",
+    "--summary",
+    "Missing GitHub token.",
+    "--reason",
+    "missing_github_token",
+    "--action-required",
+    "Reconnect GitHub.",
+    "--resume-instructions",
+    "Retry the task after GitHub is reconnected.",
+    "--json",
+  ], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.deepEqual(JSON.parse(stdout.toString()), {
+    data: {
+      runId: "run_local_blocked_report",
+      status: "blocked",
+    },
+    availableActions: [],
+  });
+  const lines = (await readFile(reportPath, "utf8")).trim().split("\n");
+  assert.equal(lines.length, 1);
+  assert.deepEqual(JSON.parse(lines[0]), {
+    version: 1,
+    runId: "run_local_blocked_report",
+    status: "blocked",
+    summary: "Missing GitHub token.",
+    reason: "missing_github_token",
+    actionRequired: "Reconnect GitHub.",
+    resumeInstructions: "Retry the task after GitHub is reconnected.",
+  });
+});
+
+test("agent report posts blocked metadata using runner environment", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-report-blocked-"));
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  const previousEnv = {
+    AGENTRAIL_BASE_URL: process.env.AGENTRAIL_BASE_URL,
+    AGENTRAIL_API_KEY: process.env.AGENTRAIL_API_KEY,
+    AGENTRAIL_RUN_ID: process.env.AGENTRAIL_RUN_ID,
+    AGENTRAIL_RUN_REPORT_PATH: process.env.AGENTRAIL_RUN_REPORT_PATH,
+  };
+  process.env.AGENTRAIL_BASE_URL = "https://agentrail.example";
+  process.env.AGENTRAIL_API_KEY = "key_runner";
+  process.env.AGENTRAIL_RUN_ID = "run_http_blocked_report";
+  delete process.env.AGENTRAIL_RUN_REPORT_PATH;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  const exitCode = await runAgentReport([
+    "--status",
+    "blocked",
+    "--summary",
+    "Missing GitHub token.",
+    "--reason",
+    "missing_github_token",
+    "--action-required",
+    "Reconnect GitHub.",
+    "--resume-instructions",
+    "Retry the task after GitHub is reconnected.",
+  ], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    fetch: async (input, init) => {
+      requests.push({ url: String(input), init: init ?? {} });
+      return new Response(JSON.stringify({ data: { runId: "run_http_blocked_report" } }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://agentrail.example/agent-runs/run_http_blocked_report/report");
+  assert.deepEqual(JSON.parse(String(requests[0].init.body)), {
+    status: "blocked",
+    summary: "Missing GitHub token.",
+    reason: "missing_github_token",
+    actionRequired: "Reconnect GitHub.",
+    resumeInstructions: "Retry the task after GitHub is reconnected.",
+  });
+});
+
 test("agent run preserves API-reported blockers without requiring a handoff file", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-api-blocked-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
-  const harness = await createHarness({ agentRunStorePath: path.join(homePath, "stores", "agent-runs.json") });
+  const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
+  const harness = await createHarness({ agentRunStorePath });
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const previousHome = process.env.AGENTRAIL_HOME;
@@ -580,9 +723,14 @@ test("agent run preserves API-reported blockers without requiring a handoff file
           body: JSON.stringify({
             status: "blocked",
             summary: "Missing GitHub token; user needs to reconnect GitHub.",
+            reason: "missing_github_token",
+            actionRequired: "Reconnect GitHub.",
+            resumeInstructions: "Retry the task after GitHub is reconnected.",
           }),
         });
-        assert.equal(response.status, 202, await response.text());
+        if (response.status !== 202) {
+          assert.fail(await response.text());
+        }
         return {
           status: "succeeded",
           exitCode: 0,
@@ -596,13 +744,26 @@ test("agent run preserves API-reported blockers without requiring a handoff file
   });
 
   assert.equal(exitCode, 0, stderr.toString());
-  assert.equal(harness.taskQueue.getRawTask(task.id)?.status, "in_progress");
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
+  assert.equal(storedTask?.blocker?.kind, "awaiting_user");
+  assert.equal(storedTask?.blocker?.reason, "missing_github_token");
+  assert.equal(storedTask?.blocker?.actionRequired, "Reconnect GitHub.");
+  assert.equal(storedTask?.blocker?.resumeInstructions, "Retry the task after GitHub is reconnected.");
+  const blockerEvents = harness.eventStore.events.filter((event) => {
+    return event.type === "task.updated"
+      && Array.isArray(event.data.changedFields)
+      && event.data.changedFields.includes("blocker");
+  });
+  assert.equal(blockerEvents.length, 1);
 
   const runStore = new AgentRunStore({
     storagePath: path.join(homePath, "stores", "agent-runs.json"),
   });
   const [run] = runStore.listRuns();
-  assert.equal(run.status, "waiting_for_human");
+  assert.equal(run.status, "awaiting_user");
+  assert.equal(run.userAction?.reason, "missing_github_token");
   assert.match(run.summary ?? "", /Missing GitHub token/);
 });
 
@@ -659,6 +820,9 @@ test("agent run consumes local report files written by managed runners", async (
           runId: env.AGENTRAIL_RUN_ID,
           status: "blocked",
           summary: "Local report says user needs to reconnect GitHub.",
+          reason: "missing_github_token",
+          actionRequired: "Reconnect GitHub.",
+          resumeInstructions: "Retry the task after GitHub is reconnected.",
         })}\n`, "utf8");
         return {
           status: "succeeded",
@@ -673,14 +837,21 @@ test("agent run consumes local report files written by managed runners", async (
   });
 
   assert.equal(exitCode, 0, stderr.toString());
-  assert.equal(harness.taskQueue.getRawTask(task.id)?.status, "in_progress");
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
+  assert.equal(storedTask?.blocker?.kind, "awaiting_user");
+  assert.equal(storedTask?.blocker?.reason, "missing_github_token");
+  assert.equal(storedTask?.blocker?.actionRequired, "Reconnect GitHub.");
+  assert.equal(storedTask?.blocker?.resumeInstructions, "Retry the task after GitHub is reconnected.");
 
   const runStore = new AgentRunStore({
     storagePath: path.join(homePath, "stores", "agent-runs.json"),
   });
   const [run] = runStore.listRuns();
-  assert.equal(run.status, "waiting_for_human");
+  assert.equal(run.status, "awaiting_user");
   assert.equal(run.reports[0].status, "blocked");
+  assert.equal(run.userAction?.resumeInstructions, "Retry the task after GitHub is reconnected.");
   assert.match(run.summary ?? "", /reconnect GitHub/);
 });
 
@@ -735,6 +906,9 @@ test("agent run honors local blocked reports even when the runner fails", async 
           runId: env.AGENTRAIL_RUN_ID,
           status: "blocked",
           summary: "Local report before failure says user must reconnect GitHub.",
+          reason: "missing_github_token",
+          actionRequired: "Reconnect GitHub.",
+          resumeInstructions: "Retry the task after GitHub is reconnected.",
         })}\n`, "utf8");
         return {
           status: "failed",
@@ -749,13 +923,19 @@ test("agent run honors local blocked reports even when the runner fails", async 
   });
 
   assert.equal(exitCode, 0, stderr.toString());
-  assert.equal(harness.taskQueue.getRawTask(task.id)?.status, "in_progress");
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
+  assert.equal(storedTask?.blocker?.kind, "awaiting_user");
+  assert.equal(storedTask?.blocker?.reason, "missing_github_token");
+  assert.equal(storedTask?.blocker?.actionRequired, "Reconnect GitHub.");
+  assert.equal(storedTask?.blocker?.resumeInstructions, "Retry the task after GitHub is reconnected.");
 
   const runStore = new AgentRunStore({
     storagePath: path.join(homePath, "stores", "agent-runs.json"),
   });
   const [run] = runStore.listRuns();
-  assert.equal(run.status, "waiting_for_human");
+  assert.equal(run.status, "awaiting_user");
   assert.equal(run.reports[0].status, "blocked");
   assert.match(run.summary ?? "", /reconnect GitHub/);
 });
@@ -1017,6 +1197,7 @@ test("agent run records a user handoff without submitting the task", async (t) =
           summary: "Could not validate the task.",
           reason: "missing_tool",
           actionRequired: "Install the required local validator.",
+          resumeInstructions: "Run the task again after installing the validator.",
         });
         return {
           status: "succeeded",
@@ -1031,15 +1212,226 @@ test("agent run records a user handoff without submitting the task", async (t) =
   });
 
   assert.equal(exitCode, 0, stderr.toString());
-  assert.equal(harness.taskQueue.getRawTask(task.id)?.status, "in_progress");
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
+  assert.equal(storedTask?.blocker?.kind, "awaiting_user");
+  assert.equal(storedTask?.blocker?.reason, "missing_tool");
+  assert.equal(storedTask?.blocker?.actionRequired, "Install the required local validator.");
+  assert.equal(storedTask?.blocker?.resumeInstructions, "Run the task again after installing the validator.");
 
   const runStore = new AgentRunStore({
     storagePath: path.join(homePath, "stores", "agent-runs.json"),
   });
   const [run] = runStore.listRuns();
   assert.ok(run);
-  assert.equal(run.status, "waiting_for_human");
-  assert.match(run.summary ?? "", /Install the required local validator/);
+  assert.equal(run.status, "awaiting_user");
+  assert.equal(run.summary, "Could not validate the task.");
+});
+
+test("agent run blocks the task when Cursor opens for manual continuation", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-cursor-manual-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
+  const harness = await createHarness({ agentRunStorePath });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  const previousPath = process.env.PATH;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await harness.close();
+  });
+
+  const binPath = path.join(homePath, "bin");
+  await mkdir(binPath, { recursive: true });
+  const cursorExecutable = process.platform === "win32" ? "cursor.cmd" : "cursor";
+  const cursorPath = path.join(binPath, cursorExecutable);
+  await writeFile(
+    cursorPath,
+    process.platform === "win32" ? "@echo off\r\nexit /B 0\r\n" : "#!/bin/sh\nexit 0\n",
+    "utf8",
+  );
+  await chmod(cursorPath, 0o755);
+  const resolverExecutable = process.platform === "win32" ? "where.cmd" : "which";
+  const resolverPath = path.join(binPath, resolverExecutable);
+  await writeFile(
+    resolverPath,
+    process.platform === "win32"
+      ? "@echo off\r\nif \"%1\"==\"cursor\" exit /B 0\r\nexit /B 1\r\n"
+      : "#!/bin/sh\n[ \"$1\" = \"cursor\" ] && exit 0\nexit 1\n",
+    "utf8",
+  );
+  await chmod(resolverPath, 0o755);
+  process.env.PATH = binPath;
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  const task = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-CURSOR-MANUAL",
+    title: "Continue in Cursor",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "todo",
+    availableActions: ["start"],
+  });
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "cursor",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  const exitCode = await runCli(["agent", "run", "--once"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      prepareWorktree: async ({ worktreePath }) => {
+        await mkdir(worktreePath, { recursive: true });
+      },
+      publishBranch: async () => {
+        throw new Error("publish should not run for Cursor manual continuation");
+      },
+    },
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
+  assert.equal(storedTask?.blocker?.kind, "awaiting_user");
+  assert.equal(storedTask?.blocker?.sourceAgentId, "agt_runner");
+  assert.equal(storedTask?.blocker?.reason, "manual_runner_continuation");
+
+  const runStore = new AgentRunStore({ storagePath: agentRunStorePath });
+  const [run] = runStore.listRuns();
+  assert.equal(run.status, "awaiting_user");
+  assert.equal(run.userAction?.kind, "awaiting_user");
+  assert.equal(run.userAction?.taskId, task.id);
+  assert.equal(run.userAction?.reason, "manual_runner_continuation");
+  assert.match(run.summary ?? "", /Cursor/);
+});
+
+test("agent run starts a resolved task with a historical awaiting_user run", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-resolved-blocker-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
+  const harness = await createHarness({
+    agentRunStorePath,
+    submitTask: async (taskId, payload) => {
+      const pullRequest = readPullRequestPayload(payload);
+      return {
+        data: {
+          taskId,
+          submissionId: "sub_resolved_blocker_test",
+          prUrl: "https://github.com/oxnw/agentrail/pull/456",
+          prNumber: 456,
+          head: pullRequest?.head,
+          base: pullRequest?.base,
+          headSha: pullRequest?.headSha,
+        },
+        availableActions: ["view_ci_status", "view_review_feedback"],
+      };
+    },
+  });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  const task = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-RESOLVED-BLOCKER",
+    title: "Continue after user resolved blocker",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "todo",
+    availableActions: ["start"],
+  });
+  const historicalRunStore = new AgentRunStore({ storagePath: agentRunStorePath });
+  historicalRunStore.createRun({
+    runId: "run_historical_blocker",
+    agentId: "agt_runner",
+    runner: "codex",
+    taskId: task.id,
+    taskIdentifier: task.identifier,
+    status: "awaiting_user",
+    repoPath: repoRoot,
+    worktreePath: path.join(homePath, "worktrees", "agt_runner", "run_historical_blocker"),
+    branchName: `agentrail/agt_runner/${task.id}`,
+    promptPath: null,
+    logPath: null,
+    handoffPath: null,
+    createdAt: "2026-05-09T12:00:00.000Z",
+    startedAt: "2026-05-09T12:00:01.000Z",
+    finishedAt: "2026-05-09T12:01:00.000Z",
+    updatedAt: "2026-05-09T12:01:00.000Z",
+    exitCode: 0,
+    summary: "Waiting for user action that has since been resolved.",
+    launch: {
+      executable: "codex",
+      args: ["exec"],
+    },
+  });
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  const exitCode = await runCli(["agent", "run", "--once"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+      },
+      launchRunner: async ({ logPath, handoffPath, worktreePath }) => {
+        assert.ok(handoffPath, "handoffPath must be defined");
+        await writeFile(logPath, "resolved blocker run\n", "utf8");
+        await writeFile(path.join(worktreePath, "README.md"), "resolved blocker continued\n", "utf8");
+        const commitSha = commitAll(worktreePath, "resolved blocker change");
+        await writeAgentRailHandoff(handoffPath, {
+          target: "agentrail",
+          summary: "Resolved blocker task completed.",
+          commitSha,
+        });
+        return {
+          status: "succeeded",
+          exitCode: 0,
+          summary: "Resolved blocker task completed.",
+        };
+      },
+      publishBranch: async () => {},
+    },
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(harness.taskQueue.getRawTask(task.id)?.status, "in_review");
+  const runStore = new AgentRunStore({ storagePath: agentRunStorePath });
+  assert.equal(runStore.listRuns({ status: "awaiting_user" }).length, 1);
+  assert.equal(runStore.listRuns({ status: "succeeded" }).length, 1);
 });
 
 test("agent status reads the persisted run store", async (t) => {
@@ -1081,7 +1473,7 @@ test("agent status reads the persisted run store", async (t) => {
     runner: "codex",
     taskId: "tsk_status",
     taskIdentifier: "github:oxnw/agentrail:issues/21",
-    status: "waiting_for_human",
+    status: "awaiting_user",
     repoPath: repoRoot,
     worktreePath: path.join(homePath, "worktrees", "agt_runner", "run_status"),
     branchName: "agentrail/agt_runner/tsk_status",
@@ -1094,6 +1486,7 @@ test("agent status reads the persisted run store", async (t) => {
     updatedAt: "2026-05-09T11:00:01.000Z",
     exitCode: null,
     summary: "Waiting for a human.",
+    userAction: null,
     launch: {
       executable: "cursor",
       args: [repoRoot],
@@ -1109,7 +1502,7 @@ test("agent status reads the persisted run store", async (t) => {
   assert.equal(exitCode, 0, stderr.toString());
   const body = JSON.parse(stdout.toString());
   assert.equal(body.data[0].runId, "run_status");
-  assert.equal(body.data[0].status, "waiting_for_human");
+  assert.equal(body.data[0].status, "awaiting_user");
 });
 
 async function createHarness(options?: {
@@ -1143,6 +1536,7 @@ async function createHarness(options?: {
   return {
     baseUrl: `http://${address.address}:${address.port}`,
     apiKey: data.apiKey,
+    eventStore,
     taskQueue,
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));

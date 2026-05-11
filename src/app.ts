@@ -24,7 +24,7 @@ import { createOperationTimer, logNarrative } from "./structured-logger.ts";
 import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts";
 import type { LinearIssueSourceAdapter } from "./linear-issue-source-adapter.ts";
 import type { LinearCommentWebhookAdapter } from "./linear-comment-webhook-adapter.ts";
-import type { AgentRunReportStatus, AgentRunStore, AgentRunStatus } from "./agent-run-store.ts";
+import type { AgentRunReportInput, AgentRunStore, AgentRunStatus } from "./agent-run-store.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,6 +38,8 @@ type LinearCommentWebhookAdapterLike = Partial<Pick<LinearCommentWebhookAdapter,
 type TaskLifecycleStoreLike = {
   getTask?(taskId: string): unknown;
   getRawTask?(taskId: string): TaskRecord | null;
+  blockTaskAwaitingUser?(taskId: string, payload: unknown, idempotencyKey: string | undefined, sourceAgentId: string | null): Promise<unknown> | unknown;
+  resolveBlocker?(taskId: string, payload: unknown, idempotencyKey: string | undefined, actorId: string | null, actorRole?: string): Promise<unknown> | unknown;
   listRawTasks?(): TaskRecord[];
   listRawTasksBySourceRepo?(provider: "github" | "gitlab", owner: string, repo: string): TaskRecord[];
   projectCiState?(taskId: string, observation: {
@@ -620,6 +622,7 @@ async function routeRequest({
       request,
       response,
       agentRunStore,
+      taskLifecycleStore,
       runId: agentRunReportMatch[1],
       principal,
     });
@@ -748,6 +751,61 @@ async function routeRequest({
       taskLifecycleStore,
       taskId: startMatch[1],
       actorId: principal?.agent?.id ?? null,
+    });
+    return;
+  }
+
+  const blockTaskMatch =
+    request.method === "POST" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/blocker$/) : null;
+  if (blockTaskMatch) {
+    obs.operation = "block_task_awaiting_user";
+    obs.taskId = blockTaskMatch[1];
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "tasks:write",
+      operation: "block_task_awaiting_user"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleBlockTaskAwaitingUser({
+      request,
+      response,
+      taskLifecycleStore,
+      taskId: blockTaskMatch[1],
+      sourceAgentId: principal?.agent?.id ?? null,
+    });
+    return;
+  }
+
+  const resolveBlockerMatch =
+    request.method === "POST" ? pathname.match(/^\/tasks\/(tsk_[A-Za-z0-9]+)\/resolve-blocker$/) : null;
+  if (resolveBlockerMatch) {
+    obs.operation = "resolve_task_blocker";
+    obs.taskId = resolveBlockerMatch[1];
+    const principal = authorizeRoute({
+      request,
+      response,
+      authStore,
+      requiredScope: "tasks:write",
+      operation: "resolve_task_blocker"
+    });
+    if (principal === false) {
+      return;
+    }
+    obs.agentId = principal?.agent?.id ?? principal?.keyId ?? null;
+
+    await handleResolveTaskBlocker({
+      request,
+      response,
+      taskLifecycleStore,
+      taskId: resolveBlockerMatch[1],
+      actorId: principal?.agent?.id ?? principal?.keyId ?? null,
+      actorRole: principal?.agent?.role ?? "system",
     });
     return;
   }
@@ -1232,11 +1290,12 @@ interface ReportAgentRunOptions {
   request: http.IncomingMessage;
   response: http.ServerResponse;
   agentRunStore?: AgentRunStore | null;
+  taskLifecycleStore: unknown;
   runId: string;
   principal: ReturnType<AgentAuthStore["authenticate"]> | null;
 }
 
-async function handleReportAgentRun({ request, response, agentRunStore, runId, principal }: ReportAgentRunOptions) {
+async function handleReportAgentRun({ request, response, agentRunStore, taskLifecycleStore, runId, principal }: ReportAgentRunOptions) {
   if (!agentRunStore) {
     writeError(response, 404, "not_found", "Agent run store is not configured.", {
       availableActions: []
@@ -1281,6 +1340,27 @@ async function handleReportAgentRun({ request, response, agentRunStore, runId, p
     });
     return;
   }
+  const blockedReason = status === "blocked" ? validateRequiredPayloadString(payload, "reason") : null;
+  if (blockedReason instanceof Error) {
+    writeError(response, 400, "validation_error", blockedReason.message, {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+  const blockedActionRequired = status === "blocked" ? validateRequiredPayloadString(payload, "actionRequired") : null;
+  if (blockedActionRequired instanceof Error) {
+    writeError(response, 400, "validation_error", blockedActionRequired.message, {
+      availableActions: ["retry"]
+    });
+    return;
+  }
+  const blockedResumeInstructions = status === "blocked" ? validateRequiredPayloadString(payload, "resumeInstructions") : null;
+  if (blockedResumeInstructions instanceof Error) {
+    writeError(response, 400, "validation_error", blockedResumeInstructions.message, {
+      availableActions: ["retry"]
+    });
+    return;
+  }
   if (payload.handoff !== undefined && payload.handoff !== null && !isRecord(payload.handoff)) {
     writeError(response, 400, "validation_error", "Report handoff must be a JSON object or null when provided.", {
       availableActions: ["retry"]
@@ -1288,19 +1368,73 @@ async function handleReportAgentRun({ request, response, agentRunStore, runId, p
     return;
   }
 
-  const report: {
-    status: AgentRunReportStatus;
-    summary: string;
-    handoff?: Record<string, unknown> | null;
-  } = {
-    status,
-    summary,
-  };
+  let report: AgentRunReportInput;
+  if (status === "blocked") {
+    if (typeof blockedReason !== "string" || typeof blockedActionRequired !== "string" || typeof blockedResumeInstructions !== "string") {
+      writeError(response, 400, "validation_error", "Blocked reports require reason, actionRequired, and resumeInstructions.", {
+        availableActions: ["retry"]
+      });
+      return;
+    }
+    report = {
+      status,
+      summary,
+      reason: blockedReason,
+      actionRequired: blockedActionRequired,
+      resumeInstructions: blockedResumeInstructions,
+    };
+  } else {
+    report = {
+      status,
+      summary,
+    };
+  }
   if (payload.handoff !== undefined) {
     report.handoff = payload.handoff === null ? null : payload.handoff as Record<string, unknown>;
   }
-  const updated = agentRunStore.reportRun(runId, report);
+  if (report.status === "blocked") {
+    const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null | undefined;
+    if (!lifecycle || typeof lifecycle.blockTaskAwaitingUser !== "function") {
+      writeError(response, 404, "not_found", "Task lifecycle store is not configured for blocked reports.", {
+        availableActions: ["contact_support"]
+      });
+      return;
+    }
+    try {
+      await lifecycle.blockTaskAwaitingUser(
+        run.taskId,
+        {
+          sourceRunId: run.runId,
+          sourceAgentId: run.agentId,
+          reason: report.reason,
+          actionRequired: report.actionRequired,
+          resumeInstructions: report.resumeInstructions,
+        },
+        `agent-run-blocker:${run.runId}`,
+        run.agentId,
+      );
+    } catch (error) {
+      if (error instanceof TaskLifecycleError) {
+        writeError(response, error.statusCode, error.code, error.message, error.details);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  let updated: ReturnType<AgentRunStore["reportRun"]>;
+  try {
+    updated = agentRunStore.reportRun(runId, report);
+  } catch (error) {
+    if (status === "blocked") {
+      await rollbackBlockedReportTask({ taskLifecycleStore, taskId: run.taskId, runId: run.runId, agentId: run.agentId });
+    }
+    throw error;
+  }
   if (!updated) {
+    if (status === "blocked") {
+      await rollbackBlockedReportTask({ taskLifecycleStore, taskId: run.taskId, runId: run.runId, agentId: run.agentId });
+    }
     writeError(response, 404, "not_found", "Agent run not found.", {
       availableActions: ["list_agent_runs"]
     });
@@ -1312,6 +1446,51 @@ async function handleReportAgentRun({ request, response, agentRunStore, runId, p
     availableActions: [],
     meta: responseMeta()
   });
+}
+
+async function rollbackBlockedReportTask({
+  taskLifecycleStore,
+  taskId,
+  runId,
+  agentId,
+}: {
+  taskLifecycleStore: unknown;
+  taskId: string;
+  runId: string;
+  agentId: string;
+}): Promise<void> {
+  const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null | undefined;
+  if (!lifecycle || typeof lifecycle.resolveBlocker !== "function") {
+    return;
+  }
+  try {
+    await lifecycle.resolveBlocker(
+      taskId,
+      { resolutionSummary: "Rolled back awaiting-user blocker because the agent run report could not be persisted." },
+      `agent-run-blocker-rollback:${runId}`,
+      agentId,
+      "system",
+    );
+  } catch (rollbackError) {
+    logNarrative({
+      title: "Agent Run Blocker Rollback Failed",
+      message: `Failed to roll back awaiting-user blocker for task ${taskId} after agent run report persistence failed.`,
+      operation: "agent_run_blocker_rollback_failed",
+      taskId,
+      details: {
+        runId,
+        error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+      },
+    });
+  }
+}
+
+function validateRequiredPayloadString(payload: Record<string, unknown>, fieldName: string): string | Error {
+  const value = payload[fieldName];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return new Error(`Report ${fieldName} must be a non-empty string for blocked reports.`);
+  }
+  return value.trim();
 }
 
 function canReportAgentRun(runAgentId: string, principal: ReturnType<AgentAuthStore["authenticate"]> | null): boolean {
@@ -1369,7 +1548,7 @@ function isAgentRunStatus(value: string | null): value is AgentRunStatus {
     || value === "running"
     || value === "succeeded"
     || value === "failed"
-    || value === "waiting_for_human"
+    || value === "awaiting_user"
     || value === "cancelled";
 }
 
@@ -1802,6 +1981,15 @@ interface StartTaskOptions extends SubmitTaskOptions {
   actorId: string | null;
 }
 
+interface BlockTaskAwaitingUserOptions extends SubmitTaskOptions {
+  sourceAgentId: string | null;
+}
+
+interface ResolveTaskBlockerOptions extends SubmitTaskOptions {
+  actorId: string | null;
+  actorRole: string;
+}
+
 async function handleStartTask({ request, response, taskLifecycleStore, taskId, actorId }: StartTaskOptions) {
   if (!taskLifecycleStore || typeof (taskLifecycleStore as { startTask?: unknown }).startTask !== "function") {
     writeError(response, 404, "not_found", "Task source not found.", {
@@ -1819,6 +2007,65 @@ async function handleStartTask({ request, response, taskLifecycleStore, taskId, 
       payload,
       request.headers["idempotency-key"] as string | undefined,
       actorId,
+    );
+    writeJson(response, 202, body);
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function handleBlockTaskAwaitingUser({ request, response, taskLifecycleStore, taskId, sourceAgentId }: BlockTaskAwaitingUserOptions) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { blockTaskAwaitingUser?: unknown }).blockTaskAwaitingUser !== "function") {
+    writeError(response, 404, "not_found", "Task source not found.", {
+      availableActions: ["list_my_tasks"]
+    });
+    return;
+  }
+
+  try {
+    const payload = await readJsonBody(request);
+    const body = await (taskLifecycleStore as {
+      blockTaskAwaitingUser: (taskId: string, payload: unknown, key: string | undefined, sourceAgentId: string | null) => Promise<unknown> | unknown;
+    }).blockTaskAwaitingUser(
+      taskId,
+      payload,
+      request.headers["idempotency-key"] as string | undefined,
+      sourceAgentId,
+    );
+    writeJson(response, 202, body);
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function handleResolveTaskBlocker({ request, response, taskLifecycleStore, taskId, actorId, actorRole }: ResolveTaskBlockerOptions) {
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { resolveBlocker?: unknown }).resolveBlocker !== "function") {
+    writeError(response, 404, "not_found", "Task source not found.", {
+      availableActions: ["list_my_tasks"]
+    });
+    return;
+  }
+
+  try {
+    const payload = await readJsonBody(request);
+    const body = await (taskLifecycleStore as {
+      resolveBlocker: (taskId: string, payload: unknown, key: string | undefined, actorId: string | null, actorRole?: string) => Promise<unknown> | unknown;
+    }).resolveBlocker(
+      taskId,
+      payload,
+      request.headers["idempotency-key"] as string | undefined,
+      actorId,
+      actorRole,
     );
     writeJson(response, 202, body);
   } catch (error) {
