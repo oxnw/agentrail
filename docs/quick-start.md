@@ -66,10 +66,19 @@ Keep this running in one terminal:
 agentrail server start
 ```
 
+For local/self-hosted setups, this runs the AgentRail API, starts provider
+delivery for configured polling or webhooks, and keeps valid managed local
+agents from `~/.agentrail/agents/*.env` awake.
+
+You normally do not need to run `agentrail agent run` yourself. Keep it for
+manual debugging, one-off validation, or cases where you intentionally want to
+run a single agent outside the server supervisor.
+
 Expected output includes:
 
 ```text
-AgentRail API listening on http://127.0.0.1:3000
+Starting AgentRail API.
+✓ AgentRail API ready at http://127.0.0.1:3000
 ```
 
 ## 4. Create Or Update The First Agent

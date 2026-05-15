@@ -363,6 +363,142 @@ test("agent run waits on task events instead of sleeping and polling when idle",
   assert.equal(harness.taskQueue.getRawTask(injectedTaskId)?.status, "in_review");
 });
 
+test("agent run without --once stays alive for later task events", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-resident-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const harness = await createHarness({
+    submitTask: async (taskId, payload) => {
+      const pullRequest = readPullRequestPayload(payload);
+      return {
+        data: {
+          taskId,
+          submissionId: `sub_resident_${taskId}`,
+          prUrl: `https://github.com/oxnw/agentrail/pull/${taskId}`,
+          prNumber: 128,
+          head: pullRequest?.head,
+          base: pullRequest?.base,
+          headSha: pullRequest?.headSha,
+        },
+        availableActions: ["view_ci_status", "view_review_feedback"],
+      };
+    },
+  });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  const firstTask = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-RESIDENT-1",
+    title: "Resident runner first task",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "todo",
+    availableActions: ["start"],
+  });
+  let secondTaskId: string | null = null;
+  let streamRequests = 0;
+  let launchCount = 0;
+  const fetchWithSecondEvent: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    if (url.pathname === "/task-events/stream") {
+      streamRequests += 1;
+      if (streamRequests === 1) {
+        setTimeout(() => {
+          const task = harness.taskQueue.createTask({
+            identifier: "AGEA-RUN-RESIDENT-2",
+            title: "Resident runner second task",
+            assignee: { id: "agt_runner", name: "Runner" },
+            assigneeAgentId: "agt_runner",
+            status: "todo",
+            availableActions: ["start"],
+          });
+          secondTaskId = task.id;
+          void harness.eventStore.append({
+            id: "evt_agent_run_resident_second",
+            type: "task.updated",
+            occurredAt: now().toISOString(),
+            taskVersion: task.version,
+            traceId: "trace_agent_run_resident_second",
+            data: {
+              taskId: task.id,
+              taskIdentifier: task.identifier,
+              status: task.status,
+              changedFields: ["status", "availableActions"],
+              availableActions: task.availableActions,
+              affectedAgentId: "agt_runner",
+            },
+          });
+        }, 25);
+      } else {
+        return new Response("forced stream stop after resident runner proof", { status: 500 });
+      }
+    }
+    return globalThis.fetch(input, init);
+  };
+
+  const runPromise = runCli(["agent", "run", "--poll-interval", "1"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      fetch: fetchWithSecondEvent,
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+      },
+      launchRunner: async ({ logPath, handoffPath, worktreePath }) => {
+        launchCount += 1;
+        assert.ok(handoffPath, "handoffPath must be defined");
+        await writeFile(logPath, `resident run ${launchCount}\n`, "utf8");
+        await writeFile(path.join(worktreePath, "README.md"), `resident run ${launchCount} completed\n`, "utf8");
+        const commitSha = commitAll(worktreePath, `resident run ${launchCount} change`);
+        await writeAgentRailHandoff(handoffPath, {
+          target: "agentrail",
+          summary: `Resident run ${launchCount} completed.`,
+          commitSha,
+        });
+        return {
+          status: "succeeded",
+          exitCode: 0,
+          summary: `Resident run ${launchCount} completed.`,
+        };
+      },
+      publishBranch: async () => {},
+    },
+  });
+
+  const exitCode = await Promise.race([
+    runPromise,
+    new Promise<number>((_, reject) => setTimeout(() => reject(new Error("resident runner did not continue to the second task")), 4_000)),
+  ]);
+
+  assert.equal(exitCode, 1);
+  assert.match(stderr.toString(), /forced stream stop after resident runner proof/);
+  assert.equal(launchCount, 2);
+  assert.equal(streamRequests, 2);
+  assert.equal(harness.taskQueue.getRawTask(firstTask.id)?.status, "in_review");
+  assert.ok(secondTaskId);
+  assert.equal(harness.taskQueue.getRawTask(secondTaskId)?.status, "in_review");
+});
+
 test("agent run falls back to polling when a task event arrives before the stream connects", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-missed-event-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));

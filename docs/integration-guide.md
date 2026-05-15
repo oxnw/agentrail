@@ -122,6 +122,13 @@ The intended production flow is AgentRail-owned:
 8. The agent follows `availableActions` until the task is fixed, approved, and
    shippable.
 
+In local/self-hosted mode, `agentrail server start` owns wake orchestration. It
+loads managed agent env files from `~/.agentrail/agents/`, starts an
+event-driven `agentrail agent run` loop for each configured local agent, and
+restarts those loops if they exit. Provider webhook and polling delivery still
+follow the configured provider mode; the runner wake loop only consumes
+AgentRail task events.
+
 In that flow, the agent should not manually pass a PR URL as the primary
 automation contract. The PR URL is provider state that AgentRail should create,
 discover, and return through the task lifecycle response.
@@ -152,7 +159,8 @@ agent credentials, routing, and provider state. The default path is:
    Choose rules-only routing if your issues already carry enough labels,
    projects, or type metadata. Choose AI routing if you want AgentRail to use AI
    to route tasks to the right agents.
-2. Start the server with `agentrail server start`.
+2. Start the server with `agentrail server start`; this also keeps configured
+   local agents awake.
 3. Create or connect the first local agent with `agentrail agent create` if
    `init` did not already do it interactively.
 4. Finish with `agentrail doctor`.
@@ -206,7 +214,8 @@ claude --append-system-prompt-file /path/to/agentrail/docs/agent-recipes.md
 
 Codex or Cursor:
 
-- Start the managed runner with `agentrail agent run`.
+- Use `agentrail agent run` directly only for debugging or when intentionally
+  running a single local agent outside the server-owned supervisor.
 - AgentRail waits on task events, starts the configured coding agent only for
   actionable code work, and consumes the local report after the child process
   exits.
