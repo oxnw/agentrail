@@ -196,6 +196,21 @@ export default function Hero() {
               >
                 <span>npm i @agentrail-core/cli · pip install agentrail · Source-available license</span>
               </div>
+                <a
+                  href="https://www.producthunt.com/products/agentrail?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-agentrail"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="AgentRail on Product Hunt"
+                  style={{ display: "inline-block", marginTop: "22px" }}
+                >
+                  <img
+                    alt="AgentRail - A local control plane for AI coding agents | Product Hunt"
+                    width={250}
+                    height={54}
+                    src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1146987&theme=neutral&t=1778801921835"
+                    style={{ display: "block" }}
+                  />
+                </a>
             </div>
 
             {/* Right: Workflow card */}
