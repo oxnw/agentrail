@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildRuntime, fetchAllGitHubIssues, fetchAllLinearIssues, parseNextLink } from "../src/server-runtime.ts";
+import { ProviderCursorStore } from "../src/provider-cursor-store.ts";
+import { buildRuntime, fetchAllGitHubIssues, fetchAllLinearIssues, parseNextLink, pollGitHubIssues } from "../src/server-runtime.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
 const now = () => new Date("2026-05-06T15:00:00.000Z");
@@ -25,6 +26,81 @@ test("buildRuntime starts without live provider configuration", () => {
   assert.ok(!("receiveWebhook" in runtime.linearIntakeAdapter));
   assert.equal(runtime.linearWebhookAdapter, null);
   assert.equal(runtime.deliveryController, null);
+});
+
+test("buildRuntime submit adapter calls GitHub API, not AgentRail public base URL", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string | URL, options?: RequestInit) => {
+    const href = String(url);
+    calls.push(href);
+    assert.equal((options?.headers as Record<string, string> | undefined)?.authorization, "Bearer ghs_test");
+    if (href.includes("/pulls?state=all")) {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href.includes("/pulls?state=open")) {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href === "https://api.github.com/repos/oxnw/agentrail/pulls") {
+      return new Response(JSON.stringify({
+        number: 17,
+        html_url: "https://github.com/oxnw/agentrail/pull/17",
+        head: { ref: "benchmark/fix", sha: "abc123" },
+        base: { ref: "main" },
+        created_at: "2026-05-11T22:30:00Z",
+      }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`Unexpected fetch URL: ${href}`);
+  }) as typeof globalThis.fetch;
+
+  try {
+    const runtime = buildRuntime({
+      githubToken: "ghs_test",
+      githubMode: "real",
+      circleciToken: null,
+      now,
+      eventStore: new TaskEventStore({ now }),
+      publicBaseUrl: "http://127.0.0.1:3144",
+    });
+    const task = runtime.taskLifecycleStore.createTask({
+      identifier: "github:oxnw/agentrail:issues/15",
+      title: "Benchmark issue",
+      assignee: { id: "agt_test", name: "Test Agent" },
+      assigneeAgentId: "agt_test",
+      status: "in_progress",
+      availableActions: ["submit"],
+      source: {
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 15,
+        baseBranch: "main",
+      },
+    });
+
+    const response = await runtime.taskLifecycleStore.submitTask(task.id, {
+      summary: "Submit benchmark issue",
+      pullRequest: {
+        head: "benchmark/fix",
+        base: "main",
+      },
+    }, "runtime-submit-github-base");
+
+    assert.equal((response as any).data.prUrl, "https://github.com/oxnw/agentrail/pull/17");
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every((href) => href.startsWith("https://api.github.com/")), calls.join("\n"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("fetchAllGitHubIssues follows Link header pagination", async () => {
@@ -57,6 +133,189 @@ test("fetchAllGitHubIssues follows Link header pagination", async () => {
     });
     assert.deepEqual(issues.map((issue) => issue.number), [1, 2]);
     assert.equal(calls.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchAllGitHubIssues includes since while following Link header pagination", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string | URL) => {
+    const href = String(url);
+    calls.push(href);
+    if (href.includes("page=2")) {
+      return new Response(JSON.stringify([{ number: 2 }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify([{ number: 1 }]), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        link: '<https://api.github.com/repos/oxnw/agentrail/issues?state=all&per_page=100&since=2026-05-14T12%3A00%3A00.000Z&page=2>; rel="next"',
+      },
+    });
+  }) as typeof globalThis.fetch;
+
+  try {
+    const issues = await fetchAllGitHubIssues({
+      owner: "oxnw",
+      repo: "agentrail",
+      token: "github-token",
+      repoSlug: "oxnw/agentrail",
+      since: "2026-05-14T12:00:00.000Z",
+    });
+    assert.deepEqual(issues.map((issue) => issue.number), [1, 2]);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0], /since=2026-05-14T12%3A00%3A00\.000Z/u);
+    assert.match(calls[1], /page=2/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("pollGitHubIssues in from_now mode seeds a cursor and avoids first-run historical import", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchCalls: string[] = [];
+  const ingestedIssues: number[] = [];
+  const cursorStore = new ProviderCursorStore({
+    now: () => new Date("2026-05-14T12:00:00.000Z"),
+  });
+  globalThis.fetch = (async (url: string | URL) => {
+    const href = String(url);
+    fetchCalls.push(href);
+    assert.match(href, /since=2026-05-14T12%3A00%3A00\.000Z/u);
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof globalThis.fetch;
+
+  try {
+    const summary = await pollGitHubIssues({
+      token: "github-token",
+      repo: {
+        path: "/tmp/agentrail",
+        slug: "oxnw/agentrail",
+        defaultBranch: "main",
+      },
+      intakeAdapter: {
+        ingest: async (issue: { issueNumber: number }) => {
+          ingestedIssues.push(issue.issueNumber);
+          return { outcome: "created" };
+        },
+      } as any,
+      cursorStore,
+      importMode: "from_now",
+      now: () => new Date("2026-05-14T12:00:00.000Z"),
+    });
+
+    assert.equal(summary.checked, 0);
+    assert.deepEqual(ingestedIssues, []);
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(cursorStore.getCursor({ provider: "github", resource: "issues", repository: "oxnw/agentrail" }), "2026-05-14T12:00:00.000Z");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("pollGitHubIssues in backfill mode imports first-run issues before writing a cursor", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchCalls: string[] = [];
+  const ingestedIssues: number[] = [];
+  const cursorStore = new ProviderCursorStore({
+    now: () => new Date("2026-05-14T12:00:00.000Z"),
+  });
+  globalThis.fetch = (async (url: string | URL) => {
+    const href = String(url);
+    fetchCalls.push(href);
+    assert.doesNotMatch(href, /[?&]since=/u);
+    return new Response(JSON.stringify([{
+      number: 7,
+      html_url: "https://github.com/oxnw/agentrail/issues/7",
+      title: "Historical issue",
+      body: "",
+      labels: [],
+      state: "open",
+      updated_at: "2026-05-10T09:00:00.000Z",
+    }]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof globalThis.fetch;
+
+  try {
+    const summary = await pollGitHubIssues({
+      token: "github-token",
+      repo: {
+        path: "/tmp/agentrail",
+        slug: "oxnw/agentrail",
+        defaultBranch: "main",
+      },
+      intakeAdapter: {
+        ingest: async (issue: { issueNumber: number }) => {
+          ingestedIssues.push(issue.issueNumber);
+          return { outcome: "created" };
+        },
+      } as any,
+      cursorStore,
+      importMode: "backfill",
+      now: () => new Date("2026-05-14T12:00:00.000Z"),
+    });
+
+    assert.equal(summary.checked, 1);
+    assert.deepEqual(ingestedIssues, [7]);
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(cursorStore.getCursor({ provider: "github", resource: "issues", repository: "oxnw/agentrail" }), "2026-05-14T12:00:00.000Z");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("pollGitHubIssues does not advance cursor when issue ingest fails", async () => {
+  const originalFetch = globalThis.fetch;
+  const cursorStore = new ProviderCursorStore({
+    now: () => new Date("2026-05-14T12:00:00.000Z"),
+  });
+  cursorStore.setCursor(
+    { provider: "github", resource: "issues", repository: "oxnw/agentrail" },
+    "2026-05-14T11:00:00.000Z",
+  );
+  globalThis.fetch = (async () => new Response(JSON.stringify([{
+    number: 9,
+    html_url: "https://github.com/oxnw/agentrail/issues/9",
+    title: "Route me",
+    body: "",
+    labels: [],
+    state: "open",
+    updated_at: "2026-05-14T12:05:00.000Z",
+  }]), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  })) as typeof globalThis.fetch;
+
+  try {
+    const summary = await pollGitHubIssues({
+      token: "github-token",
+      repo: {
+        path: "/tmp/agentrail",
+        slug: "oxnw/agentrail",
+        defaultBranch: "main",
+      },
+      intakeAdapter: {
+        ingest: async () => {
+          throw new Error("routing store unavailable");
+        },
+      } as any,
+      cursorStore,
+      importMode: "from_now",
+      now: () => new Date("2026-05-14T12:00:00.000Z"),
+    });
+
+    assert.equal(summary.failed, 1);
+    assert.equal(cursorStore.getCursor({ provider: "github", resource: "issues", repository: "oxnw/agentrail" }), "2026-05-14T11:00:00.000Z");
   } finally {
     globalThis.fetch = originalFetch;
   }

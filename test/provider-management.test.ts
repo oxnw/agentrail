@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { runCli } from "../src/cli/index.ts";
@@ -51,6 +51,78 @@ test("provider connect github writes provider.env and updates config", async (t)
   const nextConfig = JSON.parse(await readFile(path.join(homePath, "config.json"), "utf8"));
   assert.equal(nextConfig.providers.github.mode, "real");
   assert.equal(nextConfig.providers.github.tokenEnv, "GITHUB_TOKEN");
+});
+
+test("provider connect github in webhook mode registers repo hooks before writing success config", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_webhook_provider_token",
+    GITHUB_WEBHOOK_SECRET: "github_webhook_secret",
+  }, { baseUrl: "https://agentrail.example.com" });
+  const fetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: [],
+    },
+    {
+      ok: true,
+      status: 201,
+      json: {
+        id: 9001,
+        active: true,
+        events: ["issues", "workflow_run", "pull_request_review"],
+        config: { url: "https://agentrail.example.com/providers/github/webhooks" },
+      },
+    },
+  ]);
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "connect", "github", "--delivery-mode", "webhook"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /^\u2713 Connected GitHub using GITHUB_TOKEN in webhook mode\.\n$/);
+  assert.equal(fetch.calls.length, 3);
+  assert.equal(fetch.calls[0]?.url, "https://api.github.com/user");
+  assert.equal(fetch.calls[1]?.url, "https://api.github.com/repos/oxnw/agentrail/hooks?per_page=100");
+  assert.equal(fetch.calls[1]?.method, "GET");
+  assert.equal(fetch.calls[2]?.url, "https://api.github.com/repos/oxnw/agentrail/hooks");
+  assert.equal(fetch.calls[2]?.method, "POST");
+  assert.deepEqual(JSON.parse(fetch.calls[2]?.body ?? "{}"), {
+    name: "web",
+    active: true,
+    events: ["issues", "workflow_run", "pull_request_review"],
+    config: {
+      url: "https://agentrail.example.com/providers/github/webhooks",
+      content_type: "json",
+      secret: "github_webhook_secret",
+      insecure_ssl: "0",
+    },
+  });
+
+  const nextConfig = JSON.parse(await readFile(path.join(homePath, "config.json"), "utf8"));
+  assert.equal(nextConfig.providers.github.deliveryMode, "webhook");
+  assert.deepEqual(nextConfig.providers.github.registeredWebhooks, [
+    {
+      repoSlug: "oxnw/agentrail",
+      hookId: 9001,
+      url: "https://agentrail.example.com/providers/github/webhooks",
+      events: ["issues", "workflow_run", "pull_request_review"],
+      active: true,
+    },
+  ]);
 });
 
 test("provider connect github interactively prompts for a masked token", async (t) => {
@@ -284,6 +356,430 @@ test("provider test github fails clearly when not connected", async (t) => {
   assert.match(stderr.toString(), /GitHub is not connected yet/);
 });
 
+test("provider test github in webhook mode fails when no registered hook metadata is configured", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
+    GITHUB_WEBHOOK_SECRET: "github_webhook_secret",
+  }, { baseUrl: "https://agentrail.example.com" });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.github = {
+    mode: "real",
+    tokenEnv: "GITHUB_TOKEN",
+    deliveryMode: "webhook",
+    webhookSecretEnv: "GITHUB_WEBHOOK_SECRET",
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const fetch = createFetchStub([]);
+  const exitCode = await runCli(["provider", "test", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout.toString(), "");
+  assert.match(stderr.toString(), /GitHub webhook mode is configured, but no registered GitHub webhook metadata exists/);
+  assert.equal(fetch.calls.length, 0);
+});
+
+test("provider list shows registered GitHub webhook status and events", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
+    GITHUB_WEBHOOK_SECRET: "github_webhook_secret",
+  }, { baseUrl: "https://agentrail.example.com" });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.github = {
+    mode: "real",
+    tokenEnv: "GITHUB_TOKEN",
+    deliveryMode: "webhook",
+    webhookSecretEnv: "GITHUB_WEBHOOK_SECRET",
+    registeredWebhooks: [{
+      repoSlug: "oxnw/agentrail",
+      hookId: 42,
+      url: "https://agentrail.example.com/providers/github/webhooks",
+      events: ["issues", "workflow_run", "pull_request_review"],
+      active: true,
+    }],
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "list"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /registered webhooks: 1/u);
+  assert.match(stdout.toString(), /oxnw\/agentrail: hook 42 active events=issues,workflow_run,pull_request_review -> https:\/\/agentrail\.example\.com\/providers\/github\/webhooks/u);
+});
+
+test("provider test github in webhook mode verifies stored hook status and events", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
+    GITHUB_WEBHOOK_SECRET: "github_webhook_secret",
+  }, { baseUrl: "https://agentrail.example.com" });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.github = {
+    mode: "real",
+    tokenEnv: "GITHUB_TOKEN",
+    deliveryMode: "webhook",
+    webhookSecretEnv: "GITHUB_WEBHOOK_SECRET",
+    registeredWebhooks: [{
+      repoSlug: "oxnw/agentrail",
+      hookId: 42,
+      url: "https://agentrail.example.com/providers/github/webhooks",
+      events: ["issues", "workflow_run", "pull_request_review"],
+      active: true,
+    }],
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const fetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: [{
+        id: 42,
+        active: true,
+        events: ["issues", "workflow_run", "pull_request_review"],
+        config: { url: "https://agentrail.example.com/providers/github/webhooks" },
+      }],
+    },
+  ]);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "test", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /GitHub connection test passed/u);
+  assert.equal(fetch.calls.length, 3);
+  assert.equal(fetch.calls[2]?.url, "https://api.github.com/repos/oxnw/agentrail/hooks?per_page=100");
+});
+
+test("provider test github in webhook mode requires stored hooks for every configured repo", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
+    GITHUB_WEBHOOK_SECRET: "github_webhook_secret",
+  }, { baseUrl: "https://agentrail.example.com" });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.repos = [
+    ...config.repos,
+    {
+      path: path.join(repoRoot, "benchmark"),
+      slug: "oxnw/agentrail-benchmark",
+      defaultBranch: "main",
+    },
+  ];
+  config.providers.github = {
+    mode: "real",
+    tokenEnv: "GITHUB_TOKEN",
+    deliveryMode: "webhook",
+    webhookSecretEnv: "GITHUB_WEBHOOK_SECRET",
+    registeredWebhooks: [{
+      repoSlug: "oxnw/agentrail",
+      hookId: 42,
+      url: "https://agentrail.example.com/providers/github/webhooks",
+      events: ["issues", "workflow_run", "pull_request_review"],
+      active: true,
+    }],
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const fetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail-benchmark" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: [{
+        id: 42,
+        active: true,
+        events: ["issues", "workflow_run", "pull_request_review"],
+        config: { url: "https://agentrail.example.com/providers/github/webhooks" },
+      }],
+    },
+  ]);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "test", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout.toString(), "");
+  assert.match(stderr.toString(), /missing registered GitHub webhook metadata for configured repositories: oxnw\/agentrail-benchmark/u);
+});
+
+test("provider test github in webhook mode rejects stored hooks missing events", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
+    GITHUB_WEBHOOK_SECRET: "github_webhook_secret",
+  }, { baseUrl: "https://agentrail.example.com" });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.github = {
+    mode: "real",
+    tokenEnv: "GITHUB_TOKEN",
+    deliveryMode: "webhook",
+    webhookSecretEnv: "GITHUB_WEBHOOK_SECRET",
+    registeredWebhooks: [{
+      repoSlug: "oxnw/agentrail",
+      hookId: 42,
+      url: "https://agentrail.example.com/providers/github/webhooks",
+      events: ["issues"],
+      active: true,
+    }],
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const fetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: [{
+        id: 42,
+        active: true,
+        events: ["issues"],
+        config: { url: "https://agentrail.example.com/providers/github/webhooks" },
+      }],
+    },
+  ]);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "test", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout.toString(), "");
+  assert.match(stderr.toString(), /missing events: workflow_run, pull_request_review/u);
+});
+
+test("provider test github validates token and configured repo access", async (t) => {
+  const { repoRoot } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
+  });
+  const connectFetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+  ]);
+
+  const connectStdout = createMemoryWriter();
+  const connectStderr = createMemoryWriter();
+  assert.equal(await runCli(["provider", "connect", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout: connectStdout,
+    stderr: connectStderr,
+    providerFetch: connectFetch as any,
+  }), 0, connectStderr.toString());
+
+  const testFetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+  ]);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+
+  const exitCode = await runCli(["provider", "test", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: testFetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /GitHub connection test passed/);
+  assert.equal(testFetch.calls.length, 2);
+  assert.equal(testFetch.calls[0]?.url, "https://api.github.com/user");
+  assert.equal(testFetch.calls[1]?.url, "https://api.github.com/repos/oxnw/agentrail");
+  assert.equal(testFetch.calls[0]?.headers.authorization, "Bearer ghp_test_provider_token");
+});
+
+test("provider test github prefers provider.env over stale runtime env", async (t) => {
+  const { repoRoot } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_good_provider_token",
+  });
+  const connectFetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+  ]);
+
+  const connectStdout = createMemoryWriter();
+  const connectStderr = createMemoryWriter();
+  assert.equal(await runCli(["provider", "connect", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout: connectStdout,
+    stderr: connectStderr,
+    providerFetch: connectFetch as any,
+  }), 0, connectStderr.toString());
+
+  process.env.GITHUB_TOKEN = "ghp_stale_runtime_token";
+  const testFetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+  ]);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+
+  const exitCode = await runCli(["provider", "test", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: testFetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /GitHub connection test passed/);
+  assert.equal(testFetch.calls[0]?.headers.authorization, "Bearer ghp_good_provider_token");
+});
+
+test("provider test github fails when token cannot access configured repo", async (t) => {
+  const { repoRoot } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_no_repo_access_token",
+  });
+  const connectFetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+  ]);
+
+  const connectStdout = createMemoryWriter();
+  const connectStderr = createMemoryWriter();
+  assert.equal(await runCli(["provider", "connect", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout: connectStdout,
+    stderr: connectStderr,
+    providerFetch: connectFetch as any,
+  }), 0, connectStderr.toString());
+
+  const testFetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: false,
+      status: 404,
+      text: "Not found",
+    },
+  ]);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+
+  const exitCode = await runCli(["provider", "test", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: testFetch as any,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout.toString(), "");
+  assert.match(stderr.toString(), /token cannot access oxnw\/agentrail/);
+});
+
 test("provider test linear fails clearly when not connected", async (t) => {
   const { repoRoot } = await setupProviderTest(t);
 
@@ -452,14 +948,20 @@ function createFetchStub(responses: Array<{
   status: number;
   json?: unknown;
   text?: string;
+  headers?: Record<string, string>;
 }>) {
-  const calls: Array<{ url: string; headers: Record<string, string> }> = [];
-  const stub = async (url: string | URL, options: { headers?: Record<string, string> } = {}) => {
+  const calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: string }> = [];
+  const stub = async (
+    url: string | URL,
+    options: { method?: string; headers?: Record<string, string>; body?: string } = {},
+  ) => {
     const next = responses.shift();
     assert.ok(next, `unexpected fetch call for ${String(url)}`);
     calls.push({
       url: String(url),
+      method: options.method ?? "GET",
       headers: options.headers ?? {},
+      body: options.body,
     });
     return {
       ok: next.ok,
@@ -469,6 +971,11 @@ function createFetchStub(responses: Array<{
       },
       async text() {
         return next.text ?? "";
+      },
+      headers: {
+        get(name: string) {
+          return next.headers?.[name.toLowerCase()] ?? null;
+        },
       },
     };
   };

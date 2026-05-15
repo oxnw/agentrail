@@ -9,6 +9,12 @@ import {
   type SetupConfigLike,
 } from "./agentrail-home.ts";
 import { createPromptSession, type PromptSession } from "./prompt.ts";
+import {
+  buildGitHubWebhookUrl,
+  registerGitHubWebhook,
+  verifyGitHubWebhookMetadata,
+  type GitHubWebhookMetadata,
+} from "../github-webhook-registration.ts";
 
 interface Writer {
   write(chunk: string | Uint8Array): boolean;
@@ -19,8 +25,10 @@ interface ProviderConfig {
     mode?: string;
     tokenEnv?: string;
     deliveryMode?: string;
+    importMode?: string;
     pollIntervalMs?: number;
     webhookSecretEnv?: string;
+    registeredWebhooks?: unknown;
   };
   circleci?: {
     mode?: string;
@@ -86,7 +94,10 @@ export async function runProviderCommand(argv: string[], {
   if (subcommand === "test") {
     const provider = parseProviderName(maybeProvider);
     const env = await readSimpleEnv(providerEnvPathForHome(homePath));
-    const result = testProvider(provider, config.providers ?? {}, env);
+    const result = await testProvider(provider, config.providers ?? {}, env, {
+      fetch: fetchImpl ?? globalThis.fetch,
+      repos: config.repos ?? [],
+    });
     if (!result.ok) {
       stderr.write(`${result.message}\n`);
       return 1;
@@ -213,6 +224,42 @@ async function connectGitHub({
     return 1;
   }
 
+  let registeredWebhooks: GitHubWebhookMetadata[] | undefined;
+  if (deliveryMode === "webhook") {
+    const webhookUrl = buildGitHubWebhookUrl(config.server?.baseUrl ?? "");
+    const repos = configuredGitHubRepoSlugs(config.repos ?? []);
+    if (repos.length === 0) {
+      const message = "GitHub webhook registration requires at least one configured GitHub repository.";
+      if (spinner) {
+        spinner.error(message);
+      } else {
+        stderr.write(`${message}\n`);
+      }
+      return 1;
+    }
+    try {
+      registeredWebhooks = [];
+      for (const repoSlug of repos) {
+        const result = await registerGitHubWebhook({
+          token: tokenValue,
+          repoSlug,
+          webhookUrl,
+          secret: webhookSecretValue!,
+          fetch,
+        });
+        registeredWebhooks.push(result.hook);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (spinner) {
+        spinner.error(message);
+      } else {
+        stderr.write(`${message}\n`);
+      }
+      return 1;
+    }
+  }
+
   await writeProviderEnv(homePath, deliveryMode === "webhook"
     ? {
         [tokenEnvName]: tokenValue,
@@ -227,8 +274,10 @@ async function connectGitHub({
     mode: "real",
     tokenEnv: tokenEnvName,
     deliveryMode,
+    importMode: config.providers?.github?.importMode ?? "from_now",
     pollIntervalMs: deliveryMode === "polling" ? pollIntervalMs ?? 60_000 : undefined,
     webhookSecretEnv: deliveryMode === "webhook" ? webhookSecretEnvName : undefined,
+    registeredWebhooks,
   };
   await writeConfig(homePath, nextConfig);
   const message = deliveryMode === "webhook"
@@ -337,7 +386,10 @@ async function connectCircleCI({
   };
   await writeConfig(homePath, nextConfig);
   const env = await readSimpleEnv(providerEnvPathForHome(homePath));
-  const result = testProvider("circleci", nextConfig.providers ?? {}, env);
+  const result = await testProvider("circleci", nextConfig.providers ?? {}, env, {
+    fetch: globalThis.fetch,
+    repos: nextConfig.repos ?? [],
+  });
   if (!result.ok) {
     stderr.write(`${result.message}\n`);
     return 1;
@@ -627,6 +679,7 @@ function renderProviderStatus(provider: ProviderName, providers: ProviderConfig,
     const available = resolveConfiguredValue(tokenEnv, env) ? "available" : "missing";
     const pollIntervalMs = Number.isFinite(providers.github?.pollIntervalMs) ? Number(providers.github?.pollIntervalMs) : null;
     const webhookSecretEnv = providers.github?.webhookSecretEnv;
+    const registeredWebhooks = normalizeGitHubWebhookMetadata(providers.github?.registeredWebhooks);
     return [
       "GitHub",
       `  mode: ${mode}`,
@@ -634,7 +687,10 @@ function renderProviderStatus(provider: ProviderName, providers: ProviderConfig,
       `  token env: ${tokenEnv} (${available})`,
       ...(deliveryMode === "polling" && pollIntervalMs ? [`  poll interval: ${Math.round(pollIntervalMs / 1000)}s`] : []),
       ...(deliveryMode === "webhook"
-        ? [`  webhook secret env: ${webhookSecretEnv ?? "GITHUB_WEBHOOK_SECRET"} (${resolveConfiguredValue(webhookSecretEnv ?? "GITHUB_WEBHOOK_SECRET", env) ? "available" : "missing"})`]
+        ? [
+            `  webhook secret env: ${webhookSecretEnv ?? "GITHUB_WEBHOOK_SECRET"} (${resolveConfiguredValue(webhookSecretEnv ?? "GITHUB_WEBHOOK_SECRET", env) ? "available" : "missing"})`,
+            ...renderGitHubWebhookMetadata(registeredWebhooks),
+          ]
         : []),
       "",
     ].join("\n");
@@ -678,13 +734,25 @@ function renderProviderStatus(provider: ProviderName, providers: ProviderConfig,
   ].join("\n");
 }
 
-function testProvider(provider: ProviderName, providers: ProviderConfig, env: Record<string, string>): { ok: boolean; message: string } {
+async function testProvider(
+  provider: ProviderName,
+  providers: ProviderConfig,
+  env: Record<string, string>,
+  {
+    fetch,
+    repos = [],
+  }: {
+    fetch: typeof globalThis.fetch;
+    repos?: SetupConfigLike["repos"];
+  },
+): Promise<{ ok: boolean; message: string }> {
   if (provider === "github") {
     const tokenEnv = providers.github?.tokenEnv ?? "GITHUB_TOKEN";
     if (providers.github?.mode !== "real") {
       return { ok: false, message: "GitHub is not connected yet. Run `agentrail provider connect github`." };
     }
-    if (!resolveConfiguredValue(tokenEnv, env)) {
+    const token = resolveConfiguredValue(tokenEnv, env);
+    if (!token) {
       return { ok: false, message: `GitHub is configured, but ${tokenEnv} is not available in ~/.agentrail/provider.env or the current shell.` };
     }
     const deliveryMode = normalizeDeliveryMode(providers.github?.deliveryMode, "polling");
@@ -692,7 +760,37 @@ function testProvider(provider: ProviderName, providers: ProviderConfig, env: Re
     if (deliveryMode === "webhook" && !resolveConfiguredValue(webhookSecretEnv, env)) {
       return { ok: false, message: `GitHub webhook mode is configured, but ${webhookSecretEnv} is not available in ~/.agentrail/provider.env or the current shell.` };
     }
-    return { ok: true, message: `GitHub looks configured. AgentRail can read ${tokenEnv} and use ${deliveryMode} delivery.` };
+    const registeredWebhooks = normalizeGitHubWebhookMetadata(providers.github?.registeredWebhooks);
+    if (deliveryMode === "webhook" && registeredWebhooks.length === 0) {
+      return {
+        ok: false,
+        message: "GitHub webhook mode is configured, but no registered GitHub webhook metadata exists. Re-run `agentrail provider connect github --delivery-mode webhook`.",
+      };
+    }
+    if (deliveryMode === "webhook") {
+      const configuredRepoSlugs = configuredGitHubRepoSlugs(repos);
+      const registeredRepoSlugs = new Set(registeredWebhooks.map((hook) => hook.repoSlug));
+      const missingRepoSlugs = configuredRepoSlugs.filter((repoSlug) => !registeredRepoSlugs.has(repoSlug));
+      if (missingRepoSlugs.length > 0) {
+        return {
+          ok: false,
+          message: `GitHub webhook mode is configured, but missing registered GitHub webhook metadata for configured repositories: ${missingRepoSlugs.join(", ")}. Re-run \`agentrail provider connect github --delivery-mode webhook\`.`,
+        };
+      }
+    }
+    try {
+      await verifyGitHubConnection({ token, fetch });
+      await verifyGitHubRepoAccess({ token, fetch, repos });
+      if (deliveryMode === "webhook") {
+        await verifyGitHubWebhookMetadata({ token, fetch, metadata: registeredWebhooks });
+      }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+    return {
+      ok: true,
+      message: `GitHub connection test passed. AgentRail can authenticate ${tokenEnv}, access configured repositories, and use ${deliveryMode} delivery. Restart AgentRail server if it was already running before this token changed.`,
+    };
   }
 
   if (provider === "circleci") {
@@ -751,6 +849,75 @@ async function verifyGitHubConnection({
   }
 
   await response.json().catch(() => null);
+}
+
+async function verifyGitHubRepoAccess({
+  token,
+  fetch,
+  repos = [],
+}: {
+  token: string;
+  fetch: typeof globalThis.fetch;
+  repos?: SetupConfigLike["repos"];
+}): Promise<void> {
+  const slugs = [...new Set((repos ?? [])
+    .map((repo) => typeof repo?.slug === "string" ? repo.slug.trim() : "")
+    .filter((slug) => /^[^/\s]+\/[^/\s]+$/u.test(slug)))];
+  for (const slug of slugs) {
+    const response = await fetch(`https://api.github.com/repos/${slug}`, {
+      headers: githubHeaders(token),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(
+        response.status === 401 || response.status === 403
+          ? `GitHub connection test failed: GitHub rejected the token for ${slug}.`
+          : response.status === 404
+            ? `GitHub connection test failed: token cannot access ${slug}.`
+            : `GitHub connection test failed for ${slug}: ${response.status} ${text.slice(0, 200)}`.trim(),
+      );
+    }
+    await response.json().catch(() => null);
+  }
+}
+
+function configuredGitHubRepoSlugs(repos: SetupConfigLike["repos"]): string[] {
+  return [...new Set((repos ?? [])
+    .map((repo) => typeof repo?.slug === "string" ? repo.slug.trim() : "")
+    .filter((slug) => /^[^/\s]+\/[^/\s]+$/u.test(slug)))];
+}
+
+function normalizeGitHubWebhookMetadata(value: unknown): GitHubWebhookMetadata[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): GitHubWebhookMetadata[] => {
+    if (!item || typeof item !== "object") return [];
+    const candidate = item as Partial<GitHubWebhookMetadata>;
+    if (
+      typeof candidate.repoSlug !== "string" ||
+      !/^[^/\s]+\/[^/\s]+$/u.test(candidate.repoSlug) ||
+      !Number.isInteger(candidate.hookId) ||
+      typeof candidate.url !== "string"
+    ) {
+      return [];
+    }
+    return [{
+      repoSlug: candidate.repoSlug,
+      hookId: candidate.hookId,
+      url: candidate.url,
+      events: Array.isArray(candidate.events) ? candidate.events.filter((event): event is string => typeof event === "string") : [],
+      active: candidate.active !== false,
+    }];
+  });
+}
+
+function renderGitHubWebhookMetadata(metadata: GitHubWebhookMetadata[]): string[] {
+  if (metadata.length === 0) {
+    return ["  registered webhooks: none"];
+  }
+  return [
+    `  registered webhooks: ${metadata.length}`,
+    ...metadata.map((hook) => `    ${hook.repoSlug}: hook ${hook.hookId} ${hook.active ? "active" : "inactive"} events=${hook.events.join(",") || "none"} -> ${hook.url}`),
+  ];
 }
 
 function githubHeaders(token: string): Record<string, string> {

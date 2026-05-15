@@ -8,6 +8,14 @@ export interface ConnectedRepo {
   defaultBranch: string;
 }
 
+export interface GitHubProviderWebhookRegistrationLike {
+  repoSlug?: string;
+  hookId?: number;
+  url?: string;
+  events?: string[];
+  active?: boolean;
+}
+
 export interface SetupConfigLike {
   version?: number;
   server?: {
@@ -16,6 +24,7 @@ export interface SetupConfigLike {
   persistence?: {
     kind?: string;
     agentRunStorePath?: string;
+    providerCursorStorePath?: string;
     eventSubscriptionStorePath?: string;
     eventDeliveryStorePath?: string;
   };
@@ -24,8 +33,10 @@ export interface SetupConfigLike {
       mode?: string;
       tokenEnv?: string;
       deliveryMode?: string;
+      importMode?: string;
       pollIntervalMs?: number;
       webhookSecretEnv?: string;
+      registeredWebhooks?: GitHubProviderWebhookRegistrationLike[];
     };
     circleci?: {
       mode?: string;
@@ -57,6 +68,7 @@ export interface SetupConfigLike {
 }
 
 export const DEFAULT_AGENT_RUN_STORE_PATH = "stores/agent-runs.json";
+export const DEFAULT_PROVIDER_CURSOR_STORE_PATH = "stores/provider-cursors.json";
 export const DEFAULT_EVENT_SUBSCRIPTION_STORE_PATH = "stores/event-subscriptions.json";
 export const DEFAULT_EVENT_DELIVERY_STORE_PATH = "stores/event-deliveries.json";
 
@@ -176,11 +188,13 @@ function normalizePersistence(persistence: SetupConfigLike["persistence"]): Setu
     return persistence;
   }
   const agentRunStorePath = normalizeStorePath(persistence.agentRunStorePath, DEFAULT_AGENT_RUN_STORE_PATH);
+  const providerCursorStorePath = normalizeStorePath(persistence.providerCursorStorePath, DEFAULT_PROVIDER_CURSOR_STORE_PATH);
   const eventSubscriptionStorePath = normalizeStorePath(persistence.eventSubscriptionStorePath, DEFAULT_EVENT_SUBSCRIPTION_STORE_PATH);
   const eventDeliveryStorePath = normalizeStorePath(persistence.eventDeliveryStorePath, DEFAULT_EVENT_DELIVERY_STORE_PATH);
   return {
     ...persistence,
     agentRunStorePath,
+    providerCursorStorePath,
     eventSubscriptionStorePath,
     eventDeliveryStorePath,
   };
@@ -196,6 +210,7 @@ function normalizeProviders(providers: SetupConfigLike["providers"]): SetupConfi
           github: {
             ...providers.github,
             deliveryMode: normalizeDeliveryMode(providers.github.deliveryMode, "polling"),
+            importMode: normalizeImportMode(providers.github.importMode),
           },
         }
       : {}),
@@ -225,6 +240,10 @@ function normalizeDeliveryMode(value: string | undefined, fallback: "polling" | 
   if (value === "webhook") return "webhook";
   if (value === "polling") return "polling";
   return fallback;
+}
+
+function normalizeImportMode(value: string | undefined): "from_now" | "backfill" {
+  return value === "backfill" ? "backfill" : "from_now";
 }
 
 export function primaryRepoFromConfig(config: SetupConfigLike | null): ConnectedRepo | null {

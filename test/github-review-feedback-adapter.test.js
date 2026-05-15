@@ -125,7 +125,7 @@ test("getTaskReviewFeedback unifies reviews, review comments, and issue comments
   assert.equal(comments[3].id, "ic_200");
 });
 
-test("getTaskReviewFeedback returns pending decision when no reviews exist", async () => {
+test("getTaskReviewFeedback treats zero reviews as not required instead of pollable pending", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
     getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 42 }),
     fetch: mockFetch({
@@ -137,9 +137,85 @@ test("getTaskReviewFeedback returns pending decision when no reviews exist", asy
 
   const result = await adapter.getTaskReviewFeedback("tsk_abc");
 
-  assert.equal(result.data.latestDecision.outcome, "pending");
+  assert.equal(result.data.latestDecision.outcome, "not_required");
   assert.equal(result.data.comments.length, 0);
-  assert.deepEqual(result.data.availableActions, ["refresh"]);
+  assert.deepEqual(result.data.availableActions, ["view_ci_status"]);
+});
+
+test("getTaskReviewFeedback keeps changes requested when another reviewer later approves", async () => {
+  const adapter = new GitHubReviewFeedbackAdapter({
+    getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 43 }),
+    fetch: mockFetch({
+      "pulls/43/reviews": jsonResponse([
+        {
+          id: 10,
+          state: "CHANGES_REQUESTED",
+          user: { login: "alice" },
+          author_association: "MEMBER",
+          body: "Parser still accepts invalid input.",
+          submitted_at: "2026-05-01T10:00:00Z"
+        },
+        {
+          id: 11,
+          state: "APPROVED",
+          user: { login: "bob" },
+          author_association: "MEMBER",
+          body: "Looks good to me.",
+          submitted_at: "2026-05-01T11:00:00Z"
+        }
+      ]),
+      "pulls/43/comments": jsonResponse([]),
+      "issues/43/comments": jsonResponse([])
+    })
+  });
+
+  const result = await adapter.getTaskReviewFeedback("tsk_abc");
+
+  assert.equal(result.data.latestDecision.outcome, "changes_requested");
+  assert.equal(result.data.latestDecision.reviewer.id, "alice");
+  assert.deepEqual(result.availableActions, ["submit"]);
+});
+
+test("getTaskReviewFeedback approves only after the blocking reviewer approves or is dismissed", async () => {
+  const adapter = new GitHubReviewFeedbackAdapter({
+    getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 44 }),
+    fetch: mockFetch({
+      "pulls/44/reviews": jsonResponse([
+        {
+          id: 20,
+          state: "CHANGES_REQUESTED",
+          user: { login: "alice" },
+          author_association: "MEMBER",
+          body: "Needs changes.",
+          submitted_at: "2026-05-01T10:00:00Z"
+        },
+        {
+          id: 21,
+          state: "APPROVED",
+          user: { login: "bob" },
+          author_association: "MEMBER",
+          body: "Looks good.",
+          submitted_at: "2026-05-01T10:30:00Z"
+        },
+        {
+          id: 22,
+          state: "APPROVED",
+          user: { login: "alice" },
+          author_association: "MEMBER",
+          body: "Fixed now.",
+          submitted_at: "2026-05-01T11:00:00Z"
+        }
+      ]),
+      "pulls/44/comments": jsonResponse([]),
+      "issues/44/comments": jsonResponse([])
+    })
+  });
+
+  const result = await adapter.getTaskReviewFeedback("tsk_abc");
+
+  assert.equal(result.data.latestDecision.outcome, "approved");
+  assert.equal(result.data.latestDecision.reviewer.id, "alice");
+  assert.deepEqual(result.availableActions, ["view_ci_status", "ship"]);
 });
 
 test("getTaskReviewFeedback throws ReviewFeedbackSourceError on GitHub 403", async () => {
@@ -233,7 +309,7 @@ test("getTaskReviewFeedback resolves pullNumber from persisted task submissions"
   const result = await adapter.getTaskReviewFeedback("tsk_abc");
 
   assert.equal(result.data.taskId, "tsk_abc");
-  assert.equal(result.data.latestDecision.outcome, "pending");
+  assert.equal(result.data.latestDecision.outcome, "not_required");
   assert.deepEqual(result.data.comments, []);
 });
 

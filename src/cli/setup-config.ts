@@ -5,8 +5,17 @@ import type { ConnectedRepo } from "./agentrail-home.ts";
 export type SetupMode = "server";
 export type ProviderMode = "real" | "disabled";
 export type ProviderDeliveryMode = "polling" | "webhook";
+export type ProviderImportMode = "from_now" | "backfill";
 export type PersistenceKind = "file" | "memory";
 export type InteractionMode = "interactive" | "non_interactive" | "print_only";
+
+export interface GitHubProviderWebhookRegistration {
+  repoSlug: string;
+  hookId: number;
+  url: string;
+  events: string[];
+  active: boolean;
+}
 
 export interface DetectedRepoContext {
   repoPath: string;
@@ -35,6 +44,7 @@ export interface SetupConfig {
       taskStorePath: string;
       authStorePath: string;
       agentRunStorePath: string;
+      providerCursorStorePath: string;
       eventSubscriptionStorePath: string;
       eventDeliveryStorePath: string;
       agentProfileStorePath: string;
@@ -56,8 +66,10 @@ export interface SetupConfig {
       mode: ProviderMode;
       tokenEnv: string;
       deliveryMode: ProviderDeliveryMode;
+      importMode: ProviderImportMode;
       pollIntervalMs?: number;
       webhookSecretEnv?: string;
+      registeredWebhooks?: GitHubProviderWebhookRegistration[];
     };
     circleci: {
       mode: ProviderMode;
@@ -151,6 +163,7 @@ export function createSetupConfig({
         taskStorePath: "stores/tasks.json",
         authStorePath: "stores/agent-auth.json",
         agentRunStorePath: "stores/agent-runs.json",
+        providerCursorStorePath: "stores/provider-cursors.json",
         eventSubscriptionStorePath: "stores/event-subscriptions.json",
         eventDeliveryStorePath: "stores/event-deliveries.json",
         agentProfileStorePath: "stores/agent-profiles.json",
@@ -168,6 +181,7 @@ export function createSetupConfig({
         mode: resolvedProviderMode,
         tokenEnv: "GITHUB_TOKEN",
         deliveryMode: "polling",
+        importMode: "from_now",
       },
       circleci: {
         mode: resolvedProviderMode === "real" ? "real" : "disabled",

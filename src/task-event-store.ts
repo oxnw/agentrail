@@ -25,7 +25,7 @@ export interface TaskEvent {
     taskId: string;
     taskIdentifier?: string;
     status?: string;
-    previousStatus?: string;
+    previousStatus?: string | null;
     changedFields?: string[];
     actor?: { id: string; role: string };
     summary?: string;

@@ -691,6 +691,10 @@ export class AgentTaskQueue {
     return this.store.updateTask(taskId, patch);
   }
 
+  upsertTask(record: TaskRecord) {
+    return this.store.upsertTask(record);
+  }
+
   deleteTask(taskId: string) {
     return this.store.deleteTask(taskId);
   }
@@ -721,6 +725,31 @@ export class AgentTaskQueue {
 
   listRawTasks() {
     return this.store.listAllTasks();
+  }
+
+  async emitTaskUpdatedEvent(
+    task: TaskRecord,
+    {
+      previousStatus,
+      changedFields,
+      actor,
+      summary,
+    }: {
+      previousStatus: string | null;
+      changedFields: string[];
+      actor: { id: string; role: string };
+      summary: string;
+    }
+  ) {
+    await this.appendTaskEvent("task.updated", task, {
+      status: task.status,
+      previousStatus,
+      changedFields,
+      actor,
+      summary,
+      availableActions: task.availableActions,
+      affectedAgentId: task.assigneeAgentId ?? null,
+    });
   }
 
   countActiveAssignedTasks({
@@ -787,9 +816,11 @@ export class AgentTaskQueue {
         ? nowIso
         : existing.ci?.lastTransitionAt ?? null,
     };
+    const availableActions = availableActionsForCiState(existing, nextStatus);
     const updated = this.store.updateTask(taskId, {
       ciStatus: nextStatus,
       ci,
+      availableActions,
     });
     if (!updated) {
       return null;
@@ -805,7 +836,7 @@ export class AgentTaskQueue {
       await this.appendTaskEvent("task.ci_failed", updated, {
         status: updated.status,
         previousStatus: previousTaskStatus,
-        changedFields: ["ciStatus", "ci"],
+        changedFields: changedCiFields(existing.availableActions, updated.availableActions),
         actor: { id: "system", role: "system" },
         summary: ci.headline ?? `${ci.provider} CI failed.`,
         availableActions: updated.availableActions,
@@ -828,7 +859,7 @@ export class AgentTaskQueue {
       await this.appendTaskEvent("task.ci_recovered", updated, {
         status: updated.status,
         previousStatus: previousTaskStatus,
-        changedFields: ["ciStatus", "ci"],
+        changedFields: changedCiFields(existing.availableActions, updated.availableActions),
         actor: { id: "system", role: "system" },
         summary: ci.headline ?? `${ci.provider} CI recovered.`,
         availableActions: updated.availableActions,
@@ -841,6 +872,75 @@ export class AgentTaskQueue {
       });
       return { task: updated, outcome: "recovered_transition" };
     }
+    return { task: updated, outcome: "unchanged" };
+  }
+
+  async projectReviewState(taskId: string, observation: {
+    outcome: string;
+    summary?: string | null;
+    reviewer?: string | null;
+    updatedAt?: string | null;
+    decisionScope?: "event" | "pull_request";
+  }): Promise<{ task: TaskRecord; outcome: "changes_requested_transition" | "approved_transition" | "unchanged" } | null> {
+    const existing = this.store.getTask(taskId);
+    if (!existing) {
+      return null;
+    }
+    const nextOutcome = normalizeReviewOutcome(observation.outcome);
+    if (!nextOutcome) {
+      return { task: existing, outcome: "unchanged" };
+    }
+    if (
+      existing.reviewOutcome === "changes_requested"
+      && nextOutcome !== "changes_requested"
+      && observation.decisionScope !== "pull_request"
+    ) {
+      return { task: existing, outcome: "unchanged" };
+    }
+    const previousOutcome = existing.reviewOutcome;
+    const availableActions = availableActionsForReviewState(existing, nextOutcome);
+    const updated = this.store.updateTask(taskId, {
+      reviewOutcome: nextOutcome,
+      availableActions,
+    });
+    if (!updated) {
+      return null;
+    }
+
+    const changedFields = arraysEqual(existing.availableActions, updated.availableActions)
+      ? ["reviewOutcome"]
+      : ["reviewOutcome", "availableActions"];
+    if (previousOutcome !== "changes_requested" && nextOutcome === "changes_requested") {
+      await this.appendTaskEvent("task.review_changes_requested", updated, {
+        status: updated.status,
+        previousStatus: existing.status,
+        changedFields,
+        actor: { id: "system", role: "system" },
+        summary: observation.summary ?? "Review requested changes.",
+        availableActions: updated.availableActions,
+        reviewer: observation.reviewer ?? null,
+        reviewOutcome: nextOutcome,
+        updatedAt: observation.updatedAt ?? null,
+        affectedAgentId: updated.assigneeAgentId ?? null,
+      });
+      return { task: updated, outcome: "changes_requested_transition" };
+    }
+    if (previousOutcome !== "approved" && nextOutcome === "approved") {
+      await this.appendTaskEvent("task.review_approved", updated, {
+        status: updated.status,
+        previousStatus: existing.status,
+        changedFields,
+        actor: { id: "system", role: "system" },
+        summary: observation.summary ?? "Review approved.",
+        availableActions: updated.availableActions,
+        reviewer: observation.reviewer ?? null,
+        reviewOutcome: nextOutcome,
+        updatedAt: observation.updatedAt ?? null,
+        affectedAgentId: updated.assigneeAgentId ?? null,
+      });
+      return { task: updated, outcome: "approved_transition" };
+    }
+
     return { task: updated, outcome: "unchanged" };
   }
 
@@ -885,6 +985,56 @@ export class AgentTaskQueue {
       },
     });
   }
+}
+
+function availableActionsForCiState(task: TaskRecord, nextStatus: CiOverallStatus): string[] {
+  if (task.status !== "in_review") {
+    return task.availableActions;
+  }
+  if (task.reviewOutcome === "changes_requested") {
+    return ["submit", "view_ci_status", "view_review_feedback"];
+  }
+  if (nextStatus === "failed") {
+    return ["submit", "view_ci_status", "view_review_feedback"];
+  }
+  if (nextStatus === "passed" && task.availableActions.includes("submit")) {
+    return ["ship", "view_ci_status", "view_review_feedback"];
+  }
+  return task.availableActions;
+}
+
+function normalizeReviewOutcome(outcome: string): "approved" | "changes_requested" | "not_required" | null {
+  switch (outcome) {
+    case "approved":
+    case "changes_requested":
+    case "not_required":
+      return outcome;
+    default:
+      return null;
+  }
+}
+
+function availableActionsForReviewState(task: TaskRecord, outcome: "approved" | "changes_requested" | "not_required"): string[] {
+  if (task.status !== "in_review") {
+    return task.availableActions;
+  }
+  if (outcome === "changes_requested") {
+    return ["submit", "view_ci_status", "view_review_feedback"];
+  }
+  if (outcome === "approved" && task.ciStatus !== "failed") {
+    return ["ship", "view_ci_status", "view_review_feedback"];
+  }
+  return task.availableActions;
+}
+
+function changedCiFields(previousActions: string[], nextActions: string[]): string[] {
+  return arraysEqual(previousActions, nextActions)
+    ? ["ciStatus", "ci"]
+    : ["ciStatus", "ci", "availableActions"];
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function formatTaskLabel(task: TaskRecord): string {

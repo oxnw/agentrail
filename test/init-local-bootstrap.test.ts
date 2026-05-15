@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { runCli } from "../src/cli/index.ts";
@@ -187,6 +187,8 @@ test("temporary local verification reuses an already-running healthy server", as
 
 test("temporary local verification starts a temp server when the healthy server lacks provisioning routes", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-init-fallback-server-"));
+  const previousGitHubWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
+  process.env.GITHUB_WEBHOOK_SECRET = "outer-webhook-secret";
   const server = http.createServer((request, response) => {
     if (request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
@@ -205,6 +207,8 @@ test("temporary local verification starts a temp server when the healthy server 
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (previousGitHubWebhookSecret === undefined) delete process.env.GITHUB_WEBHOOK_SECRET;
+    else process.env.GITHUB_WEBHOOK_SECRET = previousGitHubWebhookSecret;
   });
 
   const config = createSetupConfig({
@@ -220,7 +224,9 @@ test("temporary local verification starts a temp server when the healthy server 
     providerMode: "disabled",
     baseUrl: `http://${address.address}:${address.port}`,
   });
+  await writeFile(path.join(repoRoot, "provider.env"), "GITHUB_WEBHOOK_SECRET=\"inner-webhook-secret\"\n", "utf8");
   assert.equal(config.persistence.kind, "file");
+  const providerCursorStorePath = path.resolve(repoRoot, config.persistence.providerCursorStorePath);
   const authStore = new AgentAuthStore({
     storagePath: path.resolve(repoRoot, config.persistence.authStorePath),
   });
@@ -245,6 +251,10 @@ test("temporary local verification starts a temp server when the healthy server 
       return response.status !== 404;
     },
     handler: async ({ baseUrl: temporaryBaseUrl }) => {
+      assert.equal(
+        process.env.AGENTRAIL_PROVIDER_CURSOR_STORE_PATH,
+        providerCursorStorePath,
+      );
       const response = await fetch(new URL("operator/agent-runs", `${temporaryBaseUrl}/`), {
         headers: {
           authorization: `Bearer ${apiKey}`,
@@ -256,6 +266,7 @@ test("temporary local verification starts a temp server when the healthy server 
   });
 
   assert.notEqual(baseUrl, `http://${address.address}:${address.port}`);
+  assert.equal(process.env.GITHUB_WEBHOOK_SECRET, "outer-webhook-secret");
 });
 
 test("temporary local verification normalizes wildcard listen hosts to a routable localhost URL", async (t) => {

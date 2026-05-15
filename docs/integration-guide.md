@@ -191,18 +191,17 @@ claude --append-system-prompt-file /path/to/agentrail/docs/agent-recipes.md
 
 Codex or Cursor:
 
-- Add the relevant recipe from [agent recipes](./agent-recipes.md) to the
-  agent's project instructions.
-- Start the agent in the target repository.
-- Ask it to begin with `GET /tasks/mine?status=in_progress&limit=1`.
+- Start the managed runner with `agentrail agent run`.
+- AgentRail waits on task events, starts the coding agent only for actionable
+  code work, and consumes the local report after the child process exits.
+- Do not ask the child LLM to query AgentRail task, CI, or review endpoints.
 
-The agent still edits files in the target repository. AgentRail only answers:
+The agent still edits files in the target repository. AgentRail owns:
 
-- what task is assigned,
-- what actions are currently allowed,
-- whether CI passed,
-- what review feedback blocks shipping,
-- when it is safe to submit or ship.
+- task assignment and lifecycle state,
+- CI and review observation,
+- provider PR creation, shipping, and rollback,
+- relaunching the agent only when CI or review feedback requires code changes.
 
 ### Track C: Application or Harness Uses the SDK
 
@@ -465,13 +464,13 @@ Do not commit provider tokens or generated AgentRail API keys.
 
 ## Push Instead of Polling
 
-Agents should avoid blind status polling. Prefer one of these:
+Managed AgentRail runners avoid blind status polling. They use:
 
 - `GET /task-events/stream` for server-sent events with cursor replay.
 - `/event-subscriptions` for signed outbound webhook delivery.
 
-Use polling only as a fallback when the agent runtime cannot receive push
-events.
+Manual harnesses may use polling only as a compatibility fallback when they
+cannot receive push events.
 
 ## Troubleshooting
 

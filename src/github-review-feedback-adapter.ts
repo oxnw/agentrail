@@ -137,22 +137,53 @@ function validateTaskSource(source) {
 }
 
 function deriveLatestDecision(reviews) {
-  const decisionalReviews = reviews
-    .filter((review) => review.state === "APPROVED" || review.state === "CHANGES_REQUESTED")
+  const latestByReviewer = new Map();
+  const reviewTimeline = reviews
+    .filter((review) => review.state === "APPROVED" || review.state === "CHANGES_REQUESTED" || review.state === "DISMISSED")
+    .sort((left, right) => new Date(left.submitted_at).getTime() - new Date(right.submitted_at).getTime());
+
+  for (const review of reviewTimeline) {
+    const reviewerKey = review.user?.login ?? `review:${review.id}`;
+    if (review.state === "DISMISSED") {
+      latestByReviewer.delete(reviewerKey);
+      continue;
+    }
+    latestByReviewer.set(reviewerKey, review);
+  }
+
+  const latestDecisions = [...latestByReviewer.values()];
+  const blockingReviews = latestDecisions
+    .filter((review) => review.state === "CHANGES_REQUESTED")
+    .sort((left, right) => new Date(right.submitted_at).getTime() - new Date(left.submitted_at).getTime());
+  const approvedReviews = latestDecisions
+    .filter((review) => review.state === "APPROVED")
     .sort((left, right) => new Date(right.submitted_at).getTime() - new Date(left.submitted_at).getTime());
 
-  if (decisionalReviews.length === 0) {
+  if (blockingReviews.length > 0) {
+    const latest = blockingReviews[0];
     return {
-      outcome: "pending",
-      reviewer: { id: "unknown", role: "unknown" },
-      createdAt: new Date(0).toISOString(),
-      summary: "No review decision yet."
+      outcome: "changes_requested",
+      reviewer: {
+        id: latest.user?.login ?? "unknown",
+        role: latest.author_association?.toLowerCase() ?? "contributor"
+      },
+      createdAt: latest.submitted_at,
+      summary: latest.body || summarizeDecision(latest.state)
     };
   }
 
-  const latest = decisionalReviews[0];
+  if (approvedReviews.length === 0) {
+    return {
+      outcome: "not_required",
+      reviewer: { id: "unknown", role: "unknown" },
+      createdAt: new Date(0).toISOString(),
+      summary: "No review decision required."
+    };
+  }
+
+  const latest = approvedReviews[0];
   return {
-    outcome: latest.state === "APPROVED" ? "approved" : "changes_requested",
+    outcome: "approved",
     reviewer: {
       id: latest.user?.login ?? "unknown",
       role: latest.author_association?.toLowerCase() ?? "contributor"
@@ -248,6 +279,10 @@ function actionsForDecision(outcome) {
 
   if (outcome === "changes_requested") {
     return ["submit"];
+  }
+
+  if (outcome === "not_required") {
+    return ["view_ci_status"];
   }
 
   return ["refresh"];

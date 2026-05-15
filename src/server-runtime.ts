@@ -13,9 +13,12 @@ import { AgentProfileStore } from "./agent-profile-store.ts";
 import { RoutingControlPlane } from "./intake-routing-control-plane.ts";
 import { RoutingAuditStore } from "./routing-audit-store.ts";
 import { RoutingRuleStore } from "./routing-rule-store.ts";
+import { ProviderCursorStore } from "./provider-cursor-store.ts";
 import type { ConnectedRepo } from "./cli/agentrail-home.ts";
 import { logNarrative, logOperatorNotice } from "./structured-logger.ts";
 import type { TaskRecord } from "./task-store.ts";
+
+export type GitHubIssueImportMode = "from_now" | "backfill";
 
 type LinearIssueRuntimeAdapter = Pick<LinearIssueSourceAdapter, "ingest" | "createComment" | "updateIssueState" | "importIssue" | "refreshIssue"> & {
   receiveWebhook?: LinearIssueSourceAdapter["receiveWebhook"];
@@ -45,6 +48,7 @@ export function buildRuntime({
   githubMode = "disabled",
   githubWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET || null,
   githubDeliveryMode = "polling",
+  githubIssueImportMode = "from_now",
   githubPollIntervalMs = null,
   circleciToken,
   circleciMode = "disabled",
@@ -66,6 +70,7 @@ export function buildRuntime({
   githubMode?: "real" | "disabled";
   githubWebhookSecret?: string | null;
   githubDeliveryMode?: "polling" | "webhook";
+  githubIssueImportMode?: GitHubIssueImportMode;
   githubPollIntervalMs?: number | null;
   circleciToken: string | null;
   circleciMode?: "real" | "disabled";
@@ -89,11 +94,11 @@ export function buildRuntime({
   const agentProfileStorePath = process.env.AGENTRAIL_AGENT_PROFILES_STORE_PATH || undefined;
   const routingRuleStorePath = process.env.AGENTRAIL_ROUTING_RULES_STORE_PATH || undefined;
   const routingAuditStorePath = process.env.AGENTRAIL_ROUTING_AUDIT_STORE_PATH || undefined;
+  const providerCursorStorePath = process.env.AGENTRAIL_PROVIDER_CURSOR_STORE_PATH || undefined;
   let agentQueue: AgentTaskQueue;
   const submitAdapter = hasGitHubRuntime
     ? new GitHubSubmitAdapter({
         githubToken: githubToken!,
-        apiBaseUrl: publicBaseUrl,
         getTask: (taskId: string) => agentQueue.getRawTask(taskId),
       })
     : null;
@@ -120,6 +125,10 @@ export function buildRuntime({
   const routingRuleStore = new RoutingRuleStore({
     now,
     storagePath: routingRuleStorePath,
+  });
+  const providerCursorStore = new ProviderCursorStore({
+    now,
+    storagePath: providerCursorStorePath,
   });
   const routingControlPlane = new RoutingControlPlane({
     now,
@@ -161,7 +170,9 @@ export function buildRuntime({
       githubToken,
       githubMode,
       githubDeliveryMode,
+      githubIssueImportMode,
       githubPollIntervalMs,
+      providerCursorStore,
       circleciToken,
       circleciMode,
       circleciDeliveryMode,
@@ -281,7 +292,9 @@ function buildDeliveryController({
   githubToken,
   githubMode,
   githubDeliveryMode,
+  githubIssueImportMode,
   githubPollIntervalMs,
+  providerCursorStore,
   circleciToken,
   circleciMode,
   circleciDeliveryMode,
@@ -300,7 +313,9 @@ function buildDeliveryController({
   githubToken: string | null;
   githubMode: "real" | "disabled";
   githubDeliveryMode: "polling" | "webhook";
+  githubIssueImportMode: GitHubIssueImportMode;
   githubPollIntervalMs: number | null;
+  providerCursorStore: ProviderCursorStore;
   circleciToken: string | null;
   circleciMode: "real" | "disabled";
   circleciDeliveryMode: "polling" | "webhook";
@@ -320,7 +335,14 @@ function buildDeliveryController({
       run: async () => {
         const summaries: PollSummary[] = [];
         for (const repo of repos) {
-          summaries.push(await pollGitHubIssues({ token: githubToken, repo, intakeAdapter }));
+          summaries.push(await pollGitHubIssues({
+            token: githubToken,
+            repo,
+            intakeAdapter,
+            cursorStore: providerCursorStore,
+            importMode: githubIssueImportMode,
+            now,
+          }));
         }
         summaries.push(await projectCiStates({
           taskQueue,
@@ -462,14 +484,20 @@ async function mapWithConcurrency<T>(
   await Promise.all(workers);
 }
 
-async function pollGitHubIssues({
+export async function pollGitHubIssues({
   token,
   repo,
   intakeAdapter,
+  cursorStore,
+  importMode = "from_now",
+  now = () => new Date(),
 }: {
   token: string;
   repo: ConnectedRepo;
   intakeAdapter: GitHubIssueIntakeAdapter;
+  cursorStore: ProviderCursorStore;
+  importMode?: GitHubIssueImportMode;
+  now?: () => Date;
 }): Promise<PollSummary> {
   const summary = createPollSummary("GitHub", repo.slug);
   const [owner, name] = repo.slug.split("/");
@@ -477,8 +505,21 @@ async function pollGitHubIssues({
     summary.skipped += 1;
     return summary;
   }
-  const issues = await fetchAllGitHubIssues({ owner, repo: name, token, repoSlug: repo.slug });
+  const cursorKey = { provider: "github" as const, resource: "issues" as const, repository: repo.slug };
+  const pollStartedAt = now().toISOString();
+  let since = cursorStore.getCursor(cursorKey);
+  if (!since && importMode === "from_now") {
+    since = pollStartedAt;
+    cursorStore.setCursor(cursorKey, since);
+  }
+
+  const issues = await fetchAllGitHubIssues({ owner, repo: name, token, repoSlug: repo.slug, since });
+  let nextCursor = since ?? pollStartedAt;
+  let hadIngestFailure = false;
   for (const issue of issues) {
+    if (typeof issue?.updated_at === "string" && issue.updated_at > nextCursor) {
+      nextCursor = issue.updated_at;
+    }
     if (issue?.pull_request) {
       summary.skipped += 1;
       continue;
@@ -505,9 +546,13 @@ async function pollGitHubIssues({
         }));
       }
     } catch (error) {
+      hadIngestFailure = true;
       summary.failed += 1;
       summary.notable.push(`Failed to process GitHub issue ${repo.slug}#${issue.number}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+  if (!hadIngestFailure) {
+    cursorStore.setCursor(cursorKey, nextCursor);
   }
   return summary;
 }
@@ -550,16 +595,25 @@ export async function fetchAllGitHubIssues({
   repo,
   token,
   repoSlug,
+  since,
 }: {
   owner: string;
   repo: string;
   token: string;
   repoSlug: string;
+  since?: string | null;
 }): Promise<Array<any>> {
   const issues: Array<any> = [];
   const encodedOwner = encodeURIComponent(owner);
   const encodedRepo = encodeURIComponent(repo);
-  let nextUrl: string | null = `https://api.github.com/repos/${encodedOwner}/${encodedRepo}/issues?state=all&per_page=100`;
+  const params = new URLSearchParams({
+    state: "all",
+    per_page: "100",
+  });
+  if (since) {
+    params.set("since", since);
+  }
+  let nextUrl: string | null = `https://api.github.com/repos/${encodedOwner}/${encodedRepo}/issues?${params.toString()}`;
 
   while (nextUrl) {
     const response = await fetch(nextUrl, {

@@ -271,6 +271,42 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.deepStrictEqual(stored!.source!.labels, ["enhancement", "high-priority"]);
   });
 
+  it("does not demote submitted tasks back to todo on repeat open issue sync", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const first = await adapter.ingest({
+      issueNumber: 26,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/26",
+      issueTitle: "Submitted task",
+      labels: ["bug"],
+      state: "open",
+      repository: { owner: "oxnw", repo: "agentrail" },
+      assignees: [{ login: "alice" }],
+    }, "idemp_submitted_first");
+    queue.updateTask(first.taskId, {
+      status: "in_review",
+      availableActions: ["ship", "view_ci_status", "view_review_feedback"],
+    });
+
+    const second = await adapter.ingest({
+      issueNumber: 26,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/26",
+      issueTitle: "Submitted task with sparse edit",
+      state: "open",
+      repository: { owner: "oxnw", repo: "agentrail" },
+    }, "idemp_submitted_second");
+
+    assert.strictEqual(second.taskId, first.taskId);
+    assert.strictEqual(second.status, "in_review");
+
+    const stored = queue.getRawTask(first.taskId);
+    assert.ok(stored, "Task should exist");
+    assert.strictEqual(stored!.title, "Submitted task with sparse edit");
+    assert.strictEqual(stored!.status, "in_review");
+    assert.deepStrictEqual(stored!.availableActions, ["ship", "view_ci_status", "view_review_feedback"]);
+  });
+
   it("classifies identical repeat intake as unchanged", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });

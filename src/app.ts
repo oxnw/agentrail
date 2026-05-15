@@ -53,6 +53,13 @@ type TaskLifecycleStoreLike = {
     headline?: string | null;
     updatedAt?: string | null;
   }): Promise<unknown> | unknown;
+  projectReviewState?(taskId: string, observation: {
+    outcome: string;
+    summary?: string | null;
+    reviewer?: string | null;
+    updatedAt?: string | null;
+    decisionScope?: "event" | "pull_request";
+  }): Promise<unknown> | unknown;
 };
 
 export interface CreateServerOptions {
@@ -908,7 +915,7 @@ async function routeRequest({
   if (request.method === "POST" && pathname === "/providers/github/webhooks") {
     obs.operation = "github_webhook";
     obs.provider = "github";
-    await handleGitHubWebhook({ request, response, githubWebhookSecret, intakeAdapter, ciStatusAdapter, taskLifecycleStore });
+    await handleGitHubWebhook({ request, response, githubWebhookSecret, intakeAdapter, ciStatusAdapter, reviewFeedbackAdapter, taskLifecycleStore });
     return;
   }
 
@@ -2243,6 +2250,7 @@ interface GitHubWebhookOptions {
   githubWebhookSecret: string | null;
   intakeAdapter: { ingest?(payload: unknown, idempotencyKey: string | undefined): Promise<unknown> } | null;
   ciStatusAdapter: { getTaskCiStatus?(taskId: string): Promise<unknown> | unknown } | null;
+  reviewFeedbackAdapter: { getTaskReviewFeedback?(taskId: string): Promise<unknown> | unknown } | null;
   taskLifecycleStore: TaskLifecycleStoreLike | null | unknown;
 }
 
@@ -2252,6 +2260,7 @@ async function handleGitHubWebhook({
   githubWebhookSecret,
   intakeAdapter,
   ciStatusAdapter,
+  reviewFeedbackAdapter,
   taskLifecycleStore,
 }: GitHubWebhookOptions) {
   if (!githubWebhookSecret) {
@@ -2325,6 +2334,31 @@ async function handleGitHubWebhook({
       taskLifecycleStore,
       ciStatusAdapter,
       matchedTaskIds,
+    });
+    writeJson(response, 202, {
+      data: {
+        accepted: true,
+        deduplicated: false,
+        matchedTasks: matchedTaskIds,
+      },
+      availableActions: matchedTaskIds.length > 0 ? ["get_task"] : [],
+    });
+    return;
+  }
+
+  if (eventName === "pull_request_review") {
+    logNarrative({
+      title: "Webhook Received",
+      message: "GitHub pull_request_review event received",
+      operation: "github_review_webhook_receipt",
+      provider: "github",
+    });
+    const matchedTaskIds = matchGitHubPullRequestTasks(taskLifecycleStore, payload);
+    await projectMatchedReviewTasks({
+      taskLifecycleStore,
+      reviewFeedbackAdapter,
+      matchedTaskIds,
+      payload,
     });
     writeJson(response, 202, {
       data: {
@@ -3627,6 +3661,124 @@ async function projectMatchedCiTasks({
   }
 }
 
+async function projectMatchedReviewTasks({
+  taskLifecycleStore,
+  reviewFeedbackAdapter,
+  matchedTaskIds,
+  payload,
+}: {
+  taskLifecycleStore: TaskLifecycleStoreLike | null | unknown;
+  reviewFeedbackAdapter: { getTaskReviewFeedback?(taskId: string): Promise<unknown> | unknown } | null;
+  matchedTaskIds: string[];
+  payload: Record<string, any>;
+}) {
+  const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null;
+  if (!lifecycle?.projectReviewState) {
+    return;
+  }
+  const eventOutcome = normalizeGitHubReviewOutcome(payload.review?.state);
+  if (!eventOutcome) {
+    return;
+  }
+  const eventObservation = {
+    outcome: eventOutcome,
+    summary: typeof payload.review?.body === "string" && payload.review.body.trim().length > 0
+      ? payload.review.body
+      : null,
+    reviewer: payload.review?.user?.login ?? null,
+    updatedAt: payload.review?.submitted_at ?? null,
+  };
+  for (const taskId of matchedTaskIds) {
+    const observation = await resolveProjectedReviewObservation({
+      taskId,
+      eventObservation,
+      reviewFeedbackAdapter,
+    });
+    if (!observation) {
+      continue;
+    }
+    try {
+      await lifecycle.projectReviewState(taskId, observation);
+    } catch (error) {
+      logNarrative({
+        title: "Review Sync Warning",
+        message: `Failed to project review status for task ${taskId}: ${error instanceof Error ? error.message : String(error)}`,
+        operation: "review_projection_failed",
+        taskId,
+      });
+    }
+  }
+}
+
+async function resolveProjectedReviewObservation({
+  taskId,
+  eventObservation,
+  reviewFeedbackAdapter,
+}: {
+  taskId: string;
+  eventObservation: {
+    outcome: "approved" | "changes_requested" | "not_required";
+    summary: string | null;
+    reviewer: string | null;
+    updatedAt: string | null;
+  };
+  reviewFeedbackAdapter: { getTaskReviewFeedback?(taskId: string): Promise<unknown> | unknown } | null;
+}): Promise<{
+  outcome: string;
+  summary: string | null;
+  reviewer: string | null;
+  updatedAt: string | null;
+  decisionScope?: "pull_request";
+} | null> {
+  if (!reviewFeedbackAdapter?.getTaskReviewFeedback) {
+    return eventObservation;
+  }
+  try {
+    const feedback = await reviewFeedbackAdapter.getTaskReviewFeedback(taskId);
+    const decision = extractReviewFeedbackDecision(feedback);
+    if (decision) {
+      return decision;
+    }
+  } catch (error) {
+    logNarrative({
+      title: "Review Sync Warning",
+      message: `Failed to refresh pull request review state for task ${taskId}: ${error instanceof Error ? error.message : String(error)}`,
+      operation: "review_projection_refresh_failed",
+      taskId,
+    });
+    if (eventObservation.outcome !== "changes_requested") {
+      return null;
+    }
+  }
+  return eventObservation;
+}
+
+function extractReviewFeedbackDecision(feedback: unknown): {
+  outcome: string;
+  summary: string | null;
+  reviewer: string | null;
+  updatedAt: string | null;
+  decisionScope: "pull_request";
+} | null {
+  const data = isRecord(feedback) && isRecord(feedback.data) ? feedback.data : null;
+  const decision = data?.latestDecision;
+  if (!isRecord(decision)) {
+    return null;
+  }
+  const outcome = normalizeGitHubReviewOutcome(decision.outcome);
+  if (!outcome) {
+    return null;
+  }
+  const reviewer = isRecord(decision.reviewer) ? decision.reviewer : null;
+  return {
+    outcome,
+    summary: typeof decision.summary === "string" && decision.summary.trim().length > 0 ? decision.summary : null,
+    reviewer: typeof reviewer?.id === "string" ? reviewer.id : null,
+    updatedAt: typeof decision.createdAt === "string" ? decision.createdAt : null,
+    decisionScope: "pull_request",
+  };
+}
+
 function matchGitHubWorkflowTasks(taskLifecycleStore: TaskLifecycleStoreLike | null | unknown, payload: Record<string, any>): string[] {
   const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null;
   if (!lifecycle?.listRawTasks && !lifecycle?.listRawTasksBySourceRepo) {
@@ -3652,6 +3804,48 @@ function matchGitHubWorkflowTasks(taskLifecycleStore: TaskLifecycleStoreLike | n
     matched.push(task.id);
   }
   return matched;
+}
+
+function matchGitHubPullRequestTasks(taskLifecycleStore: TaskLifecycleStoreLike | null | unknown, payload: Record<string, any>): string[] {
+  const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null;
+  if (!lifecycle?.listRawTasks && !lifecycle?.listRawTasksBySourceRepo) {
+    return [];
+  }
+  const owner = payload.repository?.owner?.login ?? payload.repository?.owner?.name ?? null;
+  const repo = payload.repository?.name ?? null;
+  const pullNumber = payload.pull_request?.number ?? null;
+  if (!owner || !repo || typeof pullNumber !== "number") {
+    return [];
+  }
+  const candidates = lifecycle?.listRawTasksBySourceRepo
+    ? lifecycle.listRawTasksBySourceRepo("github", owner, repo)
+    : lifecycle?.listRawTasks?.() ?? [];
+  const matched: string[] = [];
+  for (const task of candidates) {
+    const source = task.source as any;
+    if (!source) continue;
+    if (source.provider !== "github") continue;
+    if (source.owner !== owner || source.repo !== repo) continue;
+    const sourcePullNumber = typeof source.pullNumber === "number" ? source.pullNumber : null;
+    const submissionMatches = Array.isArray(task.submissions)
+      && task.submissions.some((submission: any) => submission?.prNumber === pullNumber);
+    if (sourcePullNumber !== pullNumber && !submissionMatches) continue;
+    matched.push(task.id);
+  }
+  return matched;
+}
+
+function normalizeGitHubReviewOutcome(state: unknown): "approved" | "changes_requested" | "not_required" | null {
+  if (state === "approved" || state === "APPROVED") {
+    return "approved";
+  }
+  if (state === "changes_requested" || state === "CHANGES_REQUESTED") {
+    return "changes_requested";
+  }
+  if (state === "not_required") {
+    return "not_required";
+  }
+  return null;
 }
 
 function inferCiProviderFromBody(data: Record<string, any>, task: any): string {

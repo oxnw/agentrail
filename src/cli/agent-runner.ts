@@ -10,7 +10,6 @@ import {
   managedAgentEnvPathForHome,
   primaryRepoFromConfig,
   readSetupConfigFromHome,
-  recipePathForHome,
   resolveAgentRailHome,
   type ConnectedRepo,
   type SetupConfigLike,
@@ -437,10 +436,6 @@ async function executeAgentRun({
   const runStore = createAgentRunStore(homePath, setupConfig);
   const runCapacity = Math.max(1, Number.parseInt(envState.values.AGENTRAIL_MAX_CONCURRENT_TASKS ?? "1", 10) || 1);
   const runnerTimeoutMs = parseRunnerTimeoutMs(envState.values.AGENTRAIL_RUNNER_TIMEOUT_SECONDS);
-  const recipePath = envState.values.AGENTRAIL_AGENT_RECIPE_PATH
-    ? path.resolve(cwd, envState.values.AGENTRAIL_AGENT_RECIPE_PATH)
-    : recipePathForHome(homePath);
-
   let totalRuns = 0;
   let hadFailure = false;
   do {
@@ -469,7 +464,12 @@ async function executeAgentRun({
         writeRunSummary(stdout, flags.json, { status: "idle", reason: "no_tasks", agentId, activeRuns });
         return 0;
       }
-      await sleep(flags.pollIntervalSeconds * 1000);
+      await waitForTaskEvent({
+        baseUrl,
+        apiKey,
+        fetchImpl,
+        timeoutMs: flags.pollIntervalSeconds * 1000,
+      });
       continue;
     }
 
@@ -484,7 +484,6 @@ async function executeAgentRun({
           runner,
           repo,
           worktreeRoot,
-          recipePath,
           homePath,
           now,
           task: startedTask,
@@ -541,7 +540,6 @@ async function executeSingleTaskRun({
   runner,
   repo,
   worktreeRoot,
-  recipePath,
   homePath,
   now,
   task,
@@ -559,7 +557,6 @@ async function executeSingleTaskRun({
   runner: string;
   repo: ConnectedRepo;
   worktreeRoot: string;
-  recipePath: string;
   homePath: string;
   now: () => Date;
   task: TaskDetail;
@@ -581,11 +578,13 @@ async function executeSingleTaskRun({
   const promptPath = path.join(runDir, "prompt.md");
   const logPath = path.join(runDir, "runner.log");
   const handoffPath = path.join(runDir, "handoff.json");
+  const managedRecipePath = path.join(runDir, "agent-recipes.md");
   const reportPath = path.join(runDir, "reports.jsonl");
-  const prompt = buildPrompt({ task, repo, recipePath, branchName, handoffPath });
+  const prompt = buildPrompt({ task, repo, recipePath: managedRecipePath, branchName, handoffPath });
 
   await mkdir(runDir, { recursive: true });
   await mkdir(worktreeRoot, { recursive: true });
+  await writeFile(managedRecipePath, renderManagedAgentRecipe(), { encoding: "utf8" });
   await writeFile(promptPath, prompt, { encoding: "utf8" });
 
   const initialRun = runStore.createRun({
@@ -607,7 +606,7 @@ async function executeSingleTaskRun({
     updatedAt: timestamp,
     exitCode: null,
     summary: null,
-    launch: defaultLaunchMetadata(runner, worktreePath, recipePath, runDir),
+    launch: defaultLaunchMetadata(runner, worktreePath, managedRecipePath, runDir),
   });
 
   if (markdownEnabled) {
@@ -635,24 +634,24 @@ async function executeSingleTaskRun({
       worktreePath,
       prompt,
       promptPath,
-      recipePath,
+      recipePath: managedRecipePath,
       logPath,
       handoffPath,
       timeoutMs: runnerTimeoutMs,
-      env: {
-        ...process.env,
-        AGENTRAIL_BASE_URL: baseUrl,
-        AGENTRAIL_API_KEY: apiKey,
-        AGENTRAIL_AGENT_ID: agentId,
-        AGENTRAIL_RUN_ID: runId,
-        AGENTRAIL_AGENT_RUNNER: runner,
-        AGENTRAIL_AGENT_RECIPE_PATH: recipePath,
-        AGENTRAIL_HOME: homePath,
-        AGENTRAIL_TASK_ID: task.id,
-        AGENTRAIL_TASK_IDENTIFIER: task.identifier,
-        AGENTRAIL_HANDOFF_PATH: handoffPath,
-        AGENTRAIL_RUN_REPORT_PATH: reportPath,
-      },
+      env: buildManagedRunnerEnv({
+        baseEnv: process.env,
+        values: {
+          AGENTRAIL_AGENT_ID: agentId,
+          AGENTRAIL_RUN_ID: runId,
+          AGENTRAIL_AGENT_RUNNER: runner,
+          AGENTRAIL_AGENT_RECIPE_PATH: managedRecipePath,
+          AGENTRAIL_HOME: homePath,
+          AGENTRAIL_TASK_ID: task.id,
+          AGENTRAIL_TASK_IDENTIFIER: task.identifier,
+          AGENTRAIL_HANDOFF_PATH: handoffPath,
+          AGENTRAIL_RUN_REPORT_PATH: reportPath,
+        },
+      }),
     });
     const finalResult = await processRunnerHandoff({
       task,
@@ -698,6 +697,37 @@ async function executeSingleTaskRun({
     }
     throw error;
   }
+}
+
+function buildManagedRunnerEnv({
+  baseEnv,
+  values,
+}: {
+  baseEnv: NodeJS.ProcessEnv;
+  values: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  const env = {
+    ...baseEnv,
+  };
+  delete env.AGENTRAIL_BASE_URL;
+  delete env.AGENTRAIL_API_KEY;
+  delete env.AGENTRAIL_API_KEY_ID;
+  delete env.AGENTRAIL_ADMIN_API_KEY;
+  delete env.AGENTRAIL_OPERATOR_API_KEY;
+  delete env.AGENTRAIL_OPERATOR_KEY;
+  delete env.AGENTRAIL_OPERATOR_KEY_ID;
+  delete env.AGENTRAIL_SETUP_API_KEY;
+  delete env.GITHUB_TOKEN;
+  delete env.GH_TOKEN;
+  delete env.GITHUB_WEBHOOK_SECRET;
+  delete env.CIRCLECI_TOKEN;
+  delete env.CIRCLECI_WEBHOOK_SECRET;
+  delete env.LINEAR_API_KEY;
+  delete env.LINEAR_WEBHOOK_SECRET;
+  return {
+    ...env,
+    ...values,
+  };
 }
 
 async function processRunnerHandoff({
@@ -1170,15 +1200,89 @@ async function selectRunnableTasks({
   runStore: AgentRunStore;
   limit: number;
 }): Promise<TaskSummary[]> {
-  const [inProgress, todo] = await Promise.all([
+  const [inProgress, todo, inReview] = await Promise.all([
     listMyTasks({ baseUrl, apiKey, fetchImpl, status: "in_progress" }),
     listMyTasks({ baseUrl, apiKey, fetchImpl, status: "todo" }),
+    listMyTasks({ baseUrl, apiKey, fetchImpl, status: "in_review" }),
   ]);
-  const candidates = [...inProgress, ...todo]
+  const candidates = [...inProgress, ...todo, ...inReview]
     .filter((task) => !isSetupVerificationTask(task.identifier))
     .filter((task) => !runStore.findActiveRunByTask(agentId, task.id))
-    .filter((task) => task.status === "in_progress" || task.availableActions.includes("start"));
+    .filter((task) => task.status === "in_progress"
+      || task.availableActions.includes("start")
+      || (task.status === "in_review" && task.availableActions.includes("submit")));
   return candidates.slice(0, limit);
+}
+
+async function waitForTaskEvent({
+  baseUrl,
+  apiKey,
+  fetchImpl,
+  timeoutMs,
+}: {
+  baseUrl: string;
+  apiKey: string;
+  fetchImpl: typeof globalThis.fetch;
+  timeoutMs: number;
+}): Promise<void> {
+  const url = new URL("task-events/stream", `${baseUrl}/`);
+  url.searchParams.set("eventTypes", "task.updated,task.ci_failed,task.ci_recovered,task.review_changes_requested,task.awaiting_user");
+  url.searchParams.set("heartbeatSeconds", "15");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  try {
+    const response = await fetchImpl(url, {
+      headers: {
+        accept: "text/event-stream",
+        authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text.trim().length > 0
+        ? `Task event stream failed with HTTP ${response.status}: ${text.slice(0, 200).trim()}`
+        : `Task event stream failed with HTTP ${response.status}.`);
+    }
+    if (!response.body) {
+      throw new Error("Task event stream did not include a readable response body.");
+    }
+
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let separatorIndex = buffer.indexOf("\n\n");
+      while (separatorIndex !== -1) {
+        const frame = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        if (sseFrameHasData(frame)) {
+          return;
+        }
+        separatorIndex = buffer.indexOf("\n\n");
+      }
+    }
+  } catch (error) {
+    if (isAbortError(error)) {
+      return;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    await reader?.cancel().catch(() => undefined);
+  }
+}
+
+function sseFrameHasData(frame: string): boolean {
+  return frame.split(/\r?\n/u).some((line) => line.startsWith("data:"));
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 async function listMyTasks({
@@ -1432,6 +1536,38 @@ function resolveRepoForAgent({
     slug: repoAllowlist[0] ?? "local/repo",
     defaultBranch: "main",
   };
+}
+
+function renderManagedAgentRecipe(): string {
+  return [
+    "# AgentRail Managed Agent Instructions",
+    "",
+    "This file is generated for one AgentRail-managed run.",
+    "AgentRail owns task assignment, lifecycle state, provider status, pull request creation, shipping, and rollback.",
+    "Your job is limited to repository work inside the provided git worktree and reporting the result.",
+    "",
+    "## Required Flow",
+    "",
+    "1. Work only inside the provided git worktree for this task.",
+    "2. Do not hand-roll AgentRail API calls, query task lifecycle endpoints, push branches, create pull requests, ship, or roll back directly.",
+    "3. Report meaningful progress with `agentrail agent report --status progress --summary \"short update\"`.",
+    "4. If blocked, report the blocker with `agentrail agent report --status blocked --summary \"what user action is needed\" --reason \"short reason\" --action-required \"what the user must do\" --resume-instructions \"how to continue after the user acts\"`.",
+    "5. For any blocker, also write a `target: \"user\"` handoff file at `$AGENTRAIL_HANDOFF_PATH` so AgentRail can recover if the report command fails.",
+    "6. Run the smallest relevant validation before reporting completion.",
+    "7. Commit locally when the task requires a code change.",
+    "8. Write the structured handoff JSON file at `$AGENTRAIL_HANDOFF_PATH` before exiting.",
+    "9. Report completion with `agentrail agent report --status completed --summary \"short completion summary\" --handoff-file \"$AGENTRAIL_HANDOFF_PATH\"`.",
+    "10. Use `target: \"agentrail\"` when AgentRail should publish and continue the lifecycle.",
+    "11. Use `target: \"user\"` when missing credentials, provider failures, sandbox restrictions, tooling, or validation failures require user intervention.",
+    "",
+    "## Handoff Contract",
+    "",
+    "- For `target: \"agentrail\"`, write JSON with `version`, `target`, `summary`, `commitSha`, and optional `checks`, `artifacts`, and `pullRequest`.",
+    "- For `target: \"user\"`, write JSON with `version`, `target`, `summary`, `reason`, `actionRequired`, and `resumeInstructions`.",
+    "- Do not edit `AGENTS.md`, `CLAUDE.md`, `.agentrail/*`, or other instruction files unless the task explicitly asks for that change.",
+    "- Do not expose secrets in logs, prompts, commits, or final summaries.",
+    "",
+  ].join("\n");
 }
 
 function buildPrompt({
