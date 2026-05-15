@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import type { RoutingControlPlane } from "./intake-routing-control-plane.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 import type { AgentTaskQueue } from "./agent-task-queue.ts";
+import type { TaskStatus } from "./task-store.ts";
 
 export interface GitHubIssueIntakePayload {
   issueNumber: number;
@@ -172,11 +173,12 @@ export class GitHubIssueIntakeAdapter {
       const description = hasBody ? (payload.body ?? "") : existing.description;
       const acceptanceCriteria = hasBody ? this.extractAcceptanceCriteria(payload.body ?? "") : existing.acceptanceCriteria;
       const labels = hasLabels ? (payload.labels ?? []) : (existing.source?.labels ?? []);
+      const status = hasState ? mapIssueStateOntoExistingTask(existing.status, payload.state) : existing.status;
 
       const nextTaskState = {
         title: payload.issueTitle ?? existing.title,
         description,
-        status: hasState ? this.mapStatus(payload.state) : existing.status,
+        status,
         priority: hasLabels ? this.mapPriority(payload.labels ?? []) : existing.priority,
         acceptanceCriteria,
         links: { issue: payload.issueUrl },
@@ -204,7 +206,7 @@ export class GitHubIssueIntakeAdapter {
       const updated = this.taskQueue.updateTask(existing.id, {
         title: payload.issueTitle ?? existing.title,
         description,
-        status: hasState ? this.mapStatus(payload.state) : existing.status,
+        status,
         priority: hasLabels ? this.mapPriority(payload.labels ?? []) : existing.priority,
         acceptanceCriteria,
         links: { issue: payload.issueUrl },
@@ -465,6 +467,21 @@ export class GitHubIssueIntakeAdapter {
       routing,
     };
   }
+}
+
+function mapIssueStateOntoExistingTask(currentStatus: TaskStatus, issueState?: string | null): TaskStatus {
+  if (issueState === "closed") {
+    return "done";
+  }
+  if (issueState === "open") {
+    return currentStatus === "in_progress" || currentStatus === "in_review" || currentStatus === "blocked"
+      ? currentStatus
+      : "todo";
+  }
+  if (issueState === "in_progress") {
+    return "in_progress";
+  }
+  return currentStatus;
 }
 
 function githubTaskStateMatches(existing: ReturnType<AgentTaskQueue["getRawTask"]>, next: {

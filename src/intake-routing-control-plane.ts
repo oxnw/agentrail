@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 import type { AgentTaskQueue } from "./agent-task-queue.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
-import type { TaskAssignmentSource } from "./task-store.ts";
+import type { TaskAssignmentSource, TaskRecord } from "./task-store.ts";
 import type { TaskSource } from "./task-source.ts";
 
 export interface ProviderRepository {
@@ -248,6 +248,12 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === "string");
 }
 
+function isStartableAssignedTask(task: Pick<TaskRecord, "status" | "availableActions" | "assigneeAgentId">): boolean {
+  return task.status === "todo"
+    && isNonEmptyString(task.assigneeAgentId ?? "")
+    && task.availableActions.includes("start");
+}
+
 const ROUTING_CONDITION_FIELDS = [
   "repositories",
   "labelsAny",
@@ -296,6 +302,22 @@ const AGENT_PROFILE_FIELDS = new Set([
   "sourceRef",
   "changeReason",
 ]);
+const ROUTING_TASK_CHANGED_FIELDS = [
+  "title",
+  "description",
+  "priority",
+  "assignee",
+  "assigneeAgentId",
+  "triageQueueId",
+  "assignmentSource",
+  "routingDecisionId",
+  "routingReason",
+  "routingConfidence",
+  "links",
+  "context",
+  "source",
+  "availableActions",
+] as const;
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: Set<string>): boolean {
   return Object.keys(value).every(key => allowed.has(key));
@@ -510,7 +532,7 @@ export class RoutingControlPlane {
 
     const ruleSet = this.resolveCurrentRuleSet(null);
     const { decision, inputDigest } = this.routeSnapshot(snapshot, ruleSet);
-    const task = this.applyDecisionToTask(snapshot, decision);
+    const task = await this.applyDecisionToTask(snapshot, decision);
     decision.taskId = task.id;
     decision.taskIdentifier = task.identifier;
 
@@ -742,7 +764,7 @@ export class RoutingControlPlane {
     };
   }
 
-  private applyDecisionToTask(snapshot: ProviderIssueSnapshot, decision: RoutingDecision) {
+  private async applyDecisionToTask(snapshot: ProviderIssueSnapshot, decision: RoutingDecision): Promise<TaskRecord> {
     const existing = this.taskQueue.findTaskByIdentifier(snapshot.providerIssueId);
     const assigneeAgentId = decision.assignment.assigneeAgentId;
     const triageQueueId = decision.assignment.triageQueueId;
@@ -796,10 +818,23 @@ export class RoutingControlPlane {
           availableActions: ["retry"],
         });
       }
+      if (isStartableAssignedTask(updated) && (!isStartableAssignedTask(existing) || existing.assigneeAgentId !== updated.assigneeAgentId)) {
+        try {
+          await this.taskQueue.emitTaskUpdatedEvent(updated, {
+            previousStatus: existing.status,
+            changedFields: [...ROUTING_TASK_CHANGED_FIELDS],
+            actor: { id: "routing", role: "system" },
+            summary: "Provider issue routed to an assigned agent.",
+          });
+        } catch (error) {
+          this.taskQueue.upsertTask(existing);
+          throw error;
+        }
+      }
       return updated;
     }
 
-    return this.taskQueue.createTask({
+    const created = this.taskQueue.createTask({
       identifier: snapshot.providerIssueId,
       acceptanceCriteria: [],
       createdAt: this.now().toISOString(),
@@ -815,6 +850,20 @@ export class RoutingControlPlane {
       availableActions: routeAvailableActions,
       ...commonFields,
     });
+    if (isStartableAssignedTask(created)) {
+      try {
+        await this.taskQueue.emitTaskUpdatedEvent(created, {
+          previousStatus: null,
+          changedFields: [...ROUTING_TASK_CHANGED_FIELDS],
+          actor: { id: "routing", role: "system" },
+          summary: "Provider issue routed to an assigned agent.",
+        });
+      } catch (error) {
+        this.taskQueue.deleteTask(created.id);
+        throw error;
+      }
+    }
+    return created;
   }
 
   private isAgentEligibleForSnapshot(profile: AgentProfile, repo: string, providerIssueId: string): boolean {

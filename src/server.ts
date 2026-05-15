@@ -10,6 +10,7 @@ import {
   defaultAgentRailHome,
   DEFAULT_EVENT_DELIVERY_STORE_PATH,
   DEFAULT_EVENT_SUBSCRIPTION_STORE_PATH,
+  DEFAULT_PROVIDER_CURSOR_STORE_PATH,
   type ConnectedRepo,
 } from "./cli/agentrail-home.ts";
 import { loadEnvFile } from "./env-file.ts";
@@ -28,6 +29,9 @@ const publicBaseUrl =
 const storagePath = process.env.AGENTRAIL_EVENT_STORE_PATH;
 const authStorePath = process.env.AGENTRAIL_AGENT_AUTH_STORE_PATH;
 const agentRunStorePath = process.env.AGENTRAIL_AGENT_RUNS_STORE_PATH;
+const providerCursorStorePath =
+  process.env.AGENTRAIL_PROVIDER_CURSOR_STORE_PATH || path.join(agentrailHome, DEFAULT_PROVIDER_CURSOR_STORE_PATH);
+process.env.AGENTRAIL_PROVIDER_CURSOR_STORE_PATH = providerCursorStorePath;
 const eventSubscriptionStorePath =
   process.env.AGENTRAIL_EVENT_SUBSCRIPTION_STORE_PATH || path.join(agentrailHome, DEFAULT_EVENT_SUBSCRIPTION_STORE_PATH);
 const eventDeliveryStorePath =
@@ -83,6 +87,7 @@ export function startServer() {
       githubMode: providerConfig.github.mode,
       githubWebhookSecret,
       githubDeliveryMode: providerConfig.github.deliveryMode,
+      githubIssueImportMode: providerConfig.github.importMode,
       githubPollIntervalMs: providerConfig.github.pollIntervalMs,
       circleciToken,
       circleciMode: providerConfig.circleci.mode,
@@ -167,7 +172,7 @@ function loadDotEnv() {
     loadEnvFile(".env");
     loadEnvFile(".agentrail/server.env");
     loadEnvFile(path.join(homePath, "server.env"));
-    loadEnvFile(path.join(homePath, "provider.env"));
+    loadEnvFile(path.join(homePath, "provider.env"), { overwrite: true });
   } catch {
     // .env loading is convenience-only; environment variables still work.
   }
@@ -186,9 +191,9 @@ function readFileIfExists(filePath: string): string | null {
 }
 
 const DEFAULT_PROVIDER_CONFIG = {
-  github: { mode: "disabled" as const, deliveryMode: "polling" as const, pollIntervalMs: null },
-  circleci: { mode: "disabled" as const, deliveryMode: "polling" as const, pollIntervalMs: null },
-  linear: { mode: "disabled" as const, deliveryMode: "polling" as const, pollIntervalMs: null },
+  github: { mode: "disabled" as const, deliveryMode: "polling" as const, importMode: "from_now" as const, pollIntervalMs: null },
+  circleci: { mode: "disabled" as const, deliveryMode: "polling" as const, importMode: "from_now" as const, pollIntervalMs: null },
+  linear: { mode: "disabled" as const, deliveryMode: "polling" as const, importMode: "from_now" as const, pollIntervalMs: null },
   repos: [] as ConnectedRepo[],
 };
 
@@ -206,14 +211,16 @@ function isConnectedRepo(value: unknown): value is ConnectedRepo {
     && typeof (value as ConnectedRepo).defaultBranch === "string";
 }
 
-function parseProviderSettings(providerData?: { mode?: string; deliveryMode?: string; pollIntervalMs?: number }): {
+function parseProviderSettings(providerData?: { mode?: string; deliveryMode?: string; importMode?: string; pollIntervalMs?: number }): {
   mode: "real" | "disabled";
   deliveryMode: "polling" | "webhook";
+  importMode: "from_now" | "backfill";
   pollIntervalMs: number | null;
 } {
   return {
     mode: providerData?.mode === "real" ? "real" : "disabled",
     deliveryMode: providerData?.deliveryMode === "webhook" ? "webhook" : "polling",
+    importMode: providerData?.importMode === "backfill" ? "backfill" : "from_now",
     pollIntervalMs: Number.isFinite(providerData?.pollIntervalMs) && Number(providerData.pollIntervalMs) > 0
       ? Number(providerData.pollIntervalMs)
       : null,
@@ -221,9 +228,9 @@ function parseProviderSettings(providerData?: { mode?: string; deliveryMode?: st
 }
 
 function readProviderConfig(): {
-  github: { mode: "real" | "disabled"; deliveryMode: "polling" | "webhook"; pollIntervalMs: number | null };
-  circleci: { mode: "real" | "disabled"; deliveryMode: "polling" | "webhook"; pollIntervalMs: number | null };
-  linear: { mode: "real" | "disabled"; deliveryMode: "polling" | "webhook"; pollIntervalMs: number | null };
+  github: { mode: "real" | "disabled"; deliveryMode: "polling" | "webhook"; importMode: "from_now" | "backfill"; pollIntervalMs: number | null };
+  circleci: { mode: "real" | "disabled"; deliveryMode: "polling" | "webhook"; importMode: "from_now" | "backfill"; pollIntervalMs: number | null };
+  linear: { mode: "real" | "disabled"; deliveryMode: "polling" | "webhook"; importMode: "from_now" | "backfill"; pollIntervalMs: number | null };
   repos: ConnectedRepo[];
 } {
   try {
@@ -233,7 +240,7 @@ function readProviderConfig(): {
     }
     const parsed = JSON.parse(content) as {
       providers?: {
-        github?: { mode?: string; deliveryMode?: string; pollIntervalMs?: number };
+        github?: { mode?: string; deliveryMode?: string; importMode?: string; pollIntervalMs?: number };
         circleci?: { mode?: string; deliveryMode?: string; pollIntervalMs?: number };
         linear?: { mode?: string; deliveryMode?: string; pollIntervalMs?: number };
       };

@@ -77,17 +77,46 @@ test("agent run --once starts assigned work, records the run, and writes markdow
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const previousHome = process.env.AGENTRAIL_HOME;
+  const previousSensitiveEnv = {
+    AGENTRAIL_OPERATOR_KEY: process.env.AGENTRAIL_OPERATOR_KEY,
+    GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+    GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET,
+    CIRCLECI_TOKEN: process.env.CIRCLECI_TOKEN,
+    LINEAR_API_KEY: process.env.LINEAR_API_KEY,
+  };
   process.env.AGENTRAIL_HOME = homePath;
+  process.env.AGENTRAIL_OPERATOR_KEY = "ar_live_operator_secret";
+  process.env.GITHUB_TOKEN = "ghp_parent_secret";
+  process.env.GITHUB_WEBHOOK_SECRET = "github_webhook_secret";
+  process.env.CIRCLECI_TOKEN = "circleci_parent_secret";
+  process.env.LINEAR_API_KEY = "linear_parent_secret";
 
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
     await rm(homePath, { recursive: true, force: true });
     if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
     else process.env.AGENTRAIL_HOME = previousHome;
+    for (const [key, value] of Object.entries(previousSensitiveEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await harness.close();
   });
 
   await writeSetupRepo(repoRoot, homePath, harness.baseUrl, true);
+  const staleRecipePath = path.join(homePath, "stale-agent-recipes.md");
+  await writeFile(
+    staleRecipePath,
+    [
+      "# Stale AgentRail Recipe",
+      "",
+      "Begin with:",
+      "GET /tasks/mine?status=in_progress&limit=1",
+      "Then GET /tasks/{taskId}/ci-status and GET /tasks/{taskId}/review-feedback.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
   const task = harness.taskQueue.createTask({
     identifier: "AGEA-RUN-001",
     title: "Implement managed run",
@@ -104,7 +133,7 @@ test("agent run --once starts assigned work, records the run, and writes markdow
     AGENTRAIL_AGENT_RUNNER: "codex",
     AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
     AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
-    AGENTRAIL_AGENT_RECIPE_PATH: path.join(homePath, "agent-recipes.md"),
+    AGENTRAIL_AGENT_RECIPE_PATH: staleRecipePath,
   });
 
   const exitCode = await runCli(["agent", "run", "--once"], {
@@ -115,11 +144,23 @@ test("agent run --once starts assigned work, records the run, and writes markdow
       prepareWorktree: async ({ worktreePath }) => {
         await initGitWorktree(worktreePath);
       },
-      launchRunner: async ({ logPath, prompt, env, handoffPath, worktreePath }) => {
-        assert.equal(env.AGENTRAIL_BASE_URL, harness.baseUrl);
-        assert.equal(env.AGENTRAIL_API_KEY, harness.apiKey);
+      launchRunner: async ({ logPath, prompt, env, handoffPath, worktreePath, recipePath }) => {
+        assert.equal(env.AGENTRAIL_BASE_URL, undefined);
+        assert.equal(env.AGENTRAIL_API_KEY, undefined);
+        assert.equal(env.AGENTRAIL_OPERATOR_KEY, undefined);
+        assert.equal(env.GITHUB_TOKEN, undefined);
+        assert.equal(env.GITHUB_WEBHOOK_SECRET, undefined);
+        assert.equal(env.CIRCLECI_TOKEN, undefined);
+        assert.equal(env.LINEAR_API_KEY, undefined);
         assert.equal(env.AGENTRAIL_AGENT_ID, "agt_runner");
         assert.equal(env.AGENTRAIL_HANDOFF_PATH, handoffPath);
+        assert.ok(recipePath, "managed recipePath must be defined");
+        assert.notEqual(recipePath, staleRecipePath);
+        const recipeText = await readFile(recipePath, "utf8");
+        assert.doesNotMatch(recipeText, /GET \/tasks\/mine/);
+        assert.doesNotMatch(recipeText, /GET \/tasks\/\{taskId\}\/ci-status/);
+        assert.doesNotMatch(recipeText, /GET \/tasks\/\{taskId\}\/review-feedback/);
+        assert.doesNotMatch(prompt, /GET \/tasks\/mine/);
         assert.ok(handoffPath, "handoffPath must be defined");
         await writeFile(logPath, prompt, "utf8");
         await writeFile(path.join(worktreePath, "README.md"), "runner completed\n", "utf8");
@@ -189,6 +230,390 @@ test("agent run --once starts assigned work, records the run, and writes markdow
   const notePath = path.join(homePath, "notes", "runs", `${runs[0].runId}.md`);
   const noteText = await readFile(notePath, "utf8");
   assert.match(noteText, /Runner completed in test/);
+});
+
+test("agent run waits on task events instead of sleeping and polling when idle", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-events-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const harness = await createHarness({
+    submitTask: async (taskId, payload) => {
+      const pullRequest = readPullRequestPayload(payload);
+      return {
+        data: {
+          taskId,
+          submissionId: "sub_event_wake",
+          prUrl: "https://github.com/oxnw/agentrail/pull/125",
+          prNumber: 125,
+          head: pullRequest?.head,
+          base: pullRequest?.base,
+          headSha: pullRequest?.headSha,
+        },
+        availableActions: ["view_ci_status", "view_review_feedback"],
+      };
+    },
+  });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  let mineRequests = 0;
+  let streamRequests = 0;
+  let injectedTaskId: string | null = null;
+  let eventScheduled = false;
+  const fetchWithEventInjection: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    if (url.pathname === "/tasks/mine") {
+      mineRequests += 1;
+    }
+    if (url.pathname === "/task-events/stream") {
+      streamRequests += 1;
+      if (!eventScheduled) {
+        eventScheduled = true;
+        setTimeout(() => {
+          const task = harness.taskQueue.createTask({
+            identifier: "AGEA-RUN-EVENT",
+            title: "Wake from event",
+            assignee: { id: "agt_runner", name: "Runner" },
+            assigneeAgentId: "agt_runner",
+            status: "todo",
+            availableActions: ["start"],
+          });
+          injectedTaskId = task.id;
+          void harness.eventStore.append({
+            id: "evt_agent_run_wake",
+            type: "task.updated",
+            occurredAt: now().toISOString(),
+            taskVersion: task.version,
+            traceId: "trace_agent_run_wake",
+            data: {
+              taskId: task.id,
+              taskIdentifier: task.identifier,
+              status: task.status,
+              changedFields: ["status", "availableActions"],
+              availableActions: task.availableActions,
+              affectedAgentId: "agt_runner",
+            },
+          });
+        }, 25);
+      }
+    }
+    return globalThis.fetch(input, init);
+  };
+
+  const runPromise = runCli(["agent", "run", "--max-runs", "1"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      fetch: fetchWithEventInjection,
+      sleep: async () => {
+        throw new Error("agent run should wait on task events instead of idle sleep polling");
+      },
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+      },
+      launchRunner: async ({ logPath, handoffPath, worktreePath }) => {
+        assert.ok(handoffPath, "handoffPath must be defined");
+        await writeFile(logPath, "event wake run\n", "utf8");
+        await writeFile(path.join(worktreePath, "README.md"), "event wake completed\n", "utf8");
+        const commitSha = commitAll(worktreePath, "event wake change");
+        await writeAgentRailHandoff(handoffPath, {
+          target: "agentrail",
+          summary: "Runner woke from an AgentRail event.",
+          commitSha,
+        });
+        return {
+          status: "succeeded",
+          exitCode: 0,
+          summary: "Runner woke from an AgentRail event.",
+        };
+      },
+      publishBranch: async () => {},
+    },
+  });
+
+  const exitCode = await Promise.race([
+    runPromise,
+    new Promise<number>((_, reject) => setTimeout(() => reject(new Error("agent run did not wake from task event")), 2_000)),
+  ]);
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(streamRequests, 1);
+  assert.equal(mineRequests, 6);
+  assert.ok(injectedTaskId);
+  assert.equal(harness.taskQueue.getRawTask(injectedTaskId)?.status, "in_review");
+});
+
+test("agent run falls back to polling when a task event arrives before the stream connects", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-missed-event-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const harness = await createHarness({
+    submitTask: async (taskId, payload) => {
+      const pullRequest = readPullRequestPayload(payload);
+      return {
+        data: {
+          taskId,
+          submissionId: "sub_missed_event",
+          prUrl: "https://github.com/oxnw/agentrail/pull/127",
+          prNumber: 127,
+          head: pullRequest?.head,
+          base: pullRequest?.base,
+          headSha: pullRequest?.headSha,
+        },
+        availableActions: ["view_ci_status", "view_review_feedback"],
+      };
+    },
+  });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  let mineRequests = 0;
+  let mineBodiesRead = 0;
+  let streamRequests = 0;
+  let injectedTaskId: string | null = null;
+  const fetchWithMissedEvent: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    if (url.pathname === "/tasks/mine") {
+      mineRequests += 1;
+      const response = await globalThis.fetch(input, init);
+      const originalText = response.text.bind(response);
+      (response as Response & { text: () => Promise<string> }).text = async () => {
+        const body = await originalText();
+        mineBodiesRead += 1;
+        if (mineBodiesRead === 3) {
+          const task = harness.taskQueue.createTask({
+            identifier: "AGEA-RUN-MISSED-EVENT",
+            title: "Wake after missed event",
+            assignee: { id: "agt_runner", name: "Runner" },
+            assigneeAgentId: "agt_runner",
+            status: "todo",
+            availableActions: ["start"],
+          });
+          injectedTaskId = task.id;
+          await harness.eventStore.append({
+            id: "evt_agent_run_missed_wake",
+            type: "task.updated",
+            occurredAt: now().toISOString(),
+            taskVersion: task.version,
+            traceId: "trace_agent_run_missed_wake",
+            data: {
+              taskId: task.id,
+              taskIdentifier: task.identifier,
+              status: task.status,
+              changedFields: ["status", "availableActions"],
+              availableActions: task.availableActions,
+              affectedAgentId: "agt_runner",
+            },
+          });
+        }
+        return body;
+      };
+      return response;
+    }
+    if (url.pathname === "/task-events/stream") {
+      streamRequests += 1;
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 1_500);
+      return globalThis.fetch(input, { ...init, signal: controller.signal });
+    }
+    return globalThis.fetch(input, init);
+  };
+
+  const runPromise = runCli(["agent", "run", "--max-runs", "1", "--poll-interval", "1"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      fetch: fetchWithMissedEvent,
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+      },
+      launchRunner: async ({ logPath, handoffPath, worktreePath }) => {
+        assert.ok(handoffPath, "handoffPath must be defined");
+        await writeFile(logPath, "missed event fallback run\n", "utf8");
+        await writeFile(path.join(worktreePath, "README.md"), "missed event completed\n", "utf8");
+        const commitSha = commitAll(worktreePath, "missed event fallback change");
+        await writeAgentRailHandoff(handoffPath, {
+          target: "agentrail",
+          summary: "Runner recovered by polling after a missed event.",
+          commitSha,
+        });
+        return {
+          status: "succeeded",
+          exitCode: 0,
+          summary: "Runner recovered by polling after a missed event.",
+        };
+      },
+      publishBranch: async () => {},
+    },
+  });
+
+  const exitCode = await Promise.race([
+    runPromise,
+    new Promise<number>((_, reject) => setTimeout(() => reject(new Error("agent run did not recover from a missed task event")), 4_000)),
+  ]);
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(streamRequests, 1);
+  assert.ok(mineRequests >= 6);
+  assert.ok(injectedTaskId);
+  assert.equal(harness.taskQueue.getRawTask(injectedTaskId)?.status, "in_review");
+});
+
+test("agent run wakes on review changes requested events", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-review-events-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const harness = await createHarness({
+    submitTask: async (taskId, payload) => {
+      const pullRequest = readPullRequestPayload(payload);
+      return {
+        data: {
+          taskId,
+          submissionId: "sub_review_wake",
+          prUrl: "https://github.com/oxnw/agentrail/pull/126",
+          prNumber: 126,
+          head: pullRequest?.head,
+          base: pullRequest?.base,
+          headSha: pullRequest?.headSha,
+        },
+        availableActions: ["view_ci_status", "view_review_feedback"],
+      };
+    },
+  });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+  const task = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-REVIEW",
+    title: "Wake from review changes",
+    description: "Wake a waiting runner when review requests changes.",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "in_review",
+    availableActions: ["ship", "view_ci_status", "view_review_feedback"],
+    reviewOutcome: "approved",
+  });
+
+  let streamRequests = 0;
+  let reviewProjected = false;
+  const fetchWithReviewEventInjection: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    if (url.pathname === "/task-events/stream") {
+      streamRequests += 1;
+      assert.match(url.searchParams.get("eventTypes") ?? "", /task\.review_changes_requested/);
+      if (!reviewProjected) {
+        reviewProjected = true;
+        setTimeout(() => {
+          void harness.taskQueue.projectReviewState(task.id, {
+            outcome: "changes_requested",
+            summary: "Please update the parser.",
+            reviewer: "reviewer",
+            updatedAt: "2026-05-09T11:01:00.000Z",
+          });
+        }, 25);
+      }
+    }
+    return globalThis.fetch(input, init);
+  };
+
+  const runPromise = runCli(["agent", "run", "--max-runs", "1"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      fetch: fetchWithReviewEventInjection,
+      sleep: async () => {
+        throw new Error("agent run should wait on task review events instead of idle sleep polling");
+      },
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+      },
+      launchRunner: async ({ logPath, handoffPath, worktreePath }) => {
+        assert.ok(handoffPath, "handoffPath must be defined");
+        await writeFile(logPath, "review wake run\n", "utf8");
+        await writeFile(path.join(worktreePath, "README.md"), "review wake completed\n", "utf8");
+        const commitSha = commitAll(worktreePath, "review wake change");
+        await writeAgentRailHandoff(handoffPath, {
+          target: "agentrail",
+          summary: "Runner woke from a review change event.",
+          commitSha,
+        });
+        return {
+          status: "succeeded",
+          exitCode: 0,
+          summary: "Runner woke from a review change event.",
+        };
+      },
+      publishBranch: async () => {},
+    },
+  });
+
+  const exitCode = await Promise.race([
+    runPromise,
+    new Promise<number>((_, reject) => setTimeout(() => reject(new Error("agent run did not wake from review change event")), 2_000)),
+  ]);
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(streamRequests, 1);
+  assert.equal(harness.taskQueue.getRawTask(task.id)?.status, "in_review");
 });
 
 test("agent run skips setup verification tasks and starts real assigned work instead", async (t) => {
@@ -289,7 +714,7 @@ test("agent run skips setup verification tasks and starts real assigned work ins
   assert.equal(harness.taskQueue.getRawTask(realTask.id)?.status, "in_review");
 });
 
-test("agent run consumes a completion handoff reported through AgentRail API", async (t) => {
+test("agent run consumes a completion handoff reported through the managed local report file", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-api-report-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const harness = await createHarness({
@@ -351,31 +776,28 @@ test("agent run consumes a completion handoff reported through AgentRail API", a
       },
       launchRunner: async ({ env, logPath, worktreePath }) => {
         assert.match(env.AGENTRAIL_RUN_ID ?? "", /^run_/u);
-        await writeFile(logPath, "reported through AgentRail API\n", "utf8");
-        await writeFile(path.join(worktreePath, "README.md"), "runner reported through API\n", "utf8");
+        assert.equal(env.AGENTRAIL_BASE_URL, undefined);
+        assert.equal(env.AGENTRAIL_API_KEY, undefined);
+        assert.ok(env.AGENTRAIL_RUN_REPORT_PATH, "AGENTRAIL_RUN_REPORT_PATH must be defined");
+        await writeFile(logPath, "reported through managed local report\n", "utf8");
+        await writeFile(path.join(worktreePath, "README.md"), "runner reported locally\n", "utf8");
         const commitSha = commitAll(worktreePath, "runner api report");
-        const response = await fetch(`${env.AGENTRAIL_BASE_URL}/agent-runs/${env.AGENTRAIL_RUN_ID}/report`, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${env.AGENTRAIL_API_KEY}`,
-            "content-type": "application/json",
+        await writeFile(env.AGENTRAIL_RUN_REPORT_PATH, `${JSON.stringify({
+          version: 1,
+          runId: env.AGENTRAIL_RUN_ID,
+          status: "completed",
+          summary: "Reported completion through the managed local report.",
+          handoff: {
+            version: 1,
+            target: "agentrail",
+            summary: "Reported completion through the managed local report.",
+            commitSha,
           },
-          body: JSON.stringify({
-            status: "completed",
-            summary: "Reported completion through AgentRail API.",
-            handoff: {
-              version: 1,
-              target: "agentrail",
-              summary: "Reported completion through AgentRail API.",
-              commitSha,
-            },
-          }),
-        });
-        assert.equal(response.status, 202, await response.text());
+        })}\n`, "utf8");
         return {
           status: "succeeded",
           exitCode: 0,
-          summary: "Reported completion through AgentRail API.",
+          summary: "Reported completion through the managed local report.",
         };
       },
       publishBranch: async ({ branchName, commitSha }) => {
@@ -669,7 +1091,7 @@ test("agent report posts blocked metadata using runner environment", async (t) =
   });
 });
 
-test("agent run preserves API-reported blockers without requiring a handoff file", async (t) => {
+test("agent run preserves locally reported blockers without requiring a handoff file", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-api-blocked-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
@@ -713,24 +1135,19 @@ test("agent run preserves API-reported blockers without requiring a handoff file
         await initGitWorktree(worktreePath);
       },
       launchRunner: async ({ env, logPath }) => {
+        assert.equal(env.AGENTRAIL_BASE_URL, undefined);
+        assert.equal(env.AGENTRAIL_API_KEY, undefined);
+        assert.ok(env.AGENTRAIL_RUN_REPORT_PATH, "AGENTRAIL_RUN_REPORT_PATH must be defined");
         await writeFile(logPath, "blocked by missing token\n", "utf8");
-        const response = await fetch(`${env.AGENTRAIL_BASE_URL}/agent-runs/${env.AGENTRAIL_RUN_ID}/report`, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${env.AGENTRAIL_API_KEY}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            status: "blocked",
-            summary: "Missing GitHub token; user needs to reconnect GitHub.",
-            reason: "missing_github_token",
-            actionRequired: "Reconnect GitHub.",
-            resumeInstructions: "Retry the task after GitHub is reconnected.",
-          }),
-        });
-        if (response.status !== 202) {
-          assert.fail(await response.text());
-        }
+        await writeFile(env.AGENTRAIL_RUN_REPORT_PATH, `${JSON.stringify({
+          version: 1,
+          runId: env.AGENTRAIL_RUN_ID,
+          status: "blocked",
+          summary: "Missing GitHub token; user needs to reconnect GitHub.",
+          reason: "missing_github_token",
+          actionRequired: "Reconnect GitHub.",
+          resumeInstructions: "Retry the task after GitHub is reconnected.",
+        })}\n`, "utf8");
         return {
           status: "succeeded",
           exitCode: 0,
@@ -1518,7 +1935,7 @@ async function createHarness(options?: {
       displayName: "Runner",
       role: "agent",
     },
-    scopes: ["tasks:read", "tasks:write"],
+    scopes: ["tasks:read", "tasks:write", "events:read"],
   }, "key:runner");
   const server = createServer({
     store: eventStore,

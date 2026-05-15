@@ -438,6 +438,158 @@ test("POST /providers/github/webhooks only matches workflow_run tasks with expli
   assert.deepEqual(projectedProviders, ["github_actions", "github_actions"]);
 });
 
+test("POST /providers/github/webhooks projects pull request review decisions to matching tasks", async (t) => {
+  const eventStore = new TaskEventStore();
+  const projected = [];
+  const tasks = [
+    {
+      ...makeTask({
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 21,
+        pullNumber: 42,
+      }),
+      id: githubTaskId,
+      identifier: "github:oxnw/agentrail:issues/21",
+    },
+  ];
+  const server = createServer({
+    store: eventStore,
+    githubWebhookSecret: "github-secret",
+    taskLifecycleStore: {
+      listRawTasksBySourceRepo: () => tasks,
+      async projectReviewState(taskId, observation) {
+        projected.push({ taskId, observation });
+      },
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const payload = {
+    repository: { owner: { login: "oxnw" }, name: "agentrail" },
+    pull_request: { number: 42 },
+    review: {
+      state: "changes_requested",
+      body: "Please fix the failing test.",
+      submitted_at: "2026-05-12T09:30:00Z",
+      user: { login: "reviewer" },
+    },
+  };
+  const rawBody = JSON.stringify(payload);
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/providers/github/webhooks`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "pull_request_review",
+      "x-hub-signature-256": `sha256=${createHmac("sha256", "github-secret").update(rawBody).digest("hex")}`,
+    },
+    body: rawBody,
+  });
+
+  assert.equal(response.status, 202);
+  const body = await response.json();
+  assert.deepEqual(body.data.matchedTasks, [githubTaskId]);
+  assert.deepEqual(projected, [
+    {
+      taskId: githubTaskId,
+      observation: {
+        outcome: "changes_requested",
+        summary: "Please fix the failing test.",
+        reviewer: "reviewer",
+        updatedAt: "2026-05-12T09:30:00Z",
+      },
+    },
+  ]);
+});
+
+test("POST /providers/github/webhooks projects PR-wide review decision when available", async (t) => {
+  const eventStore = new TaskEventStore();
+  const projected = [];
+  const tasks = [
+    {
+      ...makeTask({
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 21,
+        pullNumber: 42,
+      }),
+      id: githubTaskId,
+      identifier: "github:oxnw/agentrail:issues/21",
+    },
+  ];
+  const server = createServer({
+    store: eventStore,
+    githubWebhookSecret: "github-secret",
+    reviewFeedbackAdapter: {
+      async getTaskReviewFeedback(taskId) {
+        assert.equal(taskId, githubTaskId);
+        return {
+          data: {
+            latestDecision: {
+              outcome: "changes_requested",
+              summary: "Alice still has requested changes.",
+              reviewer: { id: "alice", role: "member" },
+              createdAt: "2026-05-12T09:25:00Z",
+            },
+          },
+        };
+      },
+    },
+    taskLifecycleStore: {
+      listRawTasksBySourceRepo: () => tasks,
+      async projectReviewState(taskId, observation) {
+        projected.push({ taskId, observation });
+      },
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const payload = {
+    repository: { owner: { login: "oxnw" }, name: "agentrail" },
+    pull_request: { number: 42 },
+    review: {
+      state: "approved",
+      body: "Looks good to me.",
+      submitted_at: "2026-05-12T09:30:00Z",
+      user: { login: "bob" },
+    },
+  };
+  const rawBody = JSON.stringify(payload);
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/providers/github/webhooks`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "pull_request_review",
+      "x-hub-signature-256": `sha256=${createHmac("sha256", "github-secret").update(rawBody).digest("hex")}`,
+    },
+    body: rawBody,
+  });
+
+  assert.equal(response.status, 202);
+  assert.deepEqual(projected, [
+    {
+      taskId: githubTaskId,
+      observation: {
+        outcome: "changes_requested",
+        summary: "Alice still has requested changes.",
+        reviewer: "alice",
+        updatedAt: "2026-05-12T09:25:00Z",
+        decisionScope: "pull_request",
+      },
+    },
+  ]);
+});
+
 function jsonResponse(body, status = 200) {
   return {
     ok: status >= 200 && status < 300,

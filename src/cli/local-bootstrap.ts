@@ -24,6 +24,7 @@ interface ResolvedLocalPaths {
   taskStorePath: string;
   authStorePath: string;
   agentRunStorePath: string;
+  providerCursorStorePath: string;
   eventSubscriptionStorePath: string;
   eventDeliveryStorePath: string;
   agentProfileStorePath: string;
@@ -144,12 +145,14 @@ export async function withTemporaryLocalServer<T>({
     "AGENTRAIL_TASK_STORE_PATH",
     "AGENTRAIL_AGENT_PROFILES_STORE_PATH",
     "AGENTRAIL_AGENT_RUNS_STORE_PATH",
+    "AGENTRAIL_PROVIDER_CURSOR_STORE_PATH",
     "AGENTRAIL_EVENT_SUBSCRIPTION_STORE_PATH",
     "AGENTRAIL_EVENT_DELIVERY_STORE_PATH",
     "AGENTRAIL_ROUTING_RULES_STORE_PATH",
     "AGENTRAIL_ROUTING_AUDIT_STORE_PATH",
     "AGENTRAIL_OBSERVABILITY",
     "GITHUB_TOKEN",
+    "GITHUB_WEBHOOK_SECRET",
     "CIRCLECI_TOKEN",
     "CIRCLECI_WEBHOOK_SECRET",
     "LINEAR_API_KEY",
@@ -159,6 +162,7 @@ export async function withTemporaryLocalServer<T>({
   process.env.AGENTRAIL_TASK_STORE_PATH = paths.taskStorePath;
   process.env.AGENTRAIL_AGENT_PROFILES_STORE_PATH = paths.agentProfileStorePath;
   process.env.AGENTRAIL_AGENT_RUNS_STORE_PATH = paths.agentRunStorePath;
+  process.env.AGENTRAIL_PROVIDER_CURSOR_STORE_PATH = paths.providerCursorStorePath;
   process.env.AGENTRAIL_EVENT_SUBSCRIPTION_STORE_PATH = paths.eventSubscriptionStorePath;
   process.env.AGENTRAIL_EVENT_DELIVERY_STORE_PATH = paths.eventDeliveryStorePath;
   process.env.AGENTRAIL_ROUTING_RULES_STORE_PATH = paths.routingRuleStorePath;
@@ -166,12 +170,13 @@ export async function withTemporaryLocalServer<T>({
   process.env.AGENTRAIL_OBSERVABILITY = "false";
 
   try {
-    loadEnvFile(providerEnvPathForHome(resolvedHomePath));
+    loadEnvFile(providerEnvPathForHome(resolvedHomePath), { overwrite: true });
     const runtime = buildRuntime({
       githubToken: process.env.GITHUB_TOKEN || null,
       githubMode: config.providers.github.mode,
       githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET || null,
       githubDeliveryMode: config.providers.github.deliveryMode,
+      githubIssueImportMode: config.providers.github.importMode,
       githubPollIntervalMs: config.providers.github.pollIntervalMs ?? null,
       circleciToken: process.env.CIRCLECI_TOKEN || null,
       circleciMode: config.providers.circleci.mode,
@@ -268,6 +273,7 @@ function resolveLocalPaths(homePath: string, config: SetupConfig): ResolvedLocal
     taskStorePath: path.resolve(homePath, config.persistence.taskStorePath),
     authStorePath: path.resolve(homePath, config.persistence.authStorePath),
     agentRunStorePath: path.resolve(homePath, config.persistence.agentRunStorePath),
+    providerCursorStorePath: path.resolve(homePath, config.persistence.providerCursorStorePath),
     eventSubscriptionStorePath: path.resolve(homePath, config.persistence.eventSubscriptionStorePath),
     eventDeliveryStorePath: path.resolve(homePath, config.persistence.eventDeliveryStorePath),
     agentProfileStorePath: path.resolve(homePath, config.persistence.agentProfileStorePath),
