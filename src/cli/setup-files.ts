@@ -131,6 +131,18 @@ function renderSetupReadme(config: SetupConfig): string {
     "- Non-interactive provider commands can still read credentials from env vars for automation or CI.",
     `- Webhook delivery is only available when AgentRail is reachable on a public HTTPS base URL such as \`https://your-domain.com\` (local URL \`${config.server.baseUrl}\` will not work for webhooks).`,
     "",
+    "## Routing",
+    "",
+    config.routing.mode === "ai_assist"
+      ? `- AgentRail will use AI to route tasks to the right agents with ${config.routing.classifier.runner}${config.routing.classifier.model ? ` (${config.routing.classifier.model})` : ""}.`
+      : "- Rules-only routing is enabled. AgentRail will use labels, repos, projects, and explicit rules only.",
+    config.routing.mode === "ai_assist"
+      ? describeAiRoutingFallback(config.routing.classifier.fallbackBehavior)
+      : "- If no rule matches, AgentRail leaves the task for operator review.",
+    config.routing.mode === "ai_assist"
+      ? `- Local AI routing classifier timeout: ${Math.round(config.routing.classifier.timeoutMs / 1000)} seconds by default. Slow local runners can raise \`routing.classifier.timeoutMs\` up to 600 seconds in \`config.json\`.`
+      : "",
+    "",
     "## Next Steps",
     "",
     "1. Run `agentrail agent create` to choose a runner, choose permissions, and create another local agent.",
@@ -204,6 +216,22 @@ function renderPortableInitCommand(config: SetupConfig): string {
   if (config.exports.markdown.enabled) {
     parts.push("--markdown-export");
   }
+  if (config.routing.mode === "ai_assist") {
+    parts.push("--routing-mode ai-assist");
+    parts.push(`--routing-classifier-runner ${config.routing.classifier.runner}`);
+    if (config.routing.classifier.model) {
+      parts.push(`--routing-classifier-model ${config.routing.classifier.model}`);
+    }
+    parts.push(`--routing-confidence-threshold ${config.routing.classifier.confidenceThreshold}`);
+    parts.push(`--routing-no-suitable-agent ${config.routing.classifier.fallbackBehavior.replace(/_/gu, "-")}`);
+  }
 
   return parts.join(" ");
+}
+
+function describeAiRoutingFallback(fallbackBehavior: string): string {
+  if (fallbackBehavior === "assign_closest_match") {
+    return "- Assign the closest match: If AI routing cannot find a suitable agent, AgentRail assigns the best available agent and records a best-effort explanation.";
+  }
+  return "- Require a suitable agent: If AI routing cannot find a suitable agent, AgentRail leaves the task unassigned, explains what agent skills or ownership areas are missing, and retries when agents are created or updated.";
 }

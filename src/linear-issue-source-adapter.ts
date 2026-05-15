@@ -7,6 +7,7 @@ import type { TaskPriority, TaskRecord, TaskStatus } from "./task-store.ts";
 
 const DEFAULT_LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql";
 const WEBHOOK_REPLAY_WINDOW_MS = 60_000;
+const MAX_ROUTING_BODY_PREVIEW_CHARS = 6000;
 
 export interface LinearIssueSourceAdapterConfig {
   taskQueue: AgentTaskQueue;
@@ -97,6 +98,13 @@ function stableStringify(value: unknown, seen = new WeakSet<object>()): string {
 
 function sha256(value: unknown): string {
   return `sha256:${crypto.createHash("sha256").update(stableStringify(value)).digest("hex")}`;
+}
+
+function bodyPreviewForRouting(value: string | null | undefined): string {
+  const normalized = (value ?? "").replace(/\r\n?/gu, "\n").trim();
+  return normalized.length > MAX_ROUTING_BODY_PREVIEW_CHARS
+    ? `${normalized.slice(0, MAX_ROUTING_BODY_PREVIEW_CHARS)}\n[truncated]`
+    : normalized;
 }
 
 function headerValue(headers: Record<string, string | string[] | undefined>, key: string): string | null {
@@ -514,6 +522,7 @@ export class LinearIssueSourceAdapter {
         },
         title: issue.title,
         bodyDigest: sha256(issue.description),
+        bodyPreview: bodyPreviewForRouting(issue.description),
         labels: issue.labels,
         project,
         issueType: classifyLinearIssueType(issue.labels, issue.title, issue.description),

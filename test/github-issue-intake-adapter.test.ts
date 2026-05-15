@@ -86,6 +86,32 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(queue.listRawTasks().length, 0);
   });
 
+  it("passes bounded issue body preview into routing snapshots", async () => {
+    const queue = makeQueue();
+    const snapshots: any[] = [];
+    const adapter = new GitHubIssueIntakeAdapter({
+      taskQueue: queue,
+      routingControlPlane: {
+        ingestProviderIssue: async (snapshot: any) => {
+          snapshots.push(snapshot);
+          return { taskId: null };
+        },
+      } as any,
+      routingMode: "required",
+      repos: [{ slug: "oxnw/agentrail", defaultBranch: "main" }],
+    });
+
+    await adapter.ingest({
+      issueNumber: 12,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/12",
+      issueTitle: "Requires routing",
+      body: "Detailed login failure report",
+      repository: { owner: "oxnw", repo: "agentrail" },
+    }, "github-body-preview");
+
+    assert.strictEqual(snapshots[0].bodyPreview, "Detailed login failure report");
+  });
+
   it("returns validation error when issueNumber is missing", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });

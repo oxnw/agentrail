@@ -92,6 +92,8 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.match(readme, /save them into `~\/\.agentrail\/provider\.env`/i);
   assert.doesNotMatch(readme, /Linear should send webhooks to/i);
   assert.match(readme, /Provider secrets stay out of `config\.json`/i);
+  assert.match(readme, /Rules-only routing is enabled/i);
+  assert.match(readme, /labels, repos, projects, and explicit rules only/i);
   assert.match(readme, /AgentRail can connect more repos later with `agentrail repo add`/i);
   assert.match(readme, /--repo "\$PWD"/);
   assert.doesNotMatch(readme, /task sources/i);
@@ -113,6 +115,44 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
 
   // Safety rules.
   assert.match(recipe, /Do not expose secrets in logs, prompts, commits, or final summaries\./);
+});
+
+test("writeSetupFiles documents ai-assisted routing", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-setup-ai-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-ai-"));
+  const detectedRepo: DetectedRepoContext = {
+    repoPath: repoRoot,
+    remoteSlug: "oxnw/agentrail",
+    defaultBranch: "main",
+    gitIgnoreHasAgentrail: true,
+  };
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+  });
+
+  const config = createSetupConfig({
+    cwd: repoRoot,
+    detectedRepo,
+    interactionMode: "interactive",
+    acceptedDefaults: false,
+    routingMode: "ai_assist",
+    routingClassifierRunner: "codex",
+    routingClassifierModel: "gpt-5.4-mini",
+  });
+
+  await writeSetupFiles({ homePath, config });
+  const readme = await readFile(path.join(homePath, "README.md"), "utf8");
+
+  assert.match(readme, /use AI to route tasks to the right agents/i);
+  assert.match(readme, /codex/i);
+  assert.match(readme, /gpt-5\.4-mini/i);
+  assert.match(readme, /Require a suitable agent/i);
+  assert.match(readme, /skills or ownership areas are missing/i);
+  assert.match(readme, /retries when agents are created or updated/i);
+  assert.match(readme, /Local AI routing classifier timeout: 180 seconds/i);
+  assert.match(readme, /up to 600 seconds/i);
 });
 
 function escapeForRegExp(value: string): string {

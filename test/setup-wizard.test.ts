@@ -33,6 +33,7 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
     { kind: "input", value: "https://github.com/custom/agentrail" },
     { kind: "input", value: "develop" },
     { kind: "input", value: "http://127.0.0.1:4100" },
+    { kind: "select", value: "rules_only" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
     { kind: "confirm", value: false },
@@ -68,12 +69,13 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   await rm(agentrailHome, { recursive: true, force: true });
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "confirm", "confirm", "confirm", "confirm"]);
+  assert.deepEqual(prompt.calls, ["input", "input", "input", "input", "select", "confirm", "confirm", "confirm", "confirm"]);
   assert.equal(prompt.notes[0]?.title, "Review setup plan");
   assert.match(prompt.notes[0]?.body ?? "", /AgentRail is ready to create its local home and connect your first repo\./);
   assert.match(prompt.notes[0]?.body ?? "", /Setup choices:/);
   assert.match(prompt.notes[0]?.body ?? "", /GitHub repo: https:\/\/github\.com\/custom\/agentrail/);
   assert.match(prompt.notes[0]?.body ?? "", /Provider mode: real/);
+  assert.match(prompt.notes[0]?.body ?? "", /Routing mode: Rules only/);
   assert.match(prompt.notes[0]?.body ?? "", /Local API base URL: http:\/\/127\.0\.0\.1:4100/);
   assert.equal(prompt.messages[0], `AgentRail home: ${agentrailHome}`);
   assert.equal(prompt.messages[1], "Detected repo you can connect: /tmp/agentrail");
@@ -104,6 +106,65 @@ test("runCli starts the guided setup wizard in TTY mode by default", async () =>
   assert.equal(writes[0]?.config.providers.github.mode, "real");
 });
 
+test("runCli asks how AI routing should handle tasks without a suitable agent", async () => {
+  const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = agentrailHome;
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const writes: Array<{ homePath?: string; repoRoot?: string; config: SetupConfig }> = [];
+  const prompt = new ScriptedPromptSession([
+    { kind: "input", value: detectedRepo.repoPath },
+    { kind: "input", value: `https://github.com/${detectedRepo.remoteSlug}` },
+    { kind: "input", value: detectedRepo.defaultBranch },
+    { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "select", value: "ai_assist" },
+    { kind: "select", value: "codex" },
+    { kind: "input", value: "" },
+    { kind: "select", value: "require_suitable_agent" },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: true },
+    { kind: "confirm", value: false },
+    { kind: "confirm", value: false },
+  ]);
+
+  const exitCode = await runCli(["init"], {
+    cwd: detectedRepo.repoPath,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stdout,
+    stderr,
+    detectRepoContext: async () => detectedRepo,
+    createPrompt: () => prompt,
+    writeSetupFiles: async ({ homePath, repoRoot, config }) => {
+      writes.push({ homePath, repoRoot, config });
+      return {
+        writtenPaths: [
+          `${homePath}/config.json`,
+          `${homePath}/agent.env.example`,
+          `${homePath}/server.env`,
+          `${homePath}/README.md`,
+        ],
+      };
+    },
+  });
+
+  if (previousHome === undefined) {
+    delete process.env.AGENTRAIL_HOME;
+  } else {
+    process.env.AGENTRAIL_HOME = previousHome;
+  }
+  await rm(agentrailHome, { recursive: true, force: true });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(stderr.toString(), "");
+  assert.equal(prompt.interactions[7]?.message, "When AI routing cannot find a suitable agent");
+  assert.match(prompt.notes[0]?.body ?? "", /Routing mode: Use AI to route tasks to the right agents/);
+  assert.match(prompt.notes[0]?.body ?? "", /No suitable agent policy: Require a suitable agent/);
+  assert.match(prompt.notes[0]?.body ?? "", /Leave the task unassigned and show what agent skills or ownership areas are missing/i);
+  assert.equal(writes[0]?.config.routing.classifier.fallbackBehavior, "require_suitable_agent");
+});
+
 test("runCli can connect GitHub during init with a hidden token prompt and shows provider follow-up commands", async () => {
   const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const previousHome = process.env.AGENTRAIL_HOME;
@@ -115,6 +176,7 @@ test("runCli can connect GitHub during init with a hidden token prompt and shows
     { kind: "input", value: `https://github.com/${detectedRepo.remoteSlug}` },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "select", value: "rules_only" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
     { kind: "confirm", value: false },
@@ -175,6 +237,7 @@ test("runCli lets the user cancel instead of writing files at the final confirma
     { kind: "input", value: `https://github.com/${detectedRepo.remoteSlug}` },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "select", value: "rules_only" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: false },
   ]);
@@ -217,6 +280,7 @@ test("runCli re-prompts when the GitHub repo input is not a valid owner/repo or 
     { kind: "input", value: "custom/agentrail" },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "select", value: "rules_only" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: false },
   ]);
@@ -263,6 +327,7 @@ test("runCli normalizes .git suffix from GitHub repo input", async () => {
     { kind: "input", value: "https://github.com/custom/agentrail.git" },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "select", value: "rules_only" },
     { kind: "confirm", value: false },
     { kind: "confirm", value: true },
     { kind: "confirm", value: false },
@@ -303,6 +368,7 @@ test("runCli print-only mode does not show file-write next steps", async () => {
     { kind: "input", value: `https://github.com/${detectedRepo.remoteSlug}` },
     { kind: "input", value: detectedRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
+    { kind: "select", value: "rules_only" },
     { kind: "confirm", value: false },
   ]);
   let didWrite = false;

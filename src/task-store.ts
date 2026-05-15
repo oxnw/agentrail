@@ -26,8 +26,32 @@ export interface TaskContext {
 
 export type TaskStatus = "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled";
 export type TaskPriority = "low" | "medium" | "high" | "critical";
-export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "manual_triage";
+export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "classifier_best_effort" | "manual_triage";
 export type CiOverallStatus = "passed" | "failed" | "running" | "queued" | "cancelled" | "skipped" | "neutral" | "error";
+
+export interface TaskProviderIssueSnapshot {
+  provider: "github" | "linear" | "jira" | "gitlab";
+  providerIssueId: string;
+  sourceVersion: string;
+  repository: {
+    provider: "github" | "gitlab" | "linear";
+    owner: string;
+    name: string;
+    defaultBranch: string;
+  };
+  title: string;
+  bodyDigest: string;
+  bodyPreview?: string;
+  labels: string[];
+  project?: string | null;
+  issueType: "bug" | "feature" | "architecture" | "design" | "documentation" | "maintenance" | "unknown";
+  priority: "low" | "medium" | "high" | "critical";
+  ownershipTags: string[];
+  capabilityTags: string[];
+  links: {
+    providerIssue: string;
+  };
+}
 
 export interface TaskBlocker {
   kind: "awaiting_user";
@@ -107,10 +131,18 @@ export interface TaskRecord {
       provider: string;
       confidence: number;
       suggestedTarget: { type: "agent" | "triage_queue"; id: string };
+      taskType?: string;
+      requiredCapabilities?: string[];
+      optionalCapabilities?: string[];
+      ownershipHints?: string[];
+      missingInfo?: string[];
+      unmatchedCapabilities?: string[];
+      evidence?: string[];
     } | null;
     conflictReasons: string[];
   } | null;
   routingConfidence?: number | null;
+  providerIssueSnapshot?: TaskProviderIssueSnapshot | null;
 }
 
 export interface IdempotencyEntry {
@@ -523,6 +555,7 @@ export class TaskStore {
       routingDecisionId: "routingDecisionId" in partial ? (partial.routingDecisionId ?? null) : null,
       routingReason: "routingReason" in partial ? (partial.routingReason ?? null) : null,
       routingConfidence: "routingConfidence" in partial ? (partial.routingConfidence ?? null) : null,
+      providerIssueSnapshot: "providerIssueSnapshot" in partial ? (partial.providerIssueSnapshot ?? null) : null,
     };
     this._tasks.set(id, task);
     this.indexTask(task);

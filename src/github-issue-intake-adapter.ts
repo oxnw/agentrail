@@ -92,6 +92,7 @@ function sha256(value: unknown): string {
 
 const GITHUB_ISSUE_INTAKE_OUTCOMES = new Set(["created", "updated", "unchanged"]);
 const GITHUB_ISSUE_INTAKE_ROUTING_KINDS = new Set(["assigned", "triage", "stored_without_routing"]);
+const MAX_ROUTING_BODY_PREVIEW_CHARS = 6000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -390,6 +391,7 @@ export class GitHubIssueIntakeAdapter {
         },
         title: payload.issueTitle ?? `Issue #${payload.issueNumber}`,
         bodyDigest: sha256(payload.body ?? ""),
+        bodyPreview: bodyPreviewForRouting(payload.body),
         labels: payload.labels ?? [],
         project: repoSlug,
         issueType: classifyIssueType(payload.labels ?? [], payload.issueTitle ?? "", payload.body ?? ""),
@@ -467,6 +469,13 @@ export class GitHubIssueIntakeAdapter {
       routing,
     };
   }
+}
+
+function bodyPreviewForRouting(value: string | null | undefined): string {
+  const normalized = (value ?? "").replace(/\r\n?/gu, "\n").trim();
+  return normalized.length > MAX_ROUTING_BODY_PREVIEW_CHARS
+    ? `${normalized.slice(0, MAX_ROUTING_BODY_PREVIEW_CHARS)}\n[truncated]`
+    : normalized;
 }
 
 function mapIssueStateOntoExistingTask(currentStatus: TaskStatus, issueState?: string | null): TaskStatus {

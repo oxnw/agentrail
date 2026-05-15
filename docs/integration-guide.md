@@ -50,7 +50,7 @@ integration can rely on today:
 | Capability | Current live adapter support | Legacy demo note | Planned MVP control-plane behavior |
 | --- | --- | --- | --- |
 | Intake | **Current:** Provider intake is documented in the routing OpenAPI, but the self-managed server does not yet run a live provider intake worker. | **Legacy:** The removed demo used a pre-seeded task instead of ingesting a provider issue. | **Planned:** The control plane receives or pulls provider issue snapshots and normalizes them into AgentRail task candidates. |
-| Routing | **Current:** Routing rules, dry-run evaluation, assignment, and audit are implemented as operator/admin contracts; `AGENTRAIL_ROUTING_AUDIT_STORE_PATH` persists decisions and evaluation/intake idempotency replay locally. | **Legacy:** The removed demo skipped routing by starting with a pre-assigned task. | **Planned:** Hosted control-plane deployments evaluate deterministic rules, store `routingReason`, wake the selected agent, and expose managed audit history. |
+| Routing | **Current:** Routing rules, optional AI routing, dry-run evaluation, assignment, and audit are implemented as operator/admin contracts; `AGENTRAIL_ROUTING_AUDIT_STORE_PATH` persists decisions and evaluation/intake idempotency replay locally. | **Legacy:** The removed demo skipped routing by starting with a pre-assigned task. | **Planned:** Hosted control-plane deployments evaluate deterministic rules, use AI to route tasks to the right agents where configured, store `routingReason`, wake the selected agent, and expose managed audit history. |
 | Auth | **Current:** Agent API key creation, scopes, rate limits, and route enforcement are implemented on the default server path. | **Legacy:** Placeholder demo keys are no longer valid on the core runtime. | **Planned:** Hosted control-plane deployments issue least-privilege scoped keys per agent and expose operator rotation workflows. |
 | Local/self-hosted setup | **Current:** `agentrail init` writes local `.agentrail` scaffolding and operator bootstrap state, `agentrail agent create` creates scoped local agent credentials/profile/routing, and `agentrail doctor` verifies health, auth, profile/routing state, and `/tasks/mine` visibility. | **Legacy:** The removed demo runtime used a built-in fixture task instead of explicit task-store configuration. | **Planned:** Hosted setup will wrap the same identity/profile/routing concepts in a managed team onboarding service. |
 | Live task store | **Current:** The server reads durable task records from `AGENTRAIL_TASK_STORE_PATH`, can persist routing audit records through `AGENTRAIL_ROUTING_AUDIT_STORE_PATH`, and never falls back to hidden fixture data. | **Legacy:** The removed demo used an in-memory deterministic lifecycle store. | **Planned:** The control plane persists assigned tasks, routing decisions, lifecycle state, and event cursors in managed storage. |
@@ -78,10 +78,22 @@ Current CLI-assisted model:
 
 - `agentrail init` gathers repo/base URL defaults, writes local setup files, and
   creates local operator bootstrap state.
+- During init, choose either rules-only routing or "Use AI to route tasks to the
+  right agents." Rules-only never calls a model; AI routing uses your chosen
+  local runner such as Codex, Claude Code, or Cursor.
+- In AI routing mode, choose whether AgentRail must require a suitable agent
+  and retry waiting tasks after agents change, or assign the closest available
+  match as a recorded best-effort decision.
+- AI routing uses a local runner timeout of 180 seconds by default. If Codex,
+  Claude Code, or Cursor is slow on a machine, raise
+  `routing.classifier.timeoutMs` up to 600 seconds in `config.json`; timeout
+  failures go to triage.
 - `agentrail agent create` creates the scoped agent key, `AgentProfile`, starter
-  routing state, and managed agent env file.
+  routing state, managed agent env file, and optional per-agent model/profile.
 - `agentrail doctor` uses the generated agent key plus operator state to verify
-  that the bootstrap produced visible assigned work.
+  that the bootstrap produced visible assigned work. In AI routing mode it also
+  verifies that the configured local runner is available without spending model
+  tokens.
 
 Why it works this way:
 
@@ -90,8 +102,8 @@ Why it works this way:
   task arrives, so later ownership changes remain data changes instead of code
   edits.
 - Starting with one narrow bootstrap rule keeps the first assignment
-  deterministic while still leaving a safe triage fallback for anything the
-  setup flow did not cover.
+  deterministic while AI routing policy handles anything the setup flow did not
+  cover.
 
 ## Intended End-to-End Flow
 
@@ -99,7 +111,7 @@ The intended production flow is AgentRail-owned:
 
 1. AgentRail pulls or receives provider issue data from providers such as GitHub.
 2. The AgentRail intake router evaluates deterministic assignment rules and,
-   when enabled, a bounded classifier fallback.
+   when enabled, uses AI to route tasks to the right agents.
 3. AgentRail records the assignment and `routingReason`, then wakes the
    assigned agent.
 4. The coding agent asks AgentRail for its next task.
@@ -137,6 +149,9 @@ Use this when you want to run the real server locally with CLI-managed config,
 agent credentials, routing, and provider state. The default path is:
 
 1. Run `agentrail init`.
+   Choose rules-only routing if your issues already carry enough labels,
+   projects, or type metadata. Choose AI routing if you want AgentRail to use AI
+   to route tasks to the right agents.
 2. Start the server with `agentrail server start`.
 3. Create or connect the first local agent with `agentrail agent create` if
    `init` did not already do it interactively.
@@ -192,8 +207,9 @@ claude --append-system-prompt-file /path/to/agentrail/docs/agent-recipes.md
 Codex or Cursor:
 
 - Start the managed runner with `agentrail agent run`.
-- AgentRail waits on task events, starts the coding agent only for actionable
-  code work, and consumes the local report after the child process exits.
+- AgentRail waits on task events, starts the configured coding agent only for
+  actionable code work, and consumes the local report after the child process
+  exits.
 - Do not ask the child LLM to query AgentRail task, CI, or review endpoints.
 
 The agent still edits files in the target repository. AgentRail owns:

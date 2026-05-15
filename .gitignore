@@ -36,6 +36,7 @@ docs/release-sdk-publishing.md
 docs/mvp-completeness-scorecard.md
 docs/security/release-hygiene.md
 docs/testing/*
+!docs/testing/ai-assisted-routing-e2e.md
 docs/architecture/cli-api-inventory.md
 docs/architecture/setup-flow.md
 docs/deployment/*

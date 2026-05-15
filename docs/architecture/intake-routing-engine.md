@@ -14,6 +14,13 @@ first, an optional classifier handles low-coverage cases, and AgentRail writes
 the resulting task assignment plus an auditable routing explanation before
 waking the assigned agent.
 
+The source-available runtime supports two setup modes:
+
+- rules-only routing, where deterministic metadata such as repo, labels,
+  project, issue type, and priority must be enough to route or triage work;
+- AI routing, where AgentRail can use AI to route tasks to the right agents when
+  deterministic rules do not give a clear answer.
+
 Routing rules are configurable. Repo ownership, label mappings, GitHub assignee
 mappings, project ownership, issue type routing, priority handling, and
 capability tags should live in versioned rule-set configuration, not in
@@ -91,6 +98,8 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 - `provider`: `github`, later `linear`, `jira`, or `gitlab`.
 - `providerIssueId`, `repository`, `title`, `bodyDigest`, `labels`,
   `project`, `issueType`, `priority`.
+- `bodyPreview`: a bounded plain-text preview used only for routing
+  classification. It must be truncated before it reaches the classifier.
 - `ownershipTags` and `capabilityTags` derived from provider metadata or repo
   config.
 - `sourceVersion` for idempotent webhook/sync replay.
@@ -100,8 +109,10 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 - `id`, `version`, `status`, `source`, `sourceRef`, `createdBy`, `createdAt`.
 - Ordered `rules`, where each rule has `conditions`, `target`, `priority`,
   `confidence`, and an operator-facing explanation template.
-- `classifier` config: enabled flag, model/provider alias, confidence threshold,
-  maximum candidates, and fallback queue.
+- `classifier` config: enabled flag, local runner alias, model/profile,
+  confidence threshold, timeout, maximum candidates, and fallback queue. The
+  local runner timeout defaults to 180 seconds and is capped at 600 seconds so
+  slow classifiers do not block intake indefinitely.
 
 `AgentProfile`
 
@@ -126,7 +137,8 @@ Triage is an AgentRail queue, not a worker-agent inbox.
 `TaskAssignment`
 
 - `assigneeAgentId` or `triageQueueId`.
-- `assignmentSource`: `deterministic_rule`, `classifier`, or `manual_triage`.
+- `assignmentSource`: `deterministic_rule`, `classifier`,
+  `classifier_best_effort`, or `manual_triage`.
 - `assignedAt`, `assignedBy`, `routingDecisionId`.
 
 ## Routing Order
@@ -139,12 +151,43 @@ Triage is an AgentRail queue, not a worker-agent inbox.
    confidence.
 5. If deterministic rules conflict, send to triage with conflict reasons.
 6. If no deterministic target meets coverage and classifier routing is enabled,
-   call the classifier with bounded fields only: title, body summary, labels,
-   repo, project, issue type, priority, and eligible target descriptors.
-7. If classifier confidence is at or above threshold, assign to the target.
-8. If classifier confidence is below threshold or candidates tie, send to
-   triage.
-9. Persist the decision and routing explanation before emitting task updates.
+   call the local classifier runner with bounded fields only: title,
+   body preview, labels, repo, project, issue type, priority, allowed
+   capability values, and active eligible agent descriptors.
+7. The classifier returns task type, required capabilities, optional
+   capabilities, ownership hints, missing information, confidence, and evidence.
+8. The deterministic routing engine scores active candidates against that
+   classifier output. Hard constraints still apply: repo allowlist, active
+   status, and capacity.
+9. If classifier confidence is at or above threshold and one capable candidate
+   wins, assign with `assignmentSource: "classifier"`.
+10. If confidence is low, required information is missing, no capable agent
+    exists, or candidates are unsafe to distinguish, send to triage.
+11. Persist the decision and routing explanation before emitting task updates.
+
+## Classifier Boundary
+
+The classifier is a bounded helper, not the router. It does not pick an
+authoritative agent by itself, and it does not receive provider tokens, full
+repository contents, logs, private comments, or arbitrary secrets.
+
+The classifier's job is to translate under-described issue text into routing
+signals:
+
+- required capabilities, such as `backend`, `frontend`, `tests`, `docs`,
+  `infra`, `security`, or `api`;
+- optional capabilities that improve ranking but should not block assignment;
+- ownership hints, such as `billing`, `auth`, `ci`, or `integrations`;
+- missing information that should force triage rather than a bad assignment.
+
+The routing engine remains deterministic after classification. It validates
+classifier output against the configured agent capability inventory, drops
+unknown values, applies confidence thresholds, scores active profiles, and
+records the final explanation.
+
+This keeps setup forgiving without pretending every GitHub or Linear issue is
+perfectly written. If the issue does not contain enough information, AI routing
+should make that visible and triage it; it should not fabricate certainty.
 
 ## Follow-Up: Role, Skills, And Ownership Semantics
 

@@ -1832,10 +1832,14 @@ async function handleReplaceRoutingAgentProfile({
       actorId,
       idempotencyKey
     );
+    const routingRetry = await retryWaitingAiRoutedTasksAfterProfileUpdate(routingControlPlane, actorId);
     writeJson(response, 200, {
       data,
       availableActions: ["update"],
-      meta: responseMeta()
+      meta: {
+        ...responseMeta(),
+        routingRetry
+      }
     });
   } catch (error) {
     if (error instanceof TaskLifecycleError) {
@@ -1843,6 +1847,23 @@ async function handleReplaceRoutingAgentProfile({
       return;
     }
     throw error;
+  }
+}
+
+async function retryWaitingAiRoutedTasksAfterProfileUpdate(
+  routingControlPlane: RoutingControlPlane,
+  actorId: string
+) {
+  try {
+    return await routingControlPlane.retryWaitingAiRoutedTasks(actorId);
+  } catch (error) {
+    return {
+      scanned: 0,
+      assigned: 0,
+      unchanged: 0,
+      skipped: 0,
+      error: error instanceof Error ? error.message : String(error)
+    };
   }
 }
 

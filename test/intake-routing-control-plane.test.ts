@@ -11,6 +11,7 @@ import {
   type ProviderIssueSnapshot,
   type RoutingRule,
 } from "../src/intake-routing-control-plane.ts";
+import type { RoutingClassifier, RoutingClassifierOutput } from "../src/routing-classifier.ts";
 import { RoutingAuditStore } from "../src/routing-audit-store.ts";
 import { RoutingRuleStore } from "../src/routing-rule-store.ts";
 import { TaskLifecycleError } from "../src/task-lifecycle-errors.ts";
@@ -19,10 +20,10 @@ import { TaskEventStore } from "../src/task-event-store.ts";
 const FIXED_NOW = new Date("2026-05-05T12:00:00Z");
 const now = () => FIXED_NOW;
 
-function createControlPlane() {
+function createControlPlane(classifier: RoutingClassifier | null = null) {
   const eventStore = new TaskEventStore({ now });
   const taskQueue = new AgentTaskQueue({ now, eventStore });
-  const routing = new RoutingControlPlane({ now, taskQueue });
+  const routing = new RoutingControlPlane({ now, taskQueue, classifier });
   return { routing, taskQueue };
 }
 
@@ -687,7 +688,7 @@ test("RoutingControlPlane falls back to triage when no deterministic rule matche
   assert.match(decision.routingReason.summary, /No deterministic route/i);
 });
 
-test("RoutingControlPlane does not label unimplemented classifier fallback as classifier-routed", async () => {
+test("RoutingControlPlane triages classifier-enabled fallback when no classifier is configured", async () => {
   const { routing, taskQueue } = createControlPlane();
   seedProfile(routing, "agt_cto");
   routing.replaceRuleSet({
@@ -716,13 +717,308 @@ test("RoutingControlPlane does not label unimplemented classifier fallback as cl
 
   const decision = await routing.ingestProviderIssue(makeSnapshot({ issueType: "documentation" }), "route_classifier_enabled_no_route");
 
-  assert.equal(decision.outcome, "no_route");
+  assert.equal(decision.outcome, "triage");
   assert.equal(decision.assignment.assignmentSource, "manual_triage");
-  assert.equal(decision.routingReason.classifier, null);
+  assert.equal(decision.routingReason.classifier?.provider, "internal-router");
+  assert.deepEqual(decision.routingReason.conflictReasons, ["classifier_unavailable"]);
   assert.ok(decision.taskId);
 
   const stored = taskQueue.getRawTask(decision.taskId!);
   assert.equal(stored?.assignmentSource, "manual_triage");
+});
+
+test("RoutingControlPlane assigns with classifier output when deterministic rules do not match", async () => {
+  const classifierOutput: RoutingClassifierOutput = {
+    taskType: "bugfix",
+    requiredCapabilities: ["auth", "typescript"],
+    optionalCapabilities: ["tests"],
+    ownershipHints: ["login"],
+    missingInfo: [],
+    unmatchedCapabilities: [],
+    confidence: 0.92,
+    evidence: ["Issue mentions duplicate login sessions."],
+  };
+  const classifier: RoutingClassifier = {
+    async classify(input) {
+      assert.equal(input.snapshot.bodyPreview, "Login double-click creates two sessions.");
+      assert.equal(input.candidates.some(candidate => candidate.agentId === "agt_auth"), true);
+      return classifierOutput;
+    },
+  };
+  const { routing, taskQueue } = createControlPlane(classifier);
+  seedProfile(routing, "agt_auth", {
+    capabilityTags: ["auth", "typescript", "tests"],
+    ownershipTags: ["login"],
+  });
+  seedRuleSet(routing, [
+    {
+      id: "rule_docs_only",
+      name: "Docs ownership",
+      enabled: true,
+      priority: 10,
+      conditions: { issueTypes: ["documentation"] },
+      target: { type: "agent", id: "agt_auth" },
+      confidence: 0.5,
+      explanation: "Docs only.",
+    },
+  ]);
+  routing.replaceRuleSet({
+    sourceRef: "AGEA-99",
+    changeReason: "enable classifier",
+    rules: [],
+    classifier: {
+      enabled: true,
+      provider: "local_runner",
+      runner: "codex",
+      model: "gpt-5.4-mini",
+      confidenceThreshold: 0.8,
+      maxCandidates: 5,
+      fallbackTriageQueueId: "triage_engineering",
+      fallbackBehavior: "triage",
+      timeoutMs: 30_000,
+    },
+  }, "agt_router", "idemp_classifier_success");
+
+  const decision = await routing.ingestProviderIssue(makeSnapshot({
+    issueType: "bug",
+    title: "Duplicate login session",
+    bodyPreview: "Login double-click creates two sessions.",
+    capabilityTags: [],
+  }), "route_classifier_success");
+
+  assert.equal(decision.outcome, "assigned");
+  assert.equal(decision.assignment.assignmentSource, "classifier");
+  assert.equal(decision.assignment.assigneeAgentId, "agt_auth");
+  assert.deepEqual(decision.routingReason.classifier?.requiredCapabilities, ["auth", "typescript"]);
+  assert.equal(decision.routingReason.classifier?.suggestedTarget.id, "agt_auth");
+
+  const stored = taskQueue.getRawTask(decision.taskId!);
+  assert.equal(stored?.assignmentSource, "classifier");
+  assert.equal(stored?.routingReason?.classifier?.taskType, "bugfix");
+  assert.equal((stored as any)?.providerIssueSnapshot?.bodyPreview, "Login double-click creates two sessions.");
+});
+
+test("RoutingControlPlane triages low-confidence classifier output", async () => {
+  const classifier: RoutingClassifier = {
+    async classify() {
+      return {
+        taskType: "unknown",
+        requiredCapabilities: ["api-design"],
+        optionalCapabilities: [],
+        ownershipHints: [],
+        missingInfo: [],
+        unmatchedCapabilities: [],
+        confidence: 0.41,
+        evidence: ["Issue is vague."],
+      };
+    },
+  };
+  const { routing } = createControlPlane(classifier);
+  seedProfile(routing, "agt_cto");
+  routing.replaceRuleSet({
+    sourceRef: "AGEA-99",
+    changeReason: "enable classifier",
+    rules: [],
+    classifier: {
+      enabled: true,
+      provider: "local_runner",
+      confidenceThreshold: 0.8,
+      maxCandidates: 3,
+      fallbackTriageQueueId: "triage_engineering",
+    },
+  }, "agt_router", "idemp_classifier_low_confidence");
+
+  const decision = await routing.ingestProviderIssue(makeSnapshot({ issueType: "documentation" }), "route_classifier_low_confidence");
+
+  assert.equal(decision.outcome, "triage");
+  assert.equal(decision.assignment.assignmentSource, "manual_triage");
+  assert.deepEqual(decision.routingReason.conflictReasons, ["classifier_low_confidence"]);
+});
+
+test("RoutingControlPlane triages classifier output with unmatched capabilities", async () => {
+  const classifier: RoutingClassifier = {
+    async classify() {
+      return {
+        taskType: "feature",
+        requiredCapabilities: [],
+        optionalCapabilities: ["tests"],
+        ownershipHints: ["iOS", "SwiftUI"],
+        missingInfo: [],
+        unmatchedCapabilities: ["iOS", "SwiftUI"],
+        confidence: 0.92,
+        evidence: ["Issue asks for native iOS work."],
+      };
+    },
+  };
+  const { routing } = createControlPlane(classifier);
+  seedProfile(routing, "agt_cto", {
+    capabilityTags: ["api-design", "tests"],
+  });
+  routing.replaceRuleSet({
+    sourceRef: "AGEA-99",
+    changeReason: "enable classifier",
+    rules: [],
+    classifier: {
+      enabled: true,
+      provider: "local_runner",
+      confidenceThreshold: 0.8,
+      maxCandidates: 3,
+      fallbackTriageQueueId: "triage_engineering",
+    },
+  }, "agt_router", "idemp_classifier_unmatched_capabilities");
+
+  const decision = await routing.ingestProviderIssue(makeSnapshot({ issueType: "feature" }), "route_classifier_unmatched_capabilities");
+
+  assert.equal(decision.outcome, "triage");
+  assert.equal(decision.assignment.assignmentSource, "manual_triage");
+  assert.deepEqual(decision.routingReason.conflictReasons, [
+    "classifier_unmatched_capabilities",
+    "classifier_no_required_capabilities",
+  ]);
+  assert.deepEqual(decision.routingReason.classifier?.unmatchedCapabilities, ["iOS", "SwiftUI"]);
+});
+
+test("RoutingControlPlane best-effort assigns closest agent when configured", async () => {
+  const classifier: RoutingClassifier = {
+    async classify() {
+      return {
+        taskType: "feature",
+        requiredCapabilities: [],
+        optionalCapabilities: ["tests"],
+        ownershipHints: ["iOS", "SwiftUI"],
+        missingInfo: [],
+        unmatchedCapabilities: ["iOS", "SwiftUI"],
+        confidence: 0.92,
+        evidence: ["Issue asks for native iOS work."],
+      };
+    },
+  };
+  const { routing } = createControlPlane(classifier);
+  seedProfile(routing, "agt_backend", {
+    capabilityTags: ["api-design", "tests"],
+    ownershipTags: ["backend"],
+  });
+  seedProfile(routing, "agt_docs", {
+    capabilityTags: ["documentation"],
+    ownershipTags: ["docs"],
+  });
+  routing.replaceRuleSet({
+    sourceRef: "AGEA-99",
+    changeReason: "enable classifier best-effort",
+    rules: [],
+    classifier: {
+      enabled: true,
+      provider: "local_runner",
+      confidenceThreshold: 0.8,
+      maxCandidates: 3,
+      fallbackTriageQueueId: "triage_engineering",
+      fallbackBehavior: "assign_closest_match",
+    },
+  }, "agt_router", "idemp_classifier_best_effort");
+
+  const decision = await routing.ingestProviderIssue(makeSnapshot({ issueType: "feature" }), "route_classifier_best_effort");
+
+  assert.equal(decision.outcome, "assigned");
+  assert.equal(decision.assignment.assignmentSource, "classifier_best_effort");
+  assert.equal(decision.assignment.assigneeAgentId, "agt_backend");
+  assert.equal(decision.routingReason.conflictReasons.includes("classifier_best_effort"), true);
+  assert.equal(decision.routingReason.classifier?.suggestedTarget.id, "agt_backend");
+});
+
+test("RoutingControlPlane triages classifier output without required capabilities", async () => {
+  const classifier: RoutingClassifier = {
+    async classify() {
+      return {
+        taskType: "unknown",
+        requiredCapabilities: [],
+        optionalCapabilities: ["tests"],
+        ownershipHints: [],
+        missingInfo: [],
+        unmatchedCapabilities: [],
+        confidence: 0.91,
+        evidence: ["Classifier did not find a concrete required capability."],
+      };
+    },
+  };
+  const { routing } = createControlPlane(classifier);
+  seedProfile(routing, "agt_cto", {
+    capabilityTags: ["api-design", "tests"],
+  });
+  routing.replaceRuleSet({
+    sourceRef: "AGEA-99",
+    changeReason: "enable classifier",
+    rules: [],
+    classifier: {
+      enabled: true,
+      provider: "local_runner",
+      confidenceThreshold: 0.8,
+      maxCandidates: 3,
+      fallbackTriageQueueId: "triage_engineering",
+    },
+  }, "agt_router", "idemp_classifier_no_required_capabilities");
+
+  const decision = await routing.ingestProviderIssue(makeSnapshot({ issueType: "maintenance" }), "route_classifier_no_required_capabilities");
+
+  assert.equal(decision.outcome, "triage");
+  assert.equal(decision.assignment.assignmentSource, "manual_triage");
+  assert.deepEqual(decision.routingReason.conflictReasons, ["classifier_no_required_capabilities"]);
+});
+
+test("RoutingControlPlane retries waiting AI-routed tasks after an agent profile becomes suitable", async () => {
+  const classifier: RoutingClassifier = {
+    async classify(input) {
+      assert.equal(input.candidates.some(candidate => candidate.agentId === "agt_mobile"), true);
+      return {
+        taskType: "feature",
+        requiredCapabilities: ["ios", "swiftui"],
+        optionalCapabilities: ["tests"],
+        ownershipHints: ["mobile"],
+        missingInfo: [],
+        unmatchedCapabilities: [],
+        confidence: 0.95,
+        evidence: ["Issue asks for native iOS SwiftUI work."],
+      };
+    },
+  };
+  const { routing, taskQueue } = createControlPlane(classifier);
+  routing.replaceRuleSet({
+    sourceRef: "AGEA-99",
+    changeReason: "enable classifier retry",
+    rules: [],
+    classifier: {
+      enabled: true,
+      provider: "local_runner",
+      confidenceThreshold: 0.8,
+      maxCandidates: 3,
+      fallbackTriageQueueId: "triage_engineering",
+      fallbackBehavior: "require_suitable_agent",
+    },
+  }, "agt_router", "idemp_classifier_retry");
+
+  const first = await routing.ingestProviderIssue(makeSnapshot({
+    issueType: "feature",
+    title: "Build native iOS notification settings screen",
+    bodyPreview: "Build a native iOS SwiftUI screen for notification preferences.",
+    capabilityTags: [],
+  }), "route_classifier_retry_waiting");
+
+  assert.equal(first.outcome, "triage");
+  assert.equal(first.assignment.assignmentSource, "manual_triage");
+  assert.deepEqual(first.routingReason.conflictReasons, ["classifier_no_candidate_agents"]);
+
+  seedProfile(routing, "agt_mobile", {
+    capabilityTags: ["ios", "swiftui", "tests"],
+    ownershipTags: ["mobile"],
+  });
+
+  const retry = await (routing as any).retryWaitingAiRoutedTasks("agt_router");
+
+  assert.equal(retry.scanned, 1);
+  assert.equal(retry.assigned, 1);
+  const stored = taskQueue.getRawTask(first.taskId!);
+  assert.equal(stored?.assigneeAgentId, "agt_mobile");
+  assert.equal(stored?.assignmentSource, "classifier");
+  assert.deepEqual(stored?.availableActions, ["start"]);
 });
 
 test("RoutingControlPlane rejects stale rule set versions during evaluation", async () => {
@@ -1098,6 +1394,52 @@ test("RoutingControlPlane rejects rule sets without classifier config before sto
         },
       ],
     } as any, "agt_router", "idemp_missing_classifier"),
+    (error: any) => error?.statusCode === 400 && error?.code === "validation_error"
+  );
+  assert.equal(routing.getCurrentRuleSet(), null);
+});
+
+test("RoutingControlPlane accepts classifier timeout up to ten minutes", () => {
+  const { routing } = createControlPlane();
+
+  routing.replaceRuleSet({
+    sourceRef: "AGEA-99",
+    changeReason: "allow slow local routing classifier",
+    rules: [],
+    classifier: {
+      enabled: true,
+      provider: "local_runner",
+      runner: "codex",
+      confidenceThreshold: 0.8,
+      maxCandidates: 5,
+      fallbackTriageQueueId: "triage_engineering",
+      fallbackBehavior: "require_suitable_agent",
+      timeoutMs: 600_000,
+    },
+  }, "agt_router", "idemp_classifier_timeout_max");
+
+  assert.equal(routing.getCurrentRuleSet()?.classifier.timeoutMs, 600_000);
+});
+
+test("RoutingControlPlane rejects classifier timeout above ten minutes", () => {
+  const { routing } = createControlPlane();
+
+  assert.throws(
+    () => routing.replaceRuleSet({
+      sourceRef: "AGEA-99",
+      changeReason: "reject overly slow local routing classifier",
+      rules: [],
+      classifier: {
+        enabled: true,
+        provider: "local_runner",
+        runner: "codex",
+        confidenceThreshold: 0.8,
+        maxCandidates: 5,
+        fallbackTriageQueueId: "triage_engineering",
+        fallbackBehavior: "require_suitable_agent",
+        timeoutMs: 600_001,
+      },
+    }, "agt_router", "idemp_classifier_timeout_too_high"),
     (error: any) => error?.statusCode === 400 && error?.code === "validation_error"
   );
   assert.equal(routing.getCurrentRuleSet(), null);

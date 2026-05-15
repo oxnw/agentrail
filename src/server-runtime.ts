@@ -14,6 +14,7 @@ import { RoutingControlPlane } from "./intake-routing-control-plane.ts";
 import { RoutingAuditStore } from "./routing-audit-store.ts";
 import { RoutingRuleStore } from "./routing-rule-store.ts";
 import { ProviderCursorStore } from "./provider-cursor-store.ts";
+import { LocalRunnerRoutingClassifier } from "./routing-classifier.ts";
 import type { ConnectedRepo } from "./cli/agentrail-home.ts";
 import { logNarrative, logOperatorNotice } from "./structured-logger.ts";
 import type { TaskRecord } from "./task-store.ts";
@@ -136,6 +137,7 @@ export function buildRuntime({
     routingAuditStore,
     agentProfileStore,
     routingRuleStore,
+    classifier: new LocalRunnerRoutingClassifier({ now }),
   });
   const githubIssueIntakeAdapter = new GitHubIssueIntakeAdapter({
     taskQueue: agentQueue,

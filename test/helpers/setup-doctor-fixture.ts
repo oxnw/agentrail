@@ -121,6 +121,9 @@ export async function writeDoctorRepo({
   agentApiKey,
   agentId,
   repoAllowlist = ["oxnw/agentrail"],
+  routingMode = "rules_only",
+  routingClassifierRunner = "codex",
+  routingClassifierModel = null,
 }: {
   repoRoot: string;
   homePath?: string;
@@ -128,6 +131,9 @@ export async function writeDoctorRepo({
   agentApiKey: string;
   agentId: string;
   repoAllowlist?: string[];
+  routingMode?: "rules_only" | "ai_assist";
+  routingClassifierRunner?: "codex" | "claude-code" | "cursor" | "custom" | string;
+  routingClassifierModel?: string | null;
 }): Promise<void> {
   const detectedRepo: DetectedRepoContext = {
     repoPath: repoRoot,
@@ -144,6 +150,9 @@ export async function writeDoctorRepo({
     baseUrl,
     providerMode: "disabled",
     repoAllowlist,
+    routingMode,
+    routingClassifierRunner,
+    routingClassifierModel,
   });
 
   await writeSetupFiles({

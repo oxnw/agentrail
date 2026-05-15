@@ -10,6 +10,7 @@ import { AgentAuthStore } from "../src/agent-auth-store.ts";
 import { AgentProfileStore } from "../src/agent-profile-store.ts";
 import { RoutingRuleStore } from "../src/routing-rule-store.ts";
 import { RoutingControlPlane } from "../src/intake-routing-control-plane.ts";
+import type { RoutingClassifier } from "../src/routing-classifier.ts";
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
@@ -31,16 +32,18 @@ function tmpPath(suffix: string) {
 async function setupServer({
   profileStoragePath,
   ruleSetStoragePath,
+  classifier = null,
 }: {
   profileStoragePath?: string;
   ruleSetStoragePath?: string;
+  classifier?: RoutingClassifier | null;
 } = {}) {
   const eventStore = new TaskEventStore({ now });
   const taskQueue = new AgentTaskQueue({ now, eventStore });
   const authStore = new AgentAuthStore({ now });
   const agentProfileStore = new AgentProfileStore({ now, storagePath: profileStoragePath });
   const routingRuleStore = new RoutingRuleStore({ now, storagePath: ruleSetStoragePath });
-  const routingControlPlane = new RoutingControlPlane({ now, taskQueue, agentProfileStore, routingRuleStore });
+  const routingControlPlane = new RoutingControlPlane({ now, taskQueue, agentProfileStore, routingRuleStore, classifier });
 
   const { data: operatorKey } = authStore.createKey({
     agent: { id: "agt_operator", displayName: "Operator", role: "operator", externalIdentities: [] },
@@ -547,6 +550,112 @@ test("POST /operator/setup/verification-task creates a deterministic setup smoke
     const body2 = await res2.json();
     assert.equal(body2.data.taskId, body1.data.taskId);
     assert.equal(body2.data.taskIdentifier, body1.data.taskIdentifier);
+  } finally {
+    server.close();
+  }
+});
+
+test("PUT /operator/routing/agent-profiles/{agentId} retries waiting AI-routed tasks", async () => {
+  const classifier: RoutingClassifier = {
+    async classify(input) {
+      assert.equal(input.candidates.some(candidate => candidate.agentId === "agt_mobile"), true);
+      return {
+        taskType: "feature",
+        requiredCapabilities: ["ios", "swiftui"],
+        optionalCapabilities: ["tests"],
+        ownershipHints: ["mobile"],
+        missingInfo: [],
+        unmatchedCapabilities: [],
+        confidence: 0.95,
+        evidence: ["Issue asks for native iOS SwiftUI work."],
+      };
+    },
+  };
+  const { server, baseUrl, operatorKey, taskQueue } = await setupServer({ classifier });
+  try {
+    const ruleSetRes = await fetch(`${baseUrl}/operator/routing/rule-sets/current`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${operatorKey.apiKey}`,
+        "content-type": "application/json",
+        "idempotency-key": "idemp_ai_retry_rule_set",
+      },
+      body: JSON.stringify({
+        sourceRef: "AGEA-999",
+        changeReason: "enable AI routing retry",
+        rules: [],
+        classifier: {
+          enabled: true,
+          provider: "local_runner",
+          confidenceThreshold: 0.8,
+          maxCandidates: 5,
+          fallbackTriageQueueId: "triage_engineering",
+          fallbackBehavior: "require_suitable_agent",
+        },
+      }),
+    });
+    assert.equal(ruleSetRes.status, 201);
+
+    const intakeRes = await fetch(`${baseUrl}/operator/intake/provider-issues`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${operatorKey.apiKey}`,
+        "content-type": "application/json",
+        "idempotency-key": "idemp_ai_retry_intake",
+      },
+      body: JSON.stringify({
+        provider: "github",
+        providerIssueId: "github:oxnw/agentrail:issues/4242",
+        sourceVersion: "delivery-ai-retry",
+        repository: {
+          provider: "github",
+          owner: "oxnw",
+          name: "agentrail",
+          defaultBranch: "main",
+        },
+        title: "Build native iOS notification settings screen",
+        bodyDigest: "sha256:retry",
+        bodyPreview: "Build a native iOS SwiftUI screen for notification preferences.",
+        labels: [],
+        project: null,
+        issueType: "feature",
+        priority: "medium",
+        ownershipTags: [],
+        capabilityTags: [],
+        links: {
+          providerIssue: "https://github.com/oxnw/agentrail/issues/4242",
+        },
+      }),
+    });
+    assert.equal(intakeRes.status, 202);
+    const intakeJson = await intakeRes.json();
+    assert.equal(intakeJson.data.assignment.assignmentSource, "manual_triage");
+
+    const profileRes = await fetch(`${baseUrl}/operator/routing/agent-profiles/agt_mobile`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${operatorKey.apiKey}`,
+        "content-type": "application/json",
+        "idempotency-key": "idemp_ai_retry_profile",
+      },
+      body: JSON.stringify({
+        displayName: "Mobile Agent",
+        role: "engineer",
+        status: "active",
+        capabilityTags: ["ios", "swiftui", "tests"],
+        ownershipTags: ["mobile"],
+        repoAllowlist: ["oxnw/agentrail"],
+        maxConcurrentTasks: 2,
+        sourceRef: "AGEA-999",
+        changeReason: "add mobile agent",
+      }),
+    });
+    assert.equal(profileRes.status, 200);
+
+    const stored = taskQueue.getRawTask(intakeJson.data.taskId);
+    assert.equal(stored?.assigneeAgentId, "agt_mobile");
+    assert.equal(stored?.assignmentSource, "classifier");
+    assert.deepEqual(stored?.availableActions, ["start"]);
   } finally {
     server.close();
   }
