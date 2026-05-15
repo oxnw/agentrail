@@ -35,7 +35,7 @@ docs/typescript-migration.md
 docs/release-sdk-publishing.md
 docs/mvp-completeness-scorecard.md
 docs/security/release-hygiene.md
-docs/testing/
+docs/testing/*
 docs/architecture/cli-api-inventory.md
 docs/architecture/setup-flow.md
 docs/deployment/*
@@ -59,7 +59,7 @@ index-light.html
 original-index-light.html
 docs/dogfood-setup.md
 docs/cloud.md
-docs/superpowers/
+docs/superpowers/*
 docs/adr/
 ROADMAP.md
 .planning
