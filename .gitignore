@@ -38,6 +38,7 @@ docs/security/release-hygiene.md
 docs/testing/
 docs/architecture/cli-api-inventory.md
 docs/architecture/setup-flow.md
+docs/deployment/*
 
 # Internal release-prep artifacts
 verify-browser.mjs
@@ -63,3 +64,4 @@ docs/adr/
 ROADMAP.md
 .planning
 yc-application-draft.md
+hn-launch-post.md

@@ -84,6 +84,17 @@ test("npm packaging blocks secrets and generated tarballs", async () => {
   assert.deepEqual(packageJson.files, ["bin", "dist", "README.md", "LICENSE"]);
 });
 
+test("root package does not depend on its own published CLI package", async () => {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+  const packageLock = JSON.parse(await readFile("package-lock.json", "utf8"));
+  const packageName = packageJson.name;
+
+  assert.equal(packageJson.dependencies?.[packageName], undefined);
+  assert.equal(packageJson.devDependencies?.[packageName], undefined);
+  assert.equal(packageLock.packages?.[""]?.dependencies?.[packageName], undefined);
+  assert.equal(packageLock.packages?.[`node_modules/${packageName}`], undefined);
+});
+
 test("npm package content guard rejects sensitive file paths", () => {
   assert.deepEqual(findForbiddenPackageFiles([
     "LICENSE",
