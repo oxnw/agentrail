@@ -42,9 +42,81 @@ test("createSetupConfig derives server defaults from repo detection", () => {
   assert.equal(config.providers.github.deliveryMode, "polling");
   assert.equal(config.providers.circleci.deliveryMode, "polling");
   assert.equal(config.providers.linear.deliveryMode, "polling");
+  assert.equal(config.routing.mode, "rules_only");
+  assert.equal(config.routing.classifier.runner, "codex");
+  assert.equal(config.routing.classifier.model, null);
+  assert.equal(config.routing.classifier.confidenceThreshold, 0.8);
+  assert.equal(config.routing.classifier.fallbackBehavior, "require_suitable_agent");
+  assert.equal(config.routing.classifier.timeoutMs, 180_000);
   assert.deepEqual(config.repos.map((repo) => repo.slug), ["oxnw/agentrail"]);
   assert.equal(config.repos[0].defaultBranch, "main");
   assert.equal(config.exports.markdown.enabled, false);
+});
+
+test("createSetupConfig supports ai-assisted routing options", () => {
+  const config = createSetupConfig({
+    cwd: detectedRepo.repoPath,
+    detectedRepo,
+    interactionMode: "interactive",
+    acceptedDefaults: false,
+    routingMode: "ai_assist",
+    routingClassifierRunner: "claude-code",
+    routingClassifierModel: "sonnet",
+    routingConfidenceThreshold: 0.7,
+    routingFallbackBehavior: "assign_closest_match",
+  });
+
+  assert.equal(config.routing.mode, "ai_assist");
+  assert.equal(config.routing.classifier.runner, "claude-code");
+  assert.equal(config.routing.classifier.model, "sonnet");
+  assert.equal(config.routing.classifier.confidenceThreshold, 0.7);
+  assert.equal(config.routing.classifier.fallbackBehavior, "assign_closest_match");
+  assert.equal(config.routing.classifier.timeoutMs, 180_000);
+  assert.match(buildInitCommand(config), /--routing-no-suitable-agent assign-closest-match/);
+});
+
+test("normalizeSetupConfigLike maps legacy AI routing fallback values to require suitable agent", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    routing: {
+      mode: "ai_assist",
+      classifier: {
+        kind: "local_runner",
+        runner: "codex",
+        model: null,
+        confidenceThreshold: 0.8,
+        fallbackBehavior: "triage",
+        timeoutMs: 30_000,
+      },
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.equal(config.routing?.classifier?.fallbackBehavior, "require_suitable_agent");
+  assert.equal(config.routing?.classifier?.timeoutMs, 30_000);
+});
+
+test("normalizeSetupConfigLike fills missing AI routing timeout with the local runner default", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    routing: {
+      mode: "ai_assist",
+      classifier: {
+        kind: "local_runner",
+        runner: "codex",
+        model: null,
+        confidenceThreshold: 0.8,
+        fallbackBehavior: "require_suitable_agent",
+      },
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.equal(config.routing?.classifier?.timeoutMs, 180_000);
 });
 
 test("normalizeSetupConfigLike fills agent run store path for older file configs", () => {

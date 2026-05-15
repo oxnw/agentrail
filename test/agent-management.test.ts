@@ -257,6 +257,7 @@ test("agent create interactive permission preset grants expected scopes", async 
   process.env.AGENTRAIL_HOME = homePath;
   const prompt = new ScriptedPromptSession([
     { kind: "select", value: "codex" },
+    { kind: "input", value: "gpt-test" },
     { kind: "input", value: "Builder Ship" },
     { kind: "select", value: "read_write_ship" },
     { kind: "select", value: "coding_agent" },
@@ -300,6 +301,7 @@ test("agent create interactive permission preset grants expected scopes", async 
   assert.match(stdout.toString(), /GitHub repo: https:\/\/github\.com\/oxnw\/agentrail/);
   const envPath = path.join(homePath, "agents", `${createdMatch[1]}.env`);
   const env = parseEnv(await readFile(envPath, "utf8"));
+  assert.equal(env.AGENTRAIL_AGENT_MODEL, "gpt-test");
   const usage = await getJson(harness.baseUrl, `/agent-api-keys/${env.AGENTRAIL_API_KEY_ID}/usage`, harness.operatorApiKey);
   assert.equal(usage.status, 200);
   assert.deepEqual(usage.json.data.scopes, ["ci:read", "events:read", "reviews:read", "ship:write", "tasks:read", "tasks:write"]);

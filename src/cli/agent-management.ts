@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { SUPPORTED_SCOPES } from "../agent-auth-store.ts";
+import { DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS } from "../routing-classifier-config.ts";
 import { runDoctor } from "./doctor.ts";
 import {
   currentAgentEnvPathForHome,
@@ -33,6 +34,7 @@ export interface AgentCreateFlags {
   name?: string;
   role?: string;
   runner?: string;
+  model?: string;
   repoAllowlist?: string[];
   capabilityTags?: string[];
   ownershipTags?: string[];
@@ -71,6 +73,16 @@ interface SetupConfigLike {
   server?: {
     baseUrl?: string;
   };
+  routing?: {
+    mode?: string;
+    classifier?: {
+      runner?: string;
+      model?: string | null;
+      confidenceThreshold?: number;
+      fallbackBehavior?: string;
+      timeoutMs?: number;
+    };
+  };
   repos?: ConnectedRepo[];
 }
 
@@ -80,6 +92,7 @@ interface AgentEnvValues {
   AGENTRAIL_API_KEY_ID?: string;
   AGENTRAIL_AGENT_ID?: string;
   AGENTRAIL_AGENT_RUNNER?: string;
+  AGENTRAIL_AGENT_MODEL?: string;
   AGENTRAIL_MAX_CONCURRENT_TASKS?: string;
   AGENTRAIL_REPO_ALLOWLIST?: string;
   AGENTRAIL_AGENT_RECIPE_PATH?: string;
@@ -91,6 +104,7 @@ interface AgentCommandInputs {
   baseUrl: string;
   setupApiKey: string;
   runner: string;
+  model: string | null;
   agentId: string;
   name: string;
   role: string;
@@ -129,9 +143,13 @@ interface RuleSetBody {
     classifier?: {
       enabled: boolean;
       provider: string;
+      runner?: string;
+      model?: string | null;
       confidenceThreshold: number;
       maxCandidates: number;
       fallbackTriageQueueId: string;
+      fallbackBehavior?: string;
+      timeoutMs?: number;
     };
   };
 }
@@ -307,6 +325,9 @@ function parseAgentCommandArgs(argv: string[]): AgentCreateFlags {
       case "--runner":
         flags.runner = nextValue(argv, ++index, arg);
         break;
+      case "--model":
+        flags.model = nextValue(argv, ++index, arg);
+        break;
       case "--repo-allowlist":
         flags.repoAllowlist = parseCsv(nextValue(argv, ++index, arg));
         break;
@@ -465,6 +486,7 @@ export async function runAgentCreate(argv: string[], options: RunAgentCommandOpt
     const routingResult = await ensureManagedRouting({
       baseUrl: inputs.baseUrl,
       setupApiKey: inputs.setupApiKey,
+      setupConfig,
       profile: inputs,
       stdout,
       allowMutationWhenExisting: inputs.configureRouting,
@@ -515,6 +537,7 @@ export async function runAgentCreate(argv: string[], options: RunAgentCommandOpt
       apiKeyId: createdKeyId ?? "",
       agentId: inputs.agentId,
       runner: inputs.runner,
+      model: inputs.model,
       maxConcurrentTasks: inputs.maxConcurrentTasks,
       repoAllowlist: inputs.repoAllowlist,
       instructionsPath: inputs.instructionsPath,
@@ -530,7 +553,7 @@ export async function runAgentCreate(argv: string[], options: RunAgentCommandOpt
     if (inputs.repoAllowlist[0]) {
       doctorArgs.push("--repo", inputs.repoAllowlist[0]);
     }
-    if (!routingResult.mutated) {
+    if (!routingResult.mutated || setupConfig?.routing?.mode === "ai_assist") {
       doctorArgs.push("--skip-routing-check");
     }
     const doctorExitCode = await runDoctor(doctorArgs, {
@@ -675,6 +698,7 @@ export async function runAgentUpdate(argv: string[], options: RunAgentCommandOpt
       setupApiKey,
       currentEnvPath: currentEnv.path,
       currentRunner: currentEnv.values.AGENTRAIL_AGENT_RUNNER ?? "codex",
+      currentModel: currentEnv.values.AGENTRAIL_AGENT_MODEL ?? null,
       currentInstructionsPath: currentEnv.values.AGENTRAIL_AGENT_RECIPE_PATH ?? defaultInstructionsPath(homePath),
       currentProfile,
       currentUsage,
@@ -731,6 +755,7 @@ export async function runAgentUpdate(argv: string[], options: RunAgentCommandOpt
     const routingResult = await ensureManagedRouting({
       baseUrl,
       setupApiKey,
+      setupConfig,
       profile: inputs,
       stdout,
       allowMutationWhenExisting: inputs.configureRouting,
@@ -744,6 +769,7 @@ export async function runAgentUpdate(argv: string[], options: RunAgentCommandOpt
       apiKeyId: rotated.json?.data?.id ?? "",
       agentId,
       runner: inputs.runner,
+      model: inputs.model,
       maxConcurrentTasks: inputs.maxConcurrentTasks,
       repoAllowlist: inputs.repoAllowlist,
       instructionsPath: inputs.instructionsPath,
@@ -760,7 +786,7 @@ export async function runAgentUpdate(argv: string[], options: RunAgentCommandOpt
     });
 
     const doctorArgs = ["--env-file", path.relative(cwd, envFilePath), "--setup-api-key", setupApiKey];
-    if (!routingResult.mutated) {
+    if (!routingResult.mutated || setupConfig?.routing?.mode === "ai_assist") {
       doctorArgs.push("--skip-routing-check");
     }
     const doctorExitCode = await runDoctor(doctorArgs, { cwd, stdout, stderr });
@@ -833,6 +859,14 @@ async function collectCreateInputs({
     })),
     defaultValue: "codex",
   }) : "codex");
+  const model = flags.model !== undefined
+    ? normalizeOptionalModel(flags.model)
+    : prompt
+      ? normalizeOptionalModel(await prompt.input({
+          message: "Runner model/profile",
+          defaultValue: "",
+        }))
+      : null;
   await describeCreateStep(prompt, "Agent name", "This is the name shown in AgentRail when this agent receives or updates work.");
   const name = flags.name ?? (prompt ? await prompt.input({
     message: "Agent name",
@@ -889,6 +923,7 @@ async function collectCreateInputs({
     baseUrl,
     setupApiKey,
     runner,
+    model,
     agentId,
     name,
     role,
@@ -927,6 +962,7 @@ async function collectUpdateInputs({
   setupApiKey,
   currentEnvPath,
   currentRunner,
+  currentModel,
   currentInstructionsPath,
   currentProfile,
   currentUsage,
@@ -940,11 +976,20 @@ async function collectUpdateInputs({
   setupApiKey: string;
   currentEnvPath: string | null;
   currentRunner: string;
+  currentModel: string | null;
   currentInstructionsPath: string;
   currentProfile: ProfileBody;
   currentUsage: NonNullable<UsageBody["data"]>;
 }) {
   const runner = flags.runner ?? currentRunner;
+  const model = flags.model !== undefined
+    ? normalizeOptionalModel(flags.model)
+    : prompt
+      ? normalizeOptionalModel(await prompt.input({
+          message: "Runner model/profile",
+          defaultValue: currentModel ?? "",
+        }))
+      : currentModel;
   const name = flags.name ?? (prompt ? await prompt.input({
     message: "Display name",
     defaultValue: currentProfile.displayName ?? currentUsage.agent?.displayName ?? "Agent",
@@ -971,6 +1016,7 @@ async function collectUpdateInputs({
     name,
     role,
     runner,
+    model,
     repoPath: currentProfile.repoAllowlist?.[0]
       ? findRepoPath(setupConfig?.repos ?? [], currentProfile.repoAllowlist[0]) ?? repo.repoPath
       : repo.repoPath,
@@ -1011,6 +1057,7 @@ async function collectUpdateInputs({
 async function ensureManagedRouting({
   baseUrl,
   setupApiKey,
+  setupConfig,
   profile,
   stdout,
   allowMutationWhenExisting,
@@ -1019,6 +1066,7 @@ async function ensureManagedRouting({
 }: {
   baseUrl: string;
   setupApiKey: string;
+  setupConfig?: SetupConfigLike | null;
   profile: {
     agentId: string;
     repoAllowlist: string[];
@@ -1042,11 +1090,12 @@ async function ensureManagedRouting({
   const existingRules = currentRuleSet.status === 200 ? (currentRuleSet.json?.data?.rules ?? []) : [];
   if (currentRuleSet.status === 404) {
     const managedRule = buildManagedRoutingRule(profile);
+    const classifier = defaultClassifier(setupConfig);
     const body = {
       sourceRef: "agentrail-cli:agent-management",
       changeReason: "Create initial managed routing rule for agent.",
-      rules: [managedRule],
-      classifier: defaultClassifier(),
+      rules: classifier.enabled ? [] : [managedRule],
+      classifier,
     };
     await requestJson({
       baseUrl,
@@ -1078,7 +1127,7 @@ async function ensureManagedRouting({
       baseUrl,
       setupApiKey,
       rules: nextRules,
-      classifier: currentRuleSet.json?.data?.classifier ?? defaultClassifier(),
+      classifier: currentRuleSet.json?.data?.classifier ?? defaultClassifier(setupConfig),
       agentId: profile.agentId,
       changeReason: "Update managed routing rule for agent.",
     });
@@ -1090,7 +1139,7 @@ async function ensureManagedRouting({
       baseUrl,
       setupApiKey,
       rules: [...existingRules, managedRule],
-      classifier: currentRuleSet.json?.data?.classifier ?? defaultClassifier(),
+      classifier: currentRuleSet.json?.data?.classifier ?? defaultClassifier(setupConfig),
       agentId: profile.agentId,
       changeReason: "Add managed routing rule for agent.",
     });
@@ -1178,14 +1227,37 @@ function managedRuleIdFor(agentId: string): string {
   return `cli_agent_${agentId}`;
 }
 
-function defaultClassifier() {
+function defaultClassifier(setupConfig?: SetupConfigLike | null) {
+  const routing = setupConfig?.routing;
+  if (routing?.mode === "ai_assist") {
+    return {
+      enabled: true,
+      provider: "local_runner",
+      runner: routing.classifier?.runner ?? "codex",
+      model: normalizeOptionalModel(routing.classifier?.model),
+      confidenceThreshold: typeof routing.classifier?.confidenceThreshold === "number" ? routing.classifier.confidenceThreshold : 0.8,
+      maxCandidates: 5,
+      fallbackTriageQueueId: "triage_default",
+      fallbackBehavior: normalizeRoutingFallbackBehaviorLike(routing.classifier?.fallbackBehavior),
+      timeoutMs: Number.isInteger(routing.classifier?.timeoutMs) ? routing.classifier!.timeoutMs : DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS,
+    };
+  }
   return {
     enabled: false,
-    provider: "internal-router",
+    provider: "disabled",
     confidenceThreshold: 0.8,
     maxCandidates: 3,
     fallbackTriageQueueId: "triage_default",
+    fallbackBehavior: "require_suitable_agent",
   };
+}
+
+function normalizeRoutingFallbackBehaviorLike(value: unknown): "require_suitable_agent" | "assign_closest_match" {
+  const normalized = typeof value === "string" ? value.trim().replace(/-/gu, "_") : "";
+  if (normalized === "assign_closest_match") {
+    return "assign_closest_match";
+  }
+  return "require_suitable_agent";
 }
 
 function routingRuleSetIdempotencyKey(agentId: string, payload: unknown): string {
@@ -1252,6 +1324,7 @@ function buildAgentEnvValues({
   apiKeyId,
   agentId,
   runner,
+  model,
   maxConcurrentTasks,
   repoAllowlist,
   instructionsPath,
@@ -1261,6 +1334,7 @@ function buildAgentEnvValues({
   apiKeyId: string;
   agentId: string;
   runner: string;
+  model: string | null;
   maxConcurrentTasks: number;
   repoAllowlist: string[];
   instructionsPath: string;
@@ -1271,10 +1345,16 @@ function buildAgentEnvValues({
     AGENTRAIL_API_KEY_ID: apiKeyId,
     AGENTRAIL_AGENT_ID: agentId,
     AGENTRAIL_AGENT_RUNNER: runner,
+    ...(model ? { AGENTRAIL_AGENT_MODEL: model } : {}),
     AGENTRAIL_MAX_CONCURRENT_TASKS: String(validateCapacity(maxConcurrentTasks)),
     AGENTRAIL_REPO_ALLOWLIST: repoAllowlist.join(","),
     AGENTRAIL_AGENT_RECIPE_PATH: instructionsPath,
   };
+}
+
+function normalizeOptionalModel(value: string | null | undefined): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 async function writeAgentEnvFileAtPath(filePath: string, values: Record<string, string>) {
@@ -1616,11 +1696,12 @@ async function showCreateReview({
     body: [
       `- Agent name: ${inputs.name}`,
       `- Runner: ${runnerDefinition.label}`,
+      `- Runner model/profile: ${inputs.model ?? "runner default"}`,
       `- Role: ${describeRole(inputs.role)}`,
       ...(describeRoleHint(inputs.role) ? [`  ${describeRoleHint(inputs.role)}`] : []),
       `- Permissions: ${inputs.scopes.join(", ")}`,
       `- GitHub repo: ${inputs.primaryRepoUrl}`,
-      `- Skills: ${showOptionalList(inputs.capabilityTags)}`,
+      `- Capabilities: ${showOptionalList(inputs.capabilityTags)}`,
       `- Ownership areas: ${showOptionalList(inputs.ownershipTags)}`,
       `- Task capacity: ${inputs.maxConcurrentTasks}`,
       `- Instructions file: ${inputs.instructionsPath}`,
@@ -1989,6 +2070,7 @@ function renderAgentCreateUsage(): string {
     "  --env-file <path>",
     "  --name <display name>",
     "  --runner <codex|claude-code|cursor|devin|custom>",
+    "  --model <model-or-profile>",
     "  --permission-preset <read_only|read_write|read_write_ship|advanced>",
     "  --scopes <comma,separated>",
     "  --repo-allowlist <owner/repo,...>",

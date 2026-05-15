@@ -26,6 +26,7 @@ interface AgentEnvValues {
   AGENTRAIL_API_KEY?: string;
   AGENTRAIL_AGENT_ID?: string;
   AGENTRAIL_AGENT_RUNNER?: string;
+  AGENTRAIL_AGENT_MODEL?: string;
   AGENTRAIL_RUN_ID?: string;
   AGENTRAIL_MAX_CONCURRENT_TASKS?: string;
   AGENTRAIL_REPO_ALLOWLIST?: string;
@@ -81,6 +82,7 @@ interface AgentReportFlags {
 
 interface LaunchRunnerParams {
   runner: string;
+  model: string | null;
   repoPath: string;
   worktreePath: string;
   prompt: string;
@@ -422,6 +424,7 @@ async function executeAgentRun({
   const agentId = flags.agentId ?? envState.values.AGENTRAIL_AGENT_ID ?? null;
   const apiKey = envState.values.AGENTRAIL_API_KEY ?? null;
   const runner = envState.values.AGENTRAIL_AGENT_RUNNER ?? "codex";
+  const model = normalizeOptionalModel(envState.values.AGENTRAIL_AGENT_MODEL);
   if (!agentId || !apiKey) {
     stderr.write("agentrail agent run requires AGENTRAIL_AGENT_ID and AGENTRAIL_API_KEY in the agent env file.\n");
     return 1;
@@ -482,6 +485,7 @@ async function executeAgentRun({
         run = await executeSingleTaskRun({
           agentId,
           runner,
+          model,
           repo,
           worktreeRoot,
           homePath,
@@ -538,6 +542,7 @@ async function executeAgentRun({
 async function executeSingleTaskRun({
   agentId,
   runner,
+  model,
   repo,
   worktreeRoot,
   homePath,
@@ -555,6 +560,7 @@ async function executeSingleTaskRun({
 }: {
   agentId: string;
   runner: string;
+  model: string | null;
   repo: ConnectedRepo;
   worktreeRoot: string;
   homePath: string;
@@ -606,7 +612,7 @@ async function executeSingleTaskRun({
     updatedAt: timestamp,
     exitCode: null,
     summary: null,
-    launch: defaultLaunchMetadata(runner, worktreePath, managedRecipePath, runDir),
+    launch: defaultLaunchMetadata(runner, model, worktreePath, managedRecipePath, runDir),
   });
 
   if (markdownEnabled) {
@@ -630,6 +636,7 @@ async function executeSingleTaskRun({
 
     const result = await launchRunner({
       runner,
+      model,
       repoPath: repo.path,
       worktreePath,
       prompt,
@@ -644,6 +651,7 @@ async function executeSingleTaskRun({
           AGENTRAIL_AGENT_ID: agentId,
           AGENTRAIL_RUN_ID: runId,
           AGENTRAIL_AGENT_RUNNER: runner,
+          ...(model ? { AGENTRAIL_AGENT_MODEL: model } : {}),
           AGENTRAIL_AGENT_RECIPE_PATH: managedRecipePath,
           AGENTRAIL_HOME: homePath,
           AGENTRAIL_TASK_ID: task.id,
@@ -1622,11 +1630,14 @@ function buildBranchName(agentId: string, taskId: string): string {
   return `agentrail/${sanitizedAgentId}/${sanitizedTaskId}`;
 }
 
-function defaultLaunchMetadata(runner: string, worktreePath: string, recipePath: string, runDir: string) {
+function defaultLaunchMetadata(runner: string, model: string | null, worktreePath: string, recipePath: string, runDir: string) {
   if (runner === "claude-code") {
+    const args = ["--print", "--output-format", "stream-json"];
+    if (model) args.push("--model", model);
+    args.push("--append-system-prompt-file", recipePath);
     return {
       executable: "claude",
-      args: ["--print", "--output-format", "stream-json", "--append-system-prompt-file", recipePath],
+      args,
     };
   }
   if (runner === "cursor") {
@@ -1637,11 +1648,11 @@ function defaultLaunchMetadata(runner: string, worktreePath: string, recipePath:
   }
   return {
     executable: "codex",
-    args: codexLaunchArgs(worktreePath, runDir),
+    args: codexLaunchArgs(worktreePath, runDir, model),
   };
 }
 
-function codexLaunchArgs(worktreePath: string, runDir: string): string[] {
+function codexLaunchArgs(worktreePath: string, runDir: string, model: string | null = null): string[] {
   return [
     "-a",
     "never",
@@ -1655,6 +1666,7 @@ function codexLaunchArgs(worktreePath: string, runDir: string): string[] {
     worktreePath,
     "--add-dir",
     runDir,
+    ...(model ? ["--model", model] : []),
     "--json",
     "-",
   ];
@@ -1737,6 +1749,9 @@ async function defaultLaunchRunner(params: LaunchRunnerParams): Promise<LaunchRu
 
   if (params.runner === "claude-code") {
     const args = ["--print", "--output-format", "stream-json"];
+    if (params.model) {
+      args.push("--model", params.model);
+    }
     if (params.recipePath) {
       args.push("--append-system-prompt-file", params.recipePath);
     }
@@ -1753,7 +1768,7 @@ async function defaultLaunchRunner(params: LaunchRunnerParams): Promise<LaunchRu
 
   return await runChildProcess({
     executable: "codex",
-    args: codexLaunchArgs(params.worktreePath, path.dirname(params.handoffPath ?? params.logPath)),
+    args: codexLaunchArgs(params.worktreePath, path.dirname(params.handoffPath ?? params.logPath), params.model),
     prompt: params.prompt,
     cwd: params.worktreePath,
     logPath: params.logPath,
@@ -2021,6 +2036,11 @@ function parseAgentReportArgs(argv: string[]): AgentReportFlags {
 function parseCsv(value: string | undefined): string[] {
   if (!value) return [];
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeOptionalModel(value: string | null | undefined): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function parsePositiveInteger(value: string, flag: string): number {

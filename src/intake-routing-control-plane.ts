@@ -1,9 +1,14 @@
 import crypto from "node:crypto";
 
 import type { AgentTaskQueue } from "./agent-task-queue.ts";
+import type { RoutingClassifier, RoutingClassifierCandidate, RoutingClassifierOutput } from "./routing-classifier.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
-import type { TaskAssignmentSource, TaskRecord } from "./task-store.ts";
+import type { TaskAssignmentSource, TaskProviderIssueSnapshot, TaskRecord } from "./task-store.ts";
 import type { TaskSource } from "./task-source.ts";
+import {
+  MAX_ROUTING_CLASSIFIER_TIMEOUT_MS,
+  MIN_ROUTING_CLASSIFIER_TIMEOUT_MS,
+} from "./routing-classifier-config.ts";
 
 export interface ProviderRepository {
   provider: "github" | "gitlab" | "linear";
@@ -19,6 +24,7 @@ export interface ProviderIssueSnapshot {
   repository: ProviderRepository;
   title: string;
   bodyDigest: string;
+  bodyPreview?: string;
   labels: string[];
   project?: string | null;
   issueType: "bug" | "feature" | "architecture" | "design" | "documentation" | "maintenance" | "unknown";
@@ -86,10 +92,21 @@ export interface RoutingRule {
 
 export interface ClassifierConfig {
   enabled: boolean;
-  provider: string;
+  provider: "disabled" | "local_runner" | string;
+  runner?: "codex" | "claude-code" | "cursor" | "custom" | string;
+  model?: string | null;
   confidenceThreshold: number;
   maxCandidates: number;
   fallbackTriageQueueId: string;
+  fallbackBehavior?: "require_suitable_agent" | "assign_closest_match" | "triage" | "clarification";
+  timeoutMs?: number;
+}
+
+export interface RoutingRetryResult {
+  scanned: number;
+  assigned: number;
+  unchanged: number;
+  skipped: number;
 }
 
 export interface RoutingRuleSetReplaceRequest {
@@ -119,6 +136,13 @@ export interface ClassifierResult {
   provider: string;
   confidence: number;
   suggestedTarget: RoutingTarget;
+  taskType?: RoutingClassifierOutput["taskType"];
+  requiredCapabilities?: string[];
+  optionalCapabilities?: string[];
+  ownershipHints?: string[];
+  missingInfo?: string[];
+  unmatchedCapabilities?: string[];
+  evidence?: string[];
 }
 
 export interface RoutingReason {
@@ -191,6 +215,7 @@ export interface RoutingControlPlaneOptions {
     getCurrentRuleSet(): RoutingRuleSet | null;
     replaceRuleSet(payload: RoutingRuleSetReplaceRequest, createdBy: string, idempotencyKey?: string): RoutingRuleSet;
   };
+  classifier?: RoutingClassifier | null;
 }
 
 function createId(prefix: string): string {
@@ -276,6 +301,7 @@ const SNAPSHOT_FIELDS = new Set([
   "repository",
   "title",
   "bodyDigest",
+  "bodyPreview",
   "labels",
   "project",
   "issueType",
@@ -287,8 +313,24 @@ const SNAPSHOT_FIELDS = new Set([
 const REPOSITORY_FIELDS = new Set(["provider", "owner", "name", "defaultBranch"]);
 const LINKS_FIELDS = new Set(["providerIssue"]);
 const ACTIVE_TASK_STATUSES = new Set(["todo", "in_progress", "in_review", "blocked"]);
+const RETRYABLE_AI_ROUTING_CONFLICTS = new Set([
+  "classifier_no_candidate_agents",
+  "classifier_no_capable_agent",
+  "classifier_unmatched_capabilities",
+  "classifier_no_required_capabilities",
+]);
 const RULE_SET_FIELDS = new Set(["sourceRef", "changeReason", "rules", "classifier"]);
-const CLASSIFIER_FIELDS = new Set(["enabled", "provider", "confidenceThreshold", "maxCandidates", "fallbackTriageQueueId"]);
+const CLASSIFIER_FIELDS = new Set([
+  "enabled",
+  "provider",
+  "runner",
+  "model",
+  "confidenceThreshold",
+  "maxCandidates",
+  "fallbackTriageQueueId",
+  "fallbackBehavior",
+  "timeoutMs",
+]);
 const ROUTING_RULE_FIELDS = new Set(["id", "name", "enabled", "priority", "conditions", "target", "confidence", "explanation"]);
 const ROUTING_TARGET_FIELDS = new Set(["type", "id"]);
 const AGENT_PROFILE_FIELDS = new Set([
@@ -338,17 +380,19 @@ export class RoutingControlPlane {
   private readonly routingAuditStore: RoutingControlPlaneOptions["routingAuditStore"];
   private readonly agentProfileStore: RoutingControlPlaneOptions["agentProfileStore"];
   private readonly routingRuleStore: RoutingControlPlaneOptions["routingRuleStore"];
+  private readonly classifier: RoutingClassifier | null;
   private readonly profiles: Map<string, AgentProfile>;
   private readonly audits: Map<string, RoutingAuditRecord>;
   private readonly idempotency: Map<string, IdempotencyEntry<unknown>>;
   private ruleSets: RoutingRuleSet[];
 
-  constructor({ now = () => new Date(), taskQueue, routingAuditStore, agentProfileStore, routingRuleStore }: RoutingControlPlaneOptions) {
+  constructor({ now = () => new Date(), taskQueue, routingAuditStore, agentProfileStore, routingRuleStore, classifier = null }: RoutingControlPlaneOptions) {
     this.now = now;
     this.taskQueue = taskQueue;
     this.routingAuditStore = routingAuditStore;
     this.agentProfileStore = agentProfileStore;
     this.routingRuleStore = routingRuleStore;
+    this.classifier = classifier;
     this.profiles = new Map();
     this.audits = new Map();
     this.idempotency = new Map();
@@ -365,11 +409,15 @@ export class RoutingControlPlane {
 
   replaceRuleSet(payload: RoutingRuleSetReplaceRequest, createdBy: string, idempotencyKey?: string): RoutingRuleSet {
     this.validateRuleSetPayload(payload);
+    const normalizedPayload = {
+      ...payload,
+      classifier: normalizeClassifierConfig(payload.classifier),
+    };
     if (this.routingRuleStore) {
-      return clone(this.routingRuleStore.replaceRuleSet(payload, createdBy, idempotencyKey));
+      return clone(this.routingRuleStore.replaceRuleSet(normalizedPayload, createdBy, idempotencyKey));
     }
 
-    const fingerprint = sha256(payload);
+    const fingerprint = sha256(normalizedPayload);
 
     if (idempotencyKey) {
       const entry = this.idempotency.get(`rule-set:${idempotencyKey}`);
@@ -394,14 +442,14 @@ export class RoutingControlPlane {
       version: previous ? previous.version + 1 : 1,
       status: "active",
       source: "admin_api",
-      sourceRef: payload.sourceRef,
+      sourceRef: normalizedPayload.sourceRef,
       createdBy,
       createdAt: this.now().toISOString(),
-      rules: clone(payload.rules),
-      classifier: clone(payload.classifier),
+      rules: clone(normalizedPayload.rules),
+      classifier: clone(normalizedPayload.classifier),
       audit: {
         supersedesRuleSetId: previous?.id ?? null,
-        changeReason: payload.changeReason,
+        changeReason: normalizedPayload.changeReason,
       },
     };
     this.ruleSets.push(next);
@@ -498,7 +546,7 @@ export class RoutingControlPlane {
     }
 
     const ruleSet = this.resolveCurrentRuleSet(ruleSetVersion);
-    const { decision, inputDigest } = this.routeSnapshot(snapshot, ruleSet);
+    const { decision, inputDigest } = await this.routeSnapshot(snapshot, ruleSet);
     decision.assignment.assignedAt = null;
     decision.availableActions = ["view_audit"];
     this.recordAudit(decision, inputDigest, ruleSet);
@@ -531,7 +579,7 @@ export class RoutingControlPlane {
     }
 
     const ruleSet = this.resolveCurrentRuleSet(null);
-    const { decision, inputDigest } = this.routeSnapshot(snapshot, ruleSet);
+    const { decision, inputDigest } = await this.routeSnapshot(snapshot, ruleSet);
     const task = await this.applyDecisionToTask(snapshot, decision);
     decision.taskId = task.id;
     decision.taskIdentifier = task.identifier;
@@ -546,6 +594,51 @@ export class RoutingControlPlane {
     }
 
     return clone(decision);
+  }
+
+  async retryWaitingAiRoutedTasks(_actorId = "routing"): Promise<RoutingRetryResult> {
+    const result: RoutingRetryResult = {
+      scanned: 0,
+      assigned: 0,
+      unchanged: 0,
+      skipped: 0,
+    };
+    let ruleSet: RoutingRuleSet;
+    try {
+      ruleSet = this.resolveCurrentRuleSet(null);
+    } catch (error) {
+      if (error instanceof TaskLifecycleError && error.statusCode === 404) {
+        return result;
+      }
+      throw error;
+    }
+    if (!ruleSet.classifier.enabled) {
+      return result;
+    }
+
+    for (const task of this.taskQueue.listRawTasks()) {
+      if (!this.isRetryableWaitingAiTask(task)) {
+        result.skipped += 1;
+        continue;
+      }
+      const snapshot = task.providerIssueSnapshot as ProviderIssueSnapshot | null | undefined;
+      if (!snapshot) {
+        result.skipped += 1;
+        continue;
+      }
+      result.scanned += 1;
+      const { decision, inputDigest } = await this.routeSnapshot(snapshot, ruleSet);
+      if (!decision.assignment.assigneeAgentId) {
+        result.unchanged += 1;
+        continue;
+      }
+      const updated = await this.applyDecisionToTask(snapshot, decision);
+      decision.taskId = updated.id;
+      decision.taskIdentifier = updated.identifier;
+      this.recordAudit(decision, inputDigest, ruleSet);
+      result.assigned += 1;
+    }
+    return result;
   }
 
   getRoutingAudit(decisionId: string): RoutingAuditRecord | null {
@@ -607,10 +700,10 @@ export class RoutingControlPlane {
     return current;
   }
 
-  private routeSnapshot(snapshot: ProviderIssueSnapshot, ruleSet: RoutingRuleSet): {
+  private async routeSnapshot(snapshot: ProviderIssueSnapshot, ruleSet: RoutingRuleSet): Promise<{
     decision: RoutingDecision;
     inputDigest: string;
-  } {
+  }> {
     const inputDigest = sha256(snapshot);
     const matchingRules = this.findMatchingRules(snapshot, ruleSet.rules);
     const topPriority = matchingRules[0]?.priority ?? null;
@@ -628,6 +721,7 @@ export class RoutingControlPlane {
           matchedRules: topMatches,
           summary: winner.explanation,
           conflictReasons: [],
+          classifier: null,
         }),
         inputDigest,
       };
@@ -643,15 +737,21 @@ export class RoutingControlPlane {
           matchedRules: topMatches,
           summary: `Multiple deterministic routing rules matched at priority ${topPriority}.`,
           conflictReasons: [`multiple_targets_at_priority_${topPriority}`],
+          classifier: null,
         }),
         inputDigest,
       };
     }
 
+    if (ruleSet.classifier.enabled) {
+      return {
+        decision: await this.routeWithClassifier(snapshot, ruleSet.classifier),
+        inputDigest,
+      };
+    }
+
     const assignmentSource: TaskAssignmentSource = "manual_triage";
-    const summary = ruleSet.classifier.enabled
-      ? `No deterministic route matched; classifier fallback is not implemented, so the task was sent to triage ${ruleSet.classifier.fallbackTriageQueueId}.`
-      : `No deterministic route matched; the task was sent to triage ${ruleSet.classifier.fallbackTriageQueueId}.`;
+    const summary = `No deterministic route matched; the task was sent to triage ${ruleSet.classifier.fallbackTriageQueueId}.`;
 
     return {
       decision: this.buildDecision({
@@ -662,8 +762,206 @@ export class RoutingControlPlane {
         matchedRules: [],
         summary,
         conflictReasons: ["no_matching_rule"],
+        classifier: null,
       }),
       inputDigest,
+    };
+  }
+
+  private async routeWithClassifier(snapshot: ProviderIssueSnapshot, config: ClassifierConfig): Promise<RoutingDecision> {
+    const fallbackTarget = { type: "triage_queue" as const, id: config.fallbackTriageQueueId };
+    const candidates = this.classifierCandidates(snapshot);
+    if (!this.classifier) {
+      return this.buildDecision({
+        outcome: "triage",
+        target: fallbackTarget,
+        assignmentSource: "manual_triage",
+        confidence: 0,
+        matchedRules: [],
+        summary: "No deterministic route matched; AI-assisted routing is enabled but no local classifier is configured.",
+        conflictReasons: ["classifier_unavailable"],
+        classifier: {
+          provider: config.provider,
+          confidence: 0,
+          suggestedTarget: fallbackTarget,
+          missingInfo: ["No local routing classifier is configured."],
+        },
+      });
+    }
+    if (candidates.length === 0) {
+      return this.buildDecision({
+        outcome: "triage",
+        target: fallbackTarget,
+        assignmentSource: "manual_triage",
+        confidence: 0,
+        matchedRules: [],
+        summary: "No deterministic route matched; no active agent is eligible for this repository.",
+        conflictReasons: ["classifier_no_candidate_agents"],
+        classifier: {
+          provider: config.provider,
+          confidence: 0,
+          suggestedTarget: fallbackTarget,
+          missingInfo: ["No active agent is eligible for this repository."],
+        },
+      });
+    }
+
+    let output: RoutingClassifierOutput;
+    try {
+      output = await this.classifier.classify({
+        snapshot,
+        candidates: candidates.slice(0, config.maxCandidates),
+      }, config);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return this.buildDecision({
+        outcome: "triage",
+        target: fallbackTarget,
+        assignmentSource: "manual_triage",
+        confidence: 0,
+        matchedRules: [],
+        summary: `No deterministic route matched; AI-assisted routing failed, so the task was sent to triage ${config.fallbackTriageQueueId}.`,
+        conflictReasons: ["classifier_failed"],
+        classifier: {
+          provider: config.provider,
+          confidence: 0,
+          suggestedTarget: fallbackTarget,
+          missingInfo: [reason],
+        },
+      });
+    }
+
+    const lowConfidence = output.confidence < config.confidenceThreshold;
+    const hasMissingInfo = output.missingInfo.length > 0;
+    const hasUnmatchedCapabilities = output.unmatchedCapabilities.length > 0;
+    const hasNoRequiredCapabilities = output.requiredCapabilities.length === 0;
+    const policy = normalizeRoutingFallbackBehavior(config.fallbackBehavior);
+    const suitabilityConflictReasons = [
+      ...(hasUnmatchedCapabilities ? ["classifier_unmatched_capabilities"] : []),
+      ...(hasNoRequiredCapabilities ? ["classifier_no_required_capabilities"] : []),
+    ];
+    if (lowConfidence || hasMissingInfo) {
+      const conflictReasons = [
+        ...(lowConfidence ? ["classifier_low_confidence"] : []),
+        ...(hasMissingInfo ? ["classifier_missing_info"] : []),
+      ];
+      return this.buildDecision({
+        outcome: "triage",
+        target: fallbackTarget,
+        assignmentSource: "manual_triage",
+        confidence: output.confidence,
+        matchedRules: [],
+        summary: lowConfidence
+          ? `No deterministic route matched; classifier confidence ${output.confidence.toFixed(2)} is below ${config.confidenceThreshold}.`
+          : "No deterministic route matched; classifier found missing information before assignment.",
+        conflictReasons,
+        classifier: this.classifierResult(config, output, fallbackTarget),
+      });
+    }
+    if (suitabilityConflictReasons.length > 0) {
+      const closest = policy === "assign_closest_match"
+        ? this.selectClosestClassifierAgent(candidates, output)
+        : null;
+      if (closest) {
+        return this.buildBestEffortDecision({
+          config,
+          output,
+          selected: closest,
+          conflictReasons: suitabilityConflictReasons,
+          summary: "AI-assisted routing assigned the closest available agent because no suitable agent matched all required work.",
+        });
+      }
+      return this.buildDecision({
+        outcome: "triage",
+        target: fallbackTarget,
+        assignmentSource: "manual_triage",
+        confidence: output.confidence,
+        matchedRules: [],
+        summary: hasUnmatchedCapabilities
+          ? "No deterministic route matched; classifier found required capabilities that no active agent advertises."
+          : "No deterministic route matched; classifier did not identify any required capability before assignment.",
+        conflictReasons: suitabilityConflictReasons,
+        classifier: this.classifierResult(config, output, fallbackTarget),
+      });
+    }
+
+    const selected = this.selectClassifierAgent(candidates, output);
+    if (!selected) {
+      const closest = policy === "assign_closest_match"
+        ? this.selectClosestClassifierAgent(candidates, output)
+        : null;
+      if (closest) {
+        return this.buildBestEffortDecision({
+          config,
+          output,
+          selected: closest,
+          conflictReasons: ["classifier_no_capable_agent"],
+          summary: "AI-assisted routing assigned the closest available agent because no agent matched every required capability.",
+        });
+      }
+      return this.buildDecision({
+        outcome: "triage",
+        target: fallbackTarget,
+        assignmentSource: "manual_triage",
+        confidence: output.confidence,
+        matchedRules: [],
+        summary: "No deterministic route matched; classifier output did not match any capable available agent.",
+        conflictReasons: ["classifier_no_capable_agent"],
+        classifier: this.classifierResult(config, output, fallbackTarget),
+      });
+    }
+
+    const target = { type: "agent" as const, id: selected.agentId };
+    return this.buildDecision({
+      outcome: "assigned",
+      target,
+      assignmentSource: "classifier",
+      confidence: output.confidence,
+      matchedRules: [],
+      summary: `AI-assisted routing matched required capabilities: ${output.requiredCapabilities.join(", ") || "none"}.`,
+      conflictReasons: [],
+      classifier: this.classifierResult(config, output, target),
+    });
+  }
+
+  private buildBestEffortDecision({
+    config,
+    output,
+    selected,
+    conflictReasons,
+    summary,
+  }: {
+    config: ClassifierConfig;
+    output: RoutingClassifierOutput;
+    selected: RoutingClassifierCandidate;
+    conflictReasons: string[];
+    summary: string;
+  }): RoutingDecision {
+    const target = { type: "agent" as const, id: selected.agentId };
+    return this.buildDecision({
+      outcome: "assigned",
+      target,
+      assignmentSource: "classifier_best_effort",
+      confidence: output.confidence,
+      matchedRules: [],
+      summary,
+      conflictReasons: [...conflictReasons, "classifier_best_effort"],
+      classifier: this.classifierResult(config, output, target),
+    });
+  }
+
+  private classifierResult(config: ClassifierConfig, output: RoutingClassifierOutput, target: RoutingTarget): ClassifierResult {
+    return {
+      provider: config.provider,
+      confidence: output.confidence,
+      suggestedTarget: clone(target),
+      taskType: output.taskType,
+      requiredCapabilities: clone(output.requiredCapabilities),
+      optionalCapabilities: clone(output.optionalCapabilities),
+      ownershipHints: clone(output.ownershipHints),
+      missingInfo: clone(output.missingInfo),
+      unmatchedCapabilities: clone(output.unmatchedCapabilities),
+      evidence: clone(output.evidence),
     };
   }
 
@@ -685,6 +983,87 @@ export class RoutingControlPlane {
 
     eligible.sort((left, right) => right.priority - left.priority || right.confidence - left.confidence || left.id.localeCompare(right.id));
     return eligible;
+  }
+
+  private listAgentProfiles(): AgentProfile[] {
+    const profiles = this.agentProfileStore
+      ? this.agentProfileStore.listProfiles()
+      : [...this.profiles.values()];
+    return profiles.map(clone);
+  }
+
+  private classifierCandidates(snapshot: ProviderIssueSnapshot): RoutingClassifierCandidate[] {
+    const repo = repoKey(snapshot);
+    return this.listAgentProfiles()
+      .filter(profile => profile.status === "active")
+      .filter(profile => profile.repoAllowlist.length === 0 || profile.repoAllowlist.some(candidate => lower(candidate) === lower(repo)))
+      .map(profile => ({
+        agentId: profile.agentId,
+        displayName: profile.displayName,
+        capabilityTags: clone(profile.capabilityTags),
+        ownershipTags: clone(profile.ownershipTags),
+        repoAllowlist: clone(profile.repoAllowlist),
+        activeTaskCount: this.activeAssignedTaskCount(profile, snapshot.providerIssueId),
+        maxConcurrentTasks: profile.maxConcurrentTasks,
+      }))
+      .sort((left, right) => left.agentId.localeCompare(right.agentId));
+  }
+
+  private selectClassifierAgent(candidates: RoutingClassifierCandidate[], output: RoutingClassifierOutput): RoutingClassifierCandidate | null {
+    const required = output.requiredCapabilities.map(lower);
+    const optional = output.optionalCapabilities.map(lower);
+    const ownershipHints = output.ownershipHints.map(lower);
+    const scored = candidates
+      .filter(candidate => candidate.activeTaskCount < candidate.maxConcurrentTasks)
+      .filter(candidate => {
+        const capabilities = new Set(candidate.capabilityTags.map(lower));
+        return required.every(capability => capabilities.has(capability));
+      })
+      .map(candidate => {
+        const capabilities = new Set(candidate.capabilityTags.map(lower));
+        const ownership = new Set(candidate.ownershipTags.map(lower));
+        const optionalScore = optional.filter(capability => capabilities.has(capability)).length * 10;
+        const ownershipScore = ownershipHints.filter(hint => ownership.has(hint)).length * 5;
+        const idleScore = candidate.activeTaskCount === 0 ? 2 : 0;
+        return {
+          candidate,
+          score: optionalScore + ownershipScore + idleScore,
+        };
+      })
+      .sort((left, right) =>
+        right.score - left.score ||
+        left.candidate.activeTaskCount - right.candidate.activeTaskCount ||
+        left.candidate.agentId.localeCompare(right.candidate.agentId)
+      );
+    return scored[0]?.candidate ?? null;
+  }
+
+  private selectClosestClassifierAgent(candidates: RoutingClassifierCandidate[], output: RoutingClassifierOutput): RoutingClassifierCandidate | null {
+    const required = output.requiredCapabilities.map(lower);
+    const optional = output.optionalCapabilities.map(lower);
+    const unmatched = output.unmatchedCapabilities.map(lower);
+    const ownershipHints = output.ownershipHints.map(lower);
+    const scored = candidates
+      .filter(candidate => candidate.activeTaskCount < candidate.maxConcurrentTasks)
+      .map(candidate => {
+        const capabilities = new Set(candidate.capabilityTags.map(lower));
+        const ownership = new Set(candidate.ownershipTags.map(lower));
+        const requiredScore = required.filter(capability => capabilities.has(capability)).length * 25;
+        const unmatchedScore = unmatched.filter(capability => capabilities.has(capability)).length * 20;
+        const optionalScore = optional.filter(capability => capabilities.has(capability)).length * 10;
+        const ownershipScore = ownershipHints.filter(hint => ownership.has(hint)).length * 5;
+        const idleScore = candidate.activeTaskCount === 0 ? 2 : 0;
+        return {
+          candidate,
+          score: requiredScore + unmatchedScore + optionalScore + ownershipScore + idleScore,
+        };
+      })
+      .sort((left, right) =>
+        right.score - left.score ||
+        left.candidate.activeTaskCount - right.candidate.activeTaskCount ||
+        left.candidate.agentId.localeCompare(right.candidate.agentId)
+      );
+    return scored[0]?.candidate ?? null;
   }
 
   private ruleMatchesSnapshot(rule: RoutingRule, snapshot: ProviderIssueSnapshot): boolean {
@@ -726,6 +1105,7 @@ export class RoutingControlPlane {
     matchedRules,
     summary,
     conflictReasons,
+    classifier,
   }: {
     outcome: RoutingDecision["outcome"];
     target: RoutingTarget;
@@ -734,6 +1114,7 @@ export class RoutingControlPlane {
     matchedRules: RoutingRule[];
     summary: string;
     conflictReasons: string[];
+    classifier: ClassifierResult | null;
   }): RoutingDecision {
     const id = createId("rdec");
     return {
@@ -757,7 +1138,7 @@ export class RoutingControlPlane {
           name: rule.name,
           confidence: rule.confidence,
         })),
-        classifier: null,
+        classifier,
         conflictReasons: clone(conflictReasons),
       },
       availableActions: ["view_task", "view_audit"],
@@ -800,6 +1181,7 @@ export class RoutingControlPlane {
       routingDecisionId: decision.id,
       routingReason: clone(decision.routingReason),
       routingConfidence: decision.confidence,
+      providerIssueSnapshot: clone(snapshot) as TaskProviderIssueSnapshot,
       links: { issue: snapshot.links.providerIssue },
       context: {
         project: snapshot.project ?? repoKey(snapshot),
@@ -866,6 +1248,26 @@ export class RoutingControlPlane {
     return created;
   }
 
+  private isRetryableWaitingAiTask(task: TaskRecord): boolean {
+    if (task.status !== "todo") {
+      return false;
+    }
+    if (task.assigneeAgentId) {
+      return false;
+    }
+    if (task.assignmentSource !== "manual_triage") {
+      return false;
+    }
+    if (!task.providerIssueSnapshot || !task.routingReason?.classifier) {
+      return false;
+    }
+    const conflicts = task.routingReason.conflictReasons ?? [];
+    if (conflicts.includes("classifier_low_confidence") || conflicts.includes("classifier_missing_info")) {
+      return false;
+    }
+    return conflicts.some(conflict => RETRYABLE_AI_ROUTING_CONFLICTS.has(conflict));
+  }
+
   private isAgentEligibleForSnapshot(profile: AgentProfile, repo: string, providerIssueId: string): boolean {
     if (profile.status !== "active") {
       return false;
@@ -879,19 +1281,22 @@ export class RoutingControlPlane {
     return this.hasAgentCapacity(profile, providerIssueId);
   }
 
+  private activeAssignedTaskCount(profile: AgentProfile, providerIssueId: string): number {
+    const existing = this.taskQueue.findTaskByIdentifier(providerIssueId);
+    return this.taskQueue.countActiveAssignedTasks({
+      agentId: profile.agentId,
+      statuses: ACTIVE_TASK_STATUSES,
+      excludeTaskId: existing?.id,
+      excludeTask: (task) => isSetupVerificationTask(task.identifier, task.source?.provider),
+    });
+  }
+
   private hasAgentCapacity(profile: AgentProfile, providerIssueId: string): boolean {
     if (!Number.isInteger(profile.maxConcurrentTasks) || profile.maxConcurrentTasks <= 0) {
       return false;
     }
 
-    const existing = this.taskQueue.findTaskByIdentifier(providerIssueId);
-    const activeAssignedCount = this.taskQueue.countActiveAssignedTasks({
-      agentId: profile.agentId,
-      statuses: ACTIVE_TASK_STATUSES,
-      excludeTaskId: existing?.id,
-      excludeTask: (task) => isSetupVerificationTask(task.identifier, task.source?.provider),
-      stopAt: profile.maxConcurrentTasks,
-    });
+    const activeAssignedCount = this.activeAssignedTaskCount(profile, providerIssueId);
     return activeAssignedCount < profile.maxConcurrentTasks;
   }
 
@@ -974,6 +1379,11 @@ export class RoutingControlPlane {
         availableActions: ["retry"],
       });
     }
+    if (snapshot.bodyPreview !== undefined && typeof snapshot.bodyPreview !== "string") {
+      throw new TaskLifecycleError(400, "validation_error", "Provider issue snapshot `bodyPreview` must be a string.", {
+        availableActions: ["retry"],
+      });
+    }
     if (
       !isRecord(snapshot.links) ||
       !hasOnlyKeys(snapshot.links, LINKS_FIELDS) ||
@@ -1002,8 +1412,8 @@ export class RoutingControlPlane {
         availableActions: ["retry"],
       });
     }
-    if (!Array.isArray(payload.rules) || payload.rules.length === 0) {
-      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must contain at least one rule.", {
+    if (!Array.isArray(payload.rules)) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must contain a rules array.", {
         availableActions: ["retry"],
       });
     }
@@ -1012,7 +1422,6 @@ export class RoutingControlPlane {
         availableActions: ["retry"],
       });
     }
-    payload.rules.forEach((rule, index) => this.validateRoutingRulePayload(rule, index));
     if (
       !isRecord(payload.classifier) ||
       !hasOnlyKeys(payload.classifier, CLASSIFIER_FIELDS) ||
@@ -1023,13 +1432,23 @@ export class RoutingControlPlane {
       payload.classifier.confidenceThreshold > 1 ||
       !Number.isInteger(payload.classifier.maxCandidates) ||
       payload.classifier.maxCandidates < 1 ||
-      payload.classifier.maxCandidates > 10 ||
-      !isNonEmptyString(payload.classifier.fallbackTriageQueueId)
+      payload.classifier.maxCandidates > 20 ||
+      !isNonEmptyString(payload.classifier.fallbackTriageQueueId) ||
+      (payload.classifier.runner !== undefined && !isNonEmptyString(payload.classifier.runner)) ||
+      (payload.classifier.model !== undefined && payload.classifier.model !== null && !isNonEmptyString(payload.classifier.model)) ||
+      (payload.classifier.fallbackBehavior !== undefined && !isRoutingFallbackBehaviorLike(payload.classifier.fallbackBehavior)) ||
+      (payload.classifier.timeoutMs !== undefined && (!Number.isInteger(payload.classifier.timeoutMs) || payload.classifier.timeoutMs < MIN_ROUTING_CLASSIFIER_TIMEOUT_MS || payload.classifier.timeoutMs > MAX_ROUTING_CLASSIFIER_TIMEOUT_MS))
     ) {
       throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must include a valid classifier config.", {
         availableActions: ["retry"],
       });
     }
+    if (payload.rules.length === 0 && !payload.classifier.enabled) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must contain at least one rule unless classifier routing is enabled.", {
+        availableActions: ["retry"],
+      });
+    }
+    payload.rules.forEach((rule, index) => this.validateRoutingRulePayload(rule, index));
   }
 
   private validateRoutingRulePayload(rule: unknown, index: number) {
@@ -1166,4 +1585,32 @@ export class RoutingControlPlane {
 
 function isSetupVerificationTask(identifier: string, provider: TaskSource["provider"] | undefined): boolean {
   return provider === "agentrail_setup" || identifier.startsWith("LOCAL-SETUP-");
+}
+
+function isRoutingFallbackBehaviorLike(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().replace(/-/gu, "_");
+  return [
+    "require_suitable_agent",
+    "assign_closest_match",
+    "triage",
+    "clarification",
+  ].includes(normalized);
+}
+
+function normalizeRoutingFallbackBehavior(value: unknown): "require_suitable_agent" | "assign_closest_match" {
+  const normalized = typeof value === "string" ? value.trim().replace(/-/gu, "_") : "";
+  if (normalized === "assign_closest_match") {
+    return "assign_closest_match";
+  }
+  return "require_suitable_agent";
+}
+
+function normalizeClassifierConfig(config: ClassifierConfig): ClassifierConfig {
+  return {
+    ...config,
+    fallbackBehavior: normalizeRoutingFallbackBehavior(config.fallbackBehavior),
+  };
 }

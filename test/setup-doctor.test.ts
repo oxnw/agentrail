@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { runCli } from "../src/cli/index.ts";
@@ -189,6 +189,122 @@ test("agentrail doctor honors an explicit --env-file over the shared current-age
   assert.equal(exitCode, 0, stderr.toString());
   assert.match(stdout.toString(), /AgentRail doctor passed/i);
   assert.equal(stderr.toString(), "");
+});
+
+test("agentrail doctor verifies AI routing can launch the configured local runner", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-ai-route-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
+  const previousHome = process.env.AGENTRAIL_HOME;
+  const previousPath = process.env.PATH;
+  let harness: SetupDoctorHarness | null = null;
+  const cleanup = createCleanup({
+    previousSetupApiKey,
+    previousHome,
+    repoRoot,
+    homePath,
+    getHarness: () => harness,
+  });
+  t.after(async () => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await cleanup();
+  });
+  process.env.AGENTRAIL_HOME = homePath;
+
+  const binDir = path.join(repoRoot, "bin");
+  await mkdir(binDir, { recursive: true });
+  const fakeCodex = path.join(binDir, "codex");
+  await writeFile(fakeCodex, "#!/bin/sh\nexit 0\n");
+  await chmod(fakeCodex, 0o755);
+  process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+
+  harness = await createSetupDoctorHarness();
+  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
+
+  await seedSetupVerificationTask({
+    baseUrl: harness.baseUrl,
+    operatorApiKey: harness.operatorApiKey,
+    agentId: harness.agentId,
+  });
+
+  await writeDoctorRepo({
+    repoRoot,
+    homePath,
+    baseUrl: harness.baseUrl,
+    agentApiKey: harness.agentApiKey,
+    agentId: harness.agentId,
+    repoAllowlist: harness.repoAllowlist,
+    routingMode: "ai_assist",
+    routingClassifierRunner: "codex",
+    routingClassifierModel: "gpt-test",
+  });
+
+  const exitCode = await runCli(["doctor"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /PASS ai_routing/i);
+  assert.match(stdout.toString(), /gpt-test/i);
+  assert.equal(stderr.toString(), "");
+});
+
+test("agentrail doctor fails AI routing when no local executable mapping exists", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-ai-route-fail-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
+  const previousHome = process.env.AGENTRAIL_HOME;
+  let harness: SetupDoctorHarness | null = null;
+  t.after(createCleanup({
+    previousSetupApiKey,
+    previousHome,
+    repoRoot,
+    homePath,
+    getHarness: () => harness,
+  }));
+  process.env.AGENTRAIL_HOME = homePath;
+
+  harness = await createSetupDoctorHarness();
+  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
+
+  await seedSetupVerificationTask({
+    baseUrl: harness.baseUrl,
+    operatorApiKey: harness.operatorApiKey,
+    agentId: harness.agentId,
+  });
+
+  await writeDoctorRepo({
+    repoRoot,
+    homePath,
+    baseUrl: harness.baseUrl,
+    agentApiKey: harness.agentApiKey,
+    agentId: harness.agentId,
+    repoAllowlist: harness.repoAllowlist,
+    routingMode: "ai_assist",
+    routingClassifierRunner: "custom",
+  });
+
+  const exitCode = await runCli(["doctor"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.match(stderr.toString(), /FAIL ai_routing/i);
+  assert.match(stderr.toString(), /custom/i);
+  assert.equal(stdout.toString(), "");
 });
 
 function restoreSetupApiKey(previousSetupApiKey: string | undefined): void {

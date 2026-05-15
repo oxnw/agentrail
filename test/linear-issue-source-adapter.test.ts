@@ -156,6 +156,28 @@ describe("LinearIssueSourceAdapter", () => {
     assert.equal(queue.listRawTasks().length, 0);
   });
 
+  it("passes bounded issue description preview into routing snapshots", async () => {
+    const queue = makeQueue();
+    const snapshots: any[] = [];
+    const adapter = new LinearIssueSourceAdapter({
+      taskQueue: queue,
+      routingControlPlane: {
+        ingestProviderIssue: async (snapshot: any) => {
+          snapshots.push(snapshot);
+          return { taskId: null };
+        },
+      } as any,
+      routingMode: "required",
+      now,
+    });
+
+    await adapter.ingest(makeLinearIssuePayload({
+      description: "Detailed Linear failure report",
+    }), "linear-body-preview");
+
+    assert.equal(snapshots[0].bodyPreview, "Detailed Linear failure report");
+  });
+
   it("routes imported Linear issues to fallback triage when no deterministic rule matches", async () => {
     const queue = makeQueue();
     const routing = new RoutingControlPlane({ now, taskQueue: queue });

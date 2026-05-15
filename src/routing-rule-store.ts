@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import {
+  MAX_ROUTING_CLASSIFIER_TIMEOUT_MS,
+  MIN_ROUTING_CLASSIFIER_TIMEOUT_MS,
+} from "./routing-classifier-config.ts";
 import { TaskLifecycleError } from "./task-lifecycle-errors.ts";
 
 export interface RoutingTarget {
@@ -32,10 +36,14 @@ export interface RoutingRule {
 
 export interface ClassifierConfig {
   enabled: boolean;
-  provider: string;
+  provider: "disabled" | "local_runner" | string;
+  runner?: "codex" | "claude-code" | "cursor" | "custom" | string;
+  model?: string | null;
   confidenceThreshold: number;
   maxCandidates: number;
   fallbackTriageQueueId: string;
+  fallbackBehavior?: "require_suitable_agent" | "assign_closest_match" | "triage" | "clarification";
+  timeoutMs?: number;
 }
 
 export interface RoutingRuleSetReplaceRequest {
@@ -215,7 +223,11 @@ export class RoutingRuleStore {
 
   replaceRuleSet(payload: RoutingRuleSetReplaceRequest, createdBy: string, idempotencyKey?: string): RoutingRuleSet {
     this.validateRuleSetPayload(payload);
-    const fingerprint = sha256(payload);
+    const normalizedPayload = {
+      ...payload,
+      classifier: normalizeClassifierConfig(payload.classifier),
+    };
+    const fingerprint = sha256(normalizedPayload);
 
     if (idempotencyKey) {
       const entry = this.idempotency.get(`rule-set:${idempotencyKey}`);
@@ -240,14 +252,14 @@ export class RoutingRuleStore {
       version: previous ? previous.version + 1 : 1,
       status: "active",
       source: "admin_api",
-      sourceRef: payload.sourceRef,
+      sourceRef: normalizedPayload.sourceRef,
       createdBy,
       createdAt: this.now().toISOString(),
-      rules: clone(payload.rules),
-      classifier: clone(payload.classifier),
+      rules: clone(normalizedPayload.rules),
+      classifier: clone(normalizedPayload.classifier),
       audit: {
         supersedesRuleSetId: previous?.id ?? null,
-        changeReason: payload.changeReason,
+        changeReason: normalizedPayload.changeReason,
       },
     };
 
@@ -296,8 +308,8 @@ export class RoutingRuleStore {
         availableActions: ["retry"],
       });
     }
-    if (!Array.isArray(payload.rules) || payload.rules.length === 0) {
-      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must contain at least one rule.", {
+    if (!Array.isArray(payload.rules)) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must contain a rules array.", {
         availableActions: ["retry"],
       });
     }
@@ -307,6 +319,11 @@ export class RoutingRuleStore {
       });
     }
     this.validateClassifier(payload.classifier);
+    if (payload.rules.length === 0 && !payload.classifier.enabled) {
+      throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload must contain at least one rule unless classifier routing is enabled.", {
+        availableActions: ["retry"],
+      });
+    }
     const seenRuleIds = new Set<string>();
     payload.rules.forEach((rule, index) => {
       this.validateRule(rule, index);
@@ -329,7 +346,12 @@ export class RoutingRuleStore {
       classifier.confidenceThreshold > 1 ||
       !Number.isInteger(classifier.maxCandidates) ||
       classifier.maxCandidates < 1 ||
-      !isNonEmptyString(classifier.fallbackTriageQueueId)
+      classifier.maxCandidates > 20 ||
+      !isNonEmptyString(classifier.fallbackTriageQueueId) ||
+      (classifier.runner !== undefined && !isNonEmptyString(classifier.runner)) ||
+      (classifier.model !== undefined && classifier.model !== null && !isNonEmptyString(classifier.model)) ||
+      (classifier.fallbackBehavior !== undefined && !isRoutingFallbackBehaviorLike(classifier.fallbackBehavior)) ||
+      (classifier.timeoutMs !== undefined && (!Number.isInteger(classifier.timeoutMs) || classifier.timeoutMs < MIN_ROUTING_CLASSIFIER_TIMEOUT_MS || classifier.timeoutMs > MAX_ROUTING_CLASSIFIER_TIMEOUT_MS))
     ) {
       throw new TaskLifecycleError(400, "validation_error", "Routing rule set payload contains an invalid classifier config.", {
         availableActions: ["retry"],
@@ -399,6 +421,34 @@ function sanitizeLoadedRuleSets(ruleSets: RoutingRuleSet[], storagePath: string 
 
 function hasLegacyProviderAssigneeCondition(rule: RoutingRule): boolean {
   return isRecord(rule.conditions) && LEGACY_PROVIDER_ASSIGNEES_FIELD in rule.conditions;
+}
+
+function isRoutingFallbackBehaviorLike(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().replace(/-/gu, "_");
+  return [
+    "require_suitable_agent",
+    "assign_closest_match",
+    "triage",
+    "clarification",
+  ].includes(normalized);
+}
+
+function normalizeRoutingFallbackBehavior(value: unknown): "require_suitable_agent" | "assign_closest_match" {
+  const normalized = typeof value === "string" ? value.trim().replace(/-/gu, "_") : "";
+  if (normalized === "assign_closest_match") {
+    return "assign_closest_match";
+  }
+  return "require_suitable_agent";
+}
+
+function normalizeClassifierConfig(config: ClassifierConfig): ClassifierConfig {
+  return {
+    ...config,
+    fallbackBehavior: normalizeRoutingFallbackBehavior(config.fallbackBehavior),
+  };
 }
 
 function isRoutingRuleSet(value: unknown): value is RoutingRuleSet {

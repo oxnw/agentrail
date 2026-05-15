@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS } from "../routing-classifier-config.ts";
 import type { ConnectedRepo } from "./agentrail-home.ts";
 
 export type SetupMode = "server";
@@ -8,6 +9,8 @@ export type ProviderDeliveryMode = "polling" | "webhook";
 export type ProviderImportMode = "from_now" | "backfill";
 export type PersistenceKind = "file" | "memory";
 export type InteractionMode = "interactive" | "non_interactive" | "print_only";
+export type RoutingMode = "rules_only" | "ai_assist";
+export type RoutingFallbackBehavior = "require_suitable_agent" | "assign_closest_match";
 
 export interface GitHubProviderWebhookRegistration {
   repoSlug: string;
@@ -86,6 +89,17 @@ export interface SetupConfig {
       webhookSecretEnv?: string;
     };
   };
+  routing: {
+    mode: RoutingMode;
+    classifier: {
+      kind: "local_runner";
+      runner: "codex" | "claude-code" | "cursor" | "custom" | string;
+      model: string | null;
+      confidenceThreshold: number;
+      fallbackBehavior: RoutingFallbackBehavior;
+      timeoutMs: number;
+    };
+  };
   repos: ConnectedRepo[];
 }
 
@@ -104,6 +118,11 @@ export interface CreateSetupConfigOptions {
   repoAllowlist?: string[];
   defaultBranch?: string;
   markdownExport?: boolean;
+  routingMode?: RoutingMode;
+  routingClassifierRunner?: "codex" | "claude-code" | "cursor" | "custom" | string;
+  routingClassifierModel?: string | null;
+  routingConfidenceThreshold?: number;
+  routingFallbackBehavior?: RoutingFallbackBehavior;
 }
 
 export interface SafetyValidation {
@@ -129,6 +148,11 @@ export function createSetupConfig({
   repoAllowlist,
   defaultBranch,
   markdownExport = false,
+  routingMode = "rules_only",
+  routingClassifierRunner = "codex",
+  routingClassifierModel = null,
+  routingConfidenceThreshold = 0.8,
+  routingFallbackBehavior = "require_suitable_agent",
 }: CreateSetupConfigOptions): SetupConfig {
   const repoRoot = path.resolve(cwd, repoPath ?? detectedRepo.repoPath ?? cwd);
   const resolvedServer = resolveServer({
@@ -194,6 +218,17 @@ export function createSetupConfig({
         deliveryMode: "polling",
       },
     },
+    routing: {
+      mode: routingMode,
+      classifier: {
+        kind: "local_runner",
+        runner: routingClassifierRunner,
+        model: routingClassifierModel?.trim() ? routingClassifierModel.trim() : null,
+        confidenceThreshold: normalizeConfidenceThreshold(routingConfidenceThreshold),
+        fallbackBehavior: normalizeRoutingFallbackBehavior(routingFallbackBehavior),
+        timeoutMs: DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS,
+      },
+    },
     repos: [{
       path: repoRoot,
       slug: allowlist[0] ?? detectedRepo.remoteSlug ?? repoRoot,
@@ -245,6 +280,15 @@ export function buildInitCommand(config: SetupConfig): string {
 
   if (config.exports.markdown.enabled) {
     parts.push("--markdown-export");
+  }
+  if (config.routing.mode !== "rules_only") {
+    parts.push("--routing-mode ai-assist");
+    parts.push(`--routing-classifier-runner ${quoteShell(config.routing.classifier.runner)}`);
+    if (config.routing.classifier.model) {
+      parts.push(`--routing-classifier-model ${quoteShell(config.routing.classifier.model)}`);
+    }
+    parts.push(`--routing-confidence-threshold ${config.routing.classifier.confidenceThreshold}`);
+    parts.push(`--routing-no-suitable-agent ${toFlagValue(config.routing.classifier.fallbackBehavior)}`);
   }
 
   return parts.join(" ");
@@ -310,4 +354,21 @@ function quoteShell(value: string, { force = false }: { force?: boolean } = {}):
   }
 
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function normalizeConfidenceThreshold(value: number): number {
+  if (!Number.isFinite(value)) return 0.8;
+  return Math.min(1, Math.max(0, value));
+}
+
+export function normalizeRoutingFallbackBehavior(value: unknown): RoutingFallbackBehavior {
+  const normalized = typeof value === "string" ? value.trim().replace(/-/gu, "_") : "";
+  if (normalized === "assign_closest_match") {
+    return "assign_closest_match";
+  }
+  return "require_suitable_agent";
+}
+
+function toFlagValue(value: RoutingFallbackBehavior): string {
+  return value.replace(/_/gu, "-");
 }

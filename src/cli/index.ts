@@ -15,7 +15,7 @@ import { runEventCommand } from "./event-subscriptions.ts";
 import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
 import { runProviderCommand } from "./provider-management.ts";
 import { detectRepoContext } from "./repo-detection.ts";
-import { buildInitCommand, createSetupConfig, validateSafeDefaults, type DetectedRepoContext, type SetupConfig } from "./setup-config.ts";
+import { buildInitCommand, createSetupConfig, normalizeRoutingFallbackBehavior, validateSafeDefaults, type DetectedRepoContext, type SetupConfig } from "./setup-config.ts";
 import { writeSetupFiles, type WriteSetupFilesResult } from "./setup-files.ts";
 import { runTaskResolveBlocker } from "./task-blocker.ts";
 import { runTaskSourceRepair } from "./task-source-repair.ts";
@@ -590,6 +590,39 @@ function parseInitArgs(argv: string[]): InitFlags {
         break;
       case "--provider-mode":
         flags.providerMode = readEnum(nextValue(argv, ++index, arg), ["real", "disabled"], arg);
+        break;
+      case "--routing-mode":
+        {
+          const rawValue = nextValue(argv, ++index, arg).replace(/-/gu, "_");
+          flags.routingMode = readEnum(rawValue, ["rules_only", "ai_assist"], arg);
+        }
+        break;
+      case "--routing-classifier-runner":
+        flags.routingClassifierRunner = nextValue(argv, ++index, arg);
+        break;
+      case "--routing-classifier-model":
+        flags.routingClassifierModel = nextValue(argv, ++index, arg);
+        break;
+      case "--routing-confidence-threshold":
+        {
+          const rawValue = nextValue(argv, ++index, arg);
+          const parsedValue = Number.parseFloat(rawValue);
+          if (!Number.isFinite(parsedValue) || parsedValue < 0 || parsedValue > 1) {
+            throw new CliUsageError("`--routing-confidence-threshold` must be a number between 0 and 1.");
+          }
+          flags.routingConfidenceThreshold = parsedValue;
+        }
+        break;
+      case "--routing-no-suitable-agent":
+      case "--routing-fallback":
+        {
+          const rawValue = nextValue(argv, ++index, arg).replace(/-/gu, "_");
+          const allowed = ["require_suitable_agent", "assign_closest_match", "triage", "clarification"];
+          if (!allowed.includes(rawValue)) {
+            throw new CliUsageError(`${arg} must be one of: require-suitable-agent, assign-closest-match.`);
+          }
+          flags.routingFallbackBehavior = normalizeRoutingFallbackBehavior(rawValue);
+        }
         break;
       case "--repo":
         flags.repo = nextValue(argv, ++index, arg);

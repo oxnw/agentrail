@@ -163,6 +163,8 @@ paths:
                         confidenceThreshold: 0.82
                         maxCandidates: 3
                         fallbackTriageQueueId: triage_engineering
+                        fallbackBehavior: require_suitable_agent
+                        timeoutMs: 180000
                       audit:
                         supersedesRuleSetId: rset_01JZROUTE0000000000000099
                         changeReason: Add explicit CTO ownership for API architecture tasks.
@@ -218,6 +220,8 @@ paths:
                     confidenceThreshold: 0.82
                     maxCandidates: 3
                     fallbackTriageQueueId: triage_engineering
+                    fallbackBehavior: require_suitable_agent
+                    timeoutMs: 180000
       responses:
         '201':
           description: New active rule set revision
@@ -258,6 +262,8 @@ paths:
                         confidenceThreshold: 0.82
                         maxCandidates: 3
                         fallbackTriageQueueId: triage_engineering
+                        fallbackBehavior: require_suitable_agent
+                        timeoutMs: 180000
                       audit:
                         supersedesRuleSetId: rset_01JZROUTE0000000000000100
                         changeReason: Add ownership and classifier fallback for intake routing.
@@ -505,7 +511,7 @@ paths:
                         assignedAt: null
                       confidence: 0
                       routingReason:
-                        summary: No deterministic route matched; classifier fallback is not implemented, so the task was sent to triage triage_engineering.
+                        summary: No deterministic route matched; AI routing could not find a suitable agent, so the task is waiting for a suitable agent.
                         matchedRules: []
                         classifier: null
                         conflictReasons: [no_matching_rule]
@@ -970,7 +976,7 @@ components:
           maxLength: 500
         rules:
           type: array
-          minItems: 1
+          minItems: 0
           maxItems: 200
           items:
             $ref: '#/components/schemas/RoutingRule'
@@ -1011,7 +1017,7 @@ components:
           format: date-time
         rules:
           type: array
-          minItems: 1
+          minItems: 0
           maxItems: 200
           items:
             $ref: '#/components/schemas/RoutingRule'
@@ -1124,9 +1130,19 @@ components:
         maxCandidates:
           type: integer
           minimum: 1
-          maximum: 10
+          maximum: 20
         fallbackTriageQueueId:
           type: string
+        fallbackBehavior:
+          type: string
+          enum: [require_suitable_agent, assign_closest_match]
+          description: AI routing behavior when no suitable agent is available.
+        timeoutMs:
+          type: integer
+          minimum: 1000
+          maximum: 600000
+          default: 180000
+          description: Local routing classifier timeout in milliseconds. Slow local runners can raise this up to 600000.
     RoutingEvaluationRequest:
       type: object
       additionalProperties: false
@@ -1183,7 +1199,7 @@ components:
           type: [string, 'null']
         assignmentSource:
           type: string
-          enum: [deterministic_rule, classifier, manual_triage]
+          enum: [deterministic_rule, classifier, classifier_best_effort, manual_triage]
         routingDecisionId:
           type: string
         assignedAt:

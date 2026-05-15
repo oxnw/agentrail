@@ -2,6 +2,8 @@ import os from "node:os";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 
+import { DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS } from "../routing-classifier-config.ts";
+
 export interface ConnectedRepo {
   path: string;
   slug: string;
@@ -57,6 +59,17 @@ export interface SetupConfigLike {
   exports?: {
     markdown?: {
       enabled?: boolean;
+    };
+  };
+  routing?: {
+    mode?: string;
+    classifier?: {
+      kind?: string;
+      runner?: string;
+      model?: string | null;
+      confidenceThreshold?: number;
+      fallbackBehavior?: string;
+      timeoutMs?: number;
     };
   };
   repos?: ConnectedRepo[];
@@ -139,11 +152,13 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
 
   const normalizedProviders = normalizeProviders(config.providers);
   const normalizedPersistence = normalizePersistence(config.persistence);
+  const normalizedRouting = normalizeRouting(config.routing);
   if (Array.isArray(config.repos)) {
     return {
       ...config,
       persistence: normalizedPersistence,
       providers: normalizedProviders,
+      routing: normalizedRouting,
       repos: config.repos
         .filter((repo): repo is ConnectedRepo => Boolean(repo?.path && repo?.slug && repo?.defaultBranch))
         .map((repo) => ({
@@ -162,6 +177,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
       ...config,
       persistence: normalizedPersistence,
       providers: normalizedProviders,
+      routing: normalizedRouting,
       repos: [{
         path: legacyPath,
         slug: legacySlug,
@@ -174,6 +190,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
     ...config,
     persistence: normalizedPersistence,
     providers: normalizedProviders,
+    routing: normalizedRouting,
     repos: [],
   };
 }
@@ -244,6 +261,34 @@ function normalizeDeliveryMode(value: string | undefined, fallback: "polling" | 
 
 function normalizeImportMode(value: string | undefined): "from_now" | "backfill" {
   return value === "backfill" ? "backfill" : "from_now";
+}
+
+function normalizeRouting(routing: SetupConfigLike["routing"]): NonNullable<SetupConfigLike["routing"]> {
+  const classifier = routing?.classifier ?? {};
+  const model = typeof classifier.model === "string" && classifier.model.trim().length > 0
+    ? classifier.model.trim()
+    : null;
+  return {
+    mode: routing?.mode === "ai_assist" ? "ai_assist" : "rules_only",
+    classifier: {
+      kind: "local_runner",
+      runner: typeof classifier.runner === "string" && classifier.runner.trim() ? classifier.runner.trim() : "codex",
+      model,
+      confidenceThreshold: typeof classifier.confidenceThreshold === "number" && Number.isFinite(classifier.confidenceThreshold)
+        ? Math.min(1, Math.max(0, classifier.confidenceThreshold))
+        : 0.8,
+      fallbackBehavior: normalizeRoutingFallbackBehaviorLike(classifier.fallbackBehavior),
+      timeoutMs: Number.isInteger(classifier.timeoutMs) && Number(classifier.timeoutMs) > 0 ? Number(classifier.timeoutMs) : DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS,
+    },
+  };
+}
+
+function normalizeRoutingFallbackBehaviorLike(value: unknown): "require_suitable_agent" | "assign_closest_match" {
+  const normalized = typeof value === "string" ? value.trim().replace(/-/gu, "_") : "";
+  if (normalized === "assign_closest_match") {
+    return "assign_closest_match";
+  }
+  return "require_suitable_agent";
 }
 
 export function primaryRepoFromConfig(config: SetupConfigLike | null): ConnectedRepo | null {

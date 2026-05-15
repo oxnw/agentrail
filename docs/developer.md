@@ -86,6 +86,42 @@ agentrail provider connect linear
 
 The CLI writes local provider env files and masks secret prompts.
 
+## AI Routing Configuration
+
+AgentRail routing has two setup modes:
+
+- `rules_only`: deterministic rules route or triage work. No model is called.
+- `ai_assist`: AgentRail can use AI to route tasks to the right agents.
+  If AI routing cannot find a suitable agent, setup can require a suitable
+  agent and retry when agents change, or assign the closest match as a
+  best-effort decision.
+
+AI routing uses the same local runner family as managed agents. It does not
+require provider API keys for LLM calls in this repo. Configure it during init:
+
+```bash
+agentrail init \
+  --routing-mode ai-assist \
+  --routing-classifier-runner codex \
+  --routing-classifier-model gpt-5.4-mini
+```
+
+Supported local AI routing runner executables:
+
+| Runner | Executable checked by doctor | Notes |
+| --- | --- | --- |
+| `codex` | `codex` | Runs the AI routing prompt through the local Codex CLI. |
+| `claude-code` | `claude` | Uses Claude Code's local CLI. |
+| `cursor` | `cursor-agent` | Requires the Cursor agent CLI, not only the GUI app. |
+
+`agentrail doctor` verifies the configured executable is on `PATH`, but it does
+not make a model call. Runtime AI routing receives bounded issue text only:
+title, labels, repo, project, issue type, priority, and a truncated body
+preview. Local runner classification defaults to a 180 second timeout; slow
+local runners can raise `routing.classifier.timeoutMs` in `config.json` up to
+600 seconds. Timeout failures leave the task for triage instead of forcing an
+unsafe assignment.
+
 ## API Contracts
 
 - [Task lifecycle OpenAPI](./api/task-lifecycle.openapi.yaml)

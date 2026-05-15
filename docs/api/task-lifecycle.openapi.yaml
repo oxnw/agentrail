@@ -2349,7 +2349,7 @@ components:
           description: Triage queue id when deterministic routing did not assign an agent.
         assignmentSource:
           type: [string, 'null']
-          enum: [deterministic_rule, classifier, manual_triage, provider_assignee_mapping, null]
+          enum: [deterministic_rule, classifier, classifier_best_effort, manual_triage, provider_assignee_mapping, null]
           description: Source of the current assignment decision.
         routingDecisionId:
           type: [string, 'null']

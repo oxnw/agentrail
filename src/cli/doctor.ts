@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import {
   configPathForHome,
   currentAgentEnvPathForHome,
+  normalizeSetupConfigLike,
   operatorEnvPathForHome,
   primaryRepoFromConfig,
   readSetupConfigFromHome,
@@ -37,6 +39,14 @@ interface SetupConfigLike {
   server?: {
     baseUrl?: string;
   };
+  routing?: {
+    mode?: string;
+    classifier?: {
+      kind?: string;
+      runner?: string;
+      model?: string | null;
+    };
+  };
   repos?: Array<{
     path: string;
     slug: string;
@@ -45,7 +55,7 @@ interface SetupConfigLike {
 }
 
 interface DoctorCheck {
-  id: "health" | "auth" | "profile" | "routing" | "assigned_task_visibility";
+  id: "health" | "auth" | "profile" | "routing" | "ai_routing" | "assigned_task_visibility";
   ok: boolean;
   summary: string;
 }
@@ -56,6 +66,7 @@ interface DoctorInputs {
   agentId: string;
   expectedRepo: string | null;
   setupApiKey: string | null;
+  setupConfig: SetupConfigLike | null;
 }
 
 interface JsonResponse<T = unknown> {
@@ -244,6 +255,7 @@ async function resolveDoctorInputs({
     agentId: agentId!,
     expectedRepo,
     setupApiKey,
+    setupConfig: config,
   };
 }
 
@@ -349,6 +361,14 @@ async function runDoctorChecks(inputs: DoctorInputs, flags: DoctorFlags): Promis
         : "Set AGENTRAIL_OPERATOR_KEY to verify routing rule state.",
   });
   failedCheckId = failedCheckId ?? (routingOk ? null : "routing");
+
+  const classifierReadiness = checkClassifierReadiness(inputs.setupConfig);
+  checks.push({
+    id: "ai_routing",
+    ok: classifierReadiness.ok,
+    summary: classifierReadiness.summary,
+  });
+  failedCheckId = failedCheckId ?? (classifierReadiness.ok ? null : "ai_routing");
 
   const setupTaskVisibility = await findVisibleSetupTask(inputs);
   visibleTaskIdentifier = setupTaskVisibility.visibleTaskIdentifier;
@@ -591,10 +611,64 @@ async function getJson<T>({
 async function readSetupConfig(configPath: string): Promise<SetupConfigLike | null> {
   try {
     const content = await readFile(configPath, "utf8");
-    return JSON.parse(content) as SetupConfigLike;
+    return normalizeSetupConfigLike(JSON.parse(content) as SetupConfigLike) as SetupConfigLike | null;
   } catch {
     return null;
   }
+}
+
+function checkClassifierReadiness(config: SetupConfigLike | null): { ok: boolean; summary: string } {
+  const routing = config?.routing;
+  if (routing?.mode !== "ai_assist") {
+    return {
+      ok: true,
+      summary: "Rules-only routing configured; AI routing is not required.",
+    };
+  }
+
+  const classifier = routing.classifier ?? {};
+  if (classifier.kind && classifier.kind !== "local_runner") {
+    return {
+      ok: false,
+      summary: `AI routing kind "${classifier.kind}" is not supported by this doctor.`,
+    };
+  }
+
+  const runner = classifier.runner?.trim() || "codex";
+  const executable = classifierExecutableForRunner(runner);
+  if (!executable) {
+    return {
+      ok: false,
+      summary: `AI routing uses runner "${runner}", but no local executable mapping is configured.`,
+    };
+  }
+
+  if (!commandExists(executable)) {
+    return {
+      ok: false,
+      summary: `AI routing expects runner "${runner}" via executable "${executable}", but it was not found on PATH.`,
+    };
+  }
+
+  const model = typeof classifier.model === "string" && classifier.model.trim().length > 0
+    ? classifier.model.trim()
+    : "runner default";
+  return {
+    ok: true,
+    summary: `AI routing can use "${runner}" via "${executable}" with model/profile ${model}.`,
+  };
+}
+
+function classifierExecutableForRunner(runner: string): string | null {
+  if (runner === "codex") return "codex";
+  if (runner === "claude-code") return "claude";
+  if (runner === "cursor") return "cursor-agent";
+  return null;
+}
+
+function commandExists(command: string): boolean {
+  const executable = process.platform === "win32" ? "where" : "which";
+  return spawnSync(executable, [command], { stdio: "ignore" }).status === 0;
 }
 
 async function readAgentEnvFiles({

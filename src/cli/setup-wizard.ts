@@ -1,10 +1,13 @@
 import {
   buildInitCommand,
   createSetupConfig,
+  normalizeRoutingFallbackBehavior,
   type CreateSetupConfigOptions,
   type DetectedRepoContext,
   type PersistenceKind,
   type ProviderMode,
+  type RoutingFallbackBehavior,
+  type RoutingMode,
   type SetupConfig,
   type SetupMode,
 } from "./setup-config.ts";
@@ -22,6 +25,11 @@ export interface InitFlags {
   baseUrl?: string;
   persistence?: PersistenceKind;
   providerMode?: ProviderMode;
+  routingMode?: RoutingMode;
+  routingClassifierRunner?: string;
+  routingClassifierModel?: string | null;
+  routingConfidenceThreshold?: number;
+  routingFallbackBehavior?: RoutingFallbackBehavior;
   repo?: string;
   repoAllowlist?: string[];
   defaultBranch?: string;
@@ -88,6 +96,22 @@ export async function runSetupWizard({
     detectedBaseUrl,
   );
   const providerMode = flags.providerMode ?? "real";
+  const routingMode = flags.routingMode ?? await promptRoutingMode(prompt);
+  const routingClassifierRunner = flags.routingClassifierRunner ?? (routingMode === "ai_assist"
+    ? await promptClassifierRunner(prompt)
+    : "codex");
+  const routingClassifierModel = flags.routingClassifierModel !== undefined
+    ? flags.routingClassifierModel
+      : routingMode === "ai_assist"
+      ? resolveOptionalPromptValue(await prompt.input({
+          message: "AI routing model/profile",
+          defaultValue: "",
+        }))
+      : null;
+  const routingConfidenceThreshold = flags.routingConfidenceThreshold ?? 0.8;
+  const routingFallbackBehavior = flags.routingFallbackBehavior ?? (routingMode === "ai_assist"
+    ? await promptNoSuitableAgentPolicy(prompt)
+    : "require_suitable_agent");
   const markdownExport = flags.markdownExport ?? await prompt.confirm({
     message: "Enable Markdown/Obsidian export?",
     defaultValue: false,
@@ -104,6 +128,11 @@ export async function runSetupWizard({
     baseUrl,
     persistence: flags.persistence,
     providerMode,
+    routingMode,
+    routingClassifierRunner,
+    routingClassifierModel,
+    routingConfidenceThreshold,
+    routingFallbackBehavior,
     repoPath,
     repoAllowlist,
     defaultBranch,
@@ -121,6 +150,14 @@ export async function runSetupWizard({
       `- Default branch: ${defaultBranch}`,
       `- Local API base URL: ${baseUrl}`,
       `- Provider mode: ${providerMode}`,
+      `- Routing mode: ${routingMode === "ai_assist" ? "Use AI to route tasks to the right agents" : "Rules only"}`,
+      ...(routingMode === "ai_assist"
+        ? [
+            `- AI routing runner: ${routingClassifierRunner}`,
+            `- AI routing model/profile: ${routingClassifierModel ?? "runner default"}`,
+            `- No suitable agent policy: ${describeRoutingFallbackBehavior(routingFallbackBehavior)}`,
+          ]
+        : []),
       `- Markdown export: ${markdownExport ? "enabled" : "disabled"}`,
       "",
       "Nothing is written until you answer yes.",
@@ -165,6 +202,62 @@ export async function runSetupWizard({
 
 function resolvePromptValue(value: string, fallback: string): string {
   return value.trim() || fallback;
+}
+
+function resolveOptionalPromptValue(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+async function promptRoutingMode(prompt: PromptSession): Promise<RoutingMode> {
+  return await prompt.select({
+    message: "Routing mode",
+    defaultValue: "rules_only",
+    choices: [
+      { value: "rules_only", label: "Rules only", hint: "Use labels, repos, projects, and explicit rules only." },
+      { value: "ai_assist", label: "Use AI", hint: "Use AI to route tasks to the right agents." },
+    ],
+  }) as RoutingMode;
+}
+
+async function promptClassifierRunner(prompt: PromptSession): Promise<string> {
+  return await prompt.select({
+    message: "AI routing runner",
+    defaultValue: "codex",
+    choices: [
+      { value: "codex", label: "Codex", hint: "Use the local Codex CLI." },
+      { value: "claude-code", label: "Claude Code", hint: "Use the local Claude Code CLI." },
+      { value: "cursor", label: "Cursor agent", hint: "Use cursor-agent when available." },
+      { value: "custom", label: "Custom", hint: "Reserved for a configured local AI routing command." },
+    ],
+  });
+}
+
+async function promptNoSuitableAgentPolicy(prompt: PromptSession): Promise<RoutingFallbackBehavior> {
+  const selected = await prompt.select({
+    message: "When AI routing cannot find a suitable agent",
+    defaultValue: "require_suitable_agent",
+    choices: [
+      {
+        value: "require_suitable_agent",
+        label: "Require a suitable agent",
+        hint: "Leave the task unassigned and show what agent skills or ownership areas are missing. AgentRail retries when agents change.",
+      },
+      {
+        value: "assign_closest_match",
+        label: "Assign the closest match",
+        hint: "Assign to the best available agent and record that AI routing made a best-effort choice.",
+      },
+    ],
+  });
+  return normalizeRoutingFallbackBehavior(selected);
+}
+
+function describeRoutingFallbackBehavior(value: RoutingFallbackBehavior): string {
+  if (value === "assign_closest_match") {
+    return "Assign the closest match";
+  }
+  return "Require a suitable agent - Leave the task unassigned and show what agent skills or ownership areas are missing. AgentRail retries when agents change.";
 }
 
 async function promptForRepoAllowlist({
@@ -240,6 +333,7 @@ export function acceptedDefaultsFromFlags(flags: InitFlags): boolean {
     || !flags.baseUrl
     || !flags.persistence
     || !flags.providerMode
+    || !flags.routingMode
     || !flags.repo
     || !flags.repoAllowlist?.length
     || !flags.defaultBranch
@@ -274,5 +368,10 @@ export function createSetupConfigFromFlags({
     repoAllowlist: flags.repoAllowlist,
     defaultBranch: flags.defaultBranch,
     markdownExport: flags.markdownExport,
+    routingMode: flags.routingMode,
+    routingClassifierRunner: flags.routingClassifierRunner,
+    routingClassifierModel: flags.routingClassifierModel,
+    routingConfidenceThreshold: flags.routingConfidenceThreshold,
+    routingFallbackBehavior: flags.routingFallbackBehavior,
   });
 }
