@@ -33,11 +33,13 @@ Operating rules:
 
 ## Claude Code
 
-Managed Claude Code runs should be launched through AgentRail:
+Normal local operation starts with `agentrail server start`, which keeps
+managed local agents awake. The command below is still useful when debugging a
+single Claude Code run:
 
 ```bash
 cd /path/to/target-repo
-agentrail agent run --agent-id agt_runner
+agentrail agent run --agent-id agt_runner --once
 ```
 
 The prompt passed by AgentRail already contains the assigned task. Claude should
@@ -49,11 +51,12 @@ agentrail agent report --status completed --summary "short completion summary" -
 
 ## Codex
 
-Managed Codex runs should also be launched through AgentRail:
+The same server-owned wake flow applies to Codex. Use the command below only
+when debugging a single Codex run outside the server supervisor:
 
 ```bash
 cd /path/to/target-repo
-agentrail agent run --agent-id agt_runner
+agentrail agent run --agent-id agt_runner --once
 ```
 
 The child Codex process should not query AgentRail. It receives a compact task

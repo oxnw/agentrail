@@ -166,7 +166,6 @@ interface JsonEnvelope<T> {
 }
 
 const DEFAULT_POLL_INTERVAL_SECONDS = 15;
-const DEFAULT_MAX_RUNS = 1;
 const DEFAULT_RUNNER_TIMEOUT_MS = 60 * 60 * 1000;
 const RUNNER_KILL_GRACE_MS = 5_000;
 
@@ -425,6 +424,7 @@ async function executeAgentRun({
   const apiKey = envState.values.AGENTRAIL_API_KEY ?? null;
   const runner = envState.values.AGENTRAIL_AGENT_RUNNER ?? "codex";
   const model = normalizeOptionalModel(envState.values.AGENTRAIL_AGENT_MODEL);
+  const maxRuns = flags.once ? 1 : flags.maxRuns;
   if (!agentId || !apiKey) {
     stderr.write("agentrail agent run requires AGENTRAIL_AGENT_ID and AGENTRAIL_API_KEY in the agent env file.\n");
     return 1;
@@ -442,6 +442,9 @@ async function executeAgentRun({
   let totalRuns = 0;
   let hadFailure = false;
   do {
+    if (maxRuns !== undefined && totalRuns >= maxRuns) {
+      return hadFailure ? 1 : 0;
+    }
     const activeRuns = runStore.countActiveRuns(agentId);
     const openSlots = Math.max(0, runCapacity - activeRuns);
     if (openSlots === 0) {
@@ -453,13 +456,16 @@ async function executeAgentRun({
       continue;
     }
 
+    const availableRunSlots = maxRuns === undefined
+      ? openSlots
+      : Math.min(openSlots, Math.max(0, maxRuns - totalRuns));
     const nextTasks = await selectRunnableTasks({
       baseUrl,
       apiKey,
       fetchImpl,
       agentId,
       runStore,
-      limit: Math.min(openSlots, flags.maxRuns ?? DEFAULT_MAX_RUNS),
+      limit: availableRunSlots,
     });
 
     if (nextTasks.length === 0) {
@@ -512,7 +518,7 @@ async function executeAgentRun({
           taskIdentifier: task.identifier,
           error: message,
         });
-        if ((flags.maxRuns ?? DEFAULT_MAX_RUNS) <= totalRuns) {
+        if (maxRuns !== undefined && maxRuns <= totalRuns) {
           return 1;
         }
         continue;
@@ -528,7 +534,7 @@ async function executeAgentRun({
         taskIdentifier: run.taskIdentifier,
         worktreePath: run.worktreePath,
       });
-      if ((flags.maxRuns ?? DEFAULT_MAX_RUNS) <= totalRuns) {
+      if (maxRuns !== undefined && maxRuns <= totalRuns) {
         return hadFailure ? 1 : 0;
       }
     }

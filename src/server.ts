@@ -13,6 +13,7 @@ import {
   DEFAULT_PROVIDER_CURSOR_STORE_PATH,
   type ConnectedRepo,
 } from "./cli/agentrail-home.ts";
+import { createLocalRunnerSupervisor } from "./cli/local-runner-supervisor.ts";
 import { loadEnvFile } from "./env-file.ts";
 import { AgentRailEventDeliveryController, AgentRailEventDeliveryWorker } from "./event-delivery-worker.ts";
 import { AgentRailEventSubscriptionStore } from "./event-subscription-store.ts";
@@ -121,6 +122,12 @@ export function startServer() {
       eventStore,
       worker: eventDeliveryWorker,
     });
+    const localRunnerSupervisor = createLocalRunnerSupervisor({
+      homePath: agentrailHome,
+      cwd: process.cwd(),
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
 
     server = createServer({
       store: eventStore,
@@ -143,13 +150,17 @@ export function startServer() {
 
     server.listen(port, host, () => {
       process.stdout.write(`✓ AgentRail API ready at ${publicBaseUrl}\n`);
+      void localRunnerSupervisor.start().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`Local runner supervisor failed to start: ${message}\n`);
+      });
     });
 
     process.on("SIGTERM", () => {
-      void shutdown([runtime.deliveryController, eventDeliveryController]);
+      void shutdown([runtime.deliveryController, eventDeliveryController, localRunnerSupervisor]);
     });
     process.on("SIGINT", () => {
-      void shutdown([runtime.deliveryController, eventDeliveryController]);
+      void shutdown([runtime.deliveryController, eventDeliveryController, localRunnerSupervisor]);
     });
     if (runtime.deliveryController) {
       runtime.deliveryController.start();
