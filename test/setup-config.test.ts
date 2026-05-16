@@ -48,9 +48,28 @@ test("createSetupConfig derives server defaults from repo detection", () => {
   assert.equal(config.routing.classifier.confidenceThreshold, 0.8);
   assert.equal(config.routing.classifier.fallbackBehavior, "require_suitable_agent");
   assert.equal(config.routing.classifier.timeoutMs, 180_000);
+  assert.equal(config.runnerPolicy.preset, "strict");
+  assert.equal(config.runnerPolicy.network.mode, "agentrail_local_only");
+  assert.equal(config.runnerPolicy.publish.mode, "agentrail_owned");
   assert.deepEqual(config.repos.map((repo) => repo.slug), ["oxnw/agentrail"]);
   assert.equal(config.repos[0].defaultBranch, "main");
   assert.equal(config.exports.markdown.enabled, false);
+});
+
+test("createSetupConfig preserves explicit runner policy preset", () => {
+  const config = createSetupConfig({
+    cwd: detectedRepo.repoPath,
+    detectedRepo,
+    interactionMode: "interactive",
+    acceptedDefaults: false,
+    runnerPolicy: {
+      preset: "advisory",
+    },
+  });
+
+  assert.equal(config.runnerPolicy.preset, "advisory");
+  assert.equal(config.runnerPolicy.enforcementMode, "advisory");
+  assert.match(buildInitCommand(config), /--runner-policy advisory/);
 });
 
 test("createSetupConfig supports ai-assisted routing options", () => {
@@ -94,8 +113,29 @@ test("normalizeSetupConfigLike maps legacy AI routing fallback values to require
   });
 
   assert.ok(config);
+  assert.equal(config.runnerPolicy?.preset, "strict");
   assert.equal(config.routing?.classifier?.fallbackBehavior, "require_suitable_agent");
   assert.equal(config.routing?.classifier?.timeoutMs, 30_000);
+});
+
+test("normalizeSetupConfigLike preserves runner policy config for older callers", () => {
+  const config = normalizeSetupConfigLike({
+    version: 2,
+    runnerPolicy: {
+      preset: "balanced",
+      network: {
+        mode: "allowlist",
+        allowedHosts: ["registry.npmjs.org"],
+      },
+    },
+    providers: {},
+    repos: [],
+  });
+
+  assert.ok(config);
+  assert.equal(config.runnerPolicy?.preset, "balanced");
+  assert.equal(config.runnerPolicy?.network?.mode, "allowlist");
+  assert.deepEqual(config.runnerPolicy?.network?.allowedHosts, ["registry.npmjs.org"]);
 });
 
 test("normalizeSetupConfigLike fills missing AI routing timeout with the local runner default", () => {

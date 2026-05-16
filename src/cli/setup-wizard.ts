@@ -13,6 +13,7 @@ import {
 } from "./setup-config.ts";
 import { resolveAgentRailHome } from "./agentrail-home.ts";
 import { PromptCancelledError, type PromptSession } from "./prompt.ts";
+import { normalizeRunnerExecutionPolicy, type RunnerPolicyPreset } from "../runner-execution-policy.ts";
 
 export interface InitFlags {
   help?: boolean;
@@ -34,6 +35,7 @@ export interface InitFlags {
   repoAllowlist?: string[];
   defaultBranch?: string;
   markdownExport?: boolean;
+  runnerPolicyPreset?: RunnerPolicyPreset;
 }
 
 export interface SetupWizardResult {
@@ -112,6 +114,7 @@ export async function runSetupWizard({
   const routingFallbackBehavior = flags.routingFallbackBehavior ?? (routingMode === "ai_assist"
     ? await promptNoSuitableAgentPolicy(prompt)
     : "require_suitable_agent");
+  const runnerPolicyPreset = flags.runnerPolicyPreset ?? await promptRunnerPolicyPreset(prompt);
   const markdownExport = flags.markdownExport ?? await prompt.confirm({
     message: "Enable Markdown/Obsidian export?",
     defaultValue: false,
@@ -133,6 +136,7 @@ export async function runSetupWizard({
     routingClassifierModel,
     routingConfidenceThreshold,
     routingFallbackBehavior,
+    runnerPolicy: normalizeRunnerExecutionPolicy({ preset: runnerPolicyPreset }),
     repoPath,
     repoAllowlist,
     defaultBranch,
@@ -158,6 +162,7 @@ export async function runSetupWizard({
             `- No suitable agent policy: ${describeRoutingFallbackBehavior(routingFallbackBehavior)}`,
           ]
         : []),
+      `- Local agent access: ${describeRunnerPolicyPreset(runnerPolicyPreset)}`,
       `- Markdown export: ${markdownExport ? "enabled" : "disabled"}`,
       "",
       "Nothing is written until you answer yes.",
@@ -198,6 +203,35 @@ export async function runSetupWizard({
     command: buildInitCommand(config),
     planLines: [],
   };
+}
+
+async function promptRunnerPolicyPreset(prompt: PromptSession): Promise<RunnerPolicyPreset> {
+  return await prompt.select({
+    message: "Local agent access",
+    defaultValue: "strict",
+    choices: [
+      {
+        value: "strict",
+        label: "Strict",
+        hint: "Fail closed unless AgentRail can enforce local runner access to files, network, credentials, and publishing.",
+      },
+      {
+        value: "balanced",
+        label: "Balanced",
+        hint: "Start locked down, but allow configured development exceptions such as package registry access.",
+      },
+      {
+        value: "advisory",
+        label: "Advisory",
+        hint: "Strip secrets and guide the runner, but do not require full local enforcement.",
+      },
+      {
+        value: "external_sandbox",
+        label: "External sandbox",
+        hint: "Use when you wrap local agents in Docker, a devcontainer, or another sandbox.",
+      },
+    ],
+  }) as RunnerPolicyPreset;
 }
 
 function resolvePromptValue(value: string, fallback: string): string {
@@ -258,6 +292,13 @@ function describeRoutingFallbackBehavior(value: RoutingFallbackBehavior): string
     return "Assign the closest match";
   }
   return "Require a suitable agent - Leave the task unassigned and show what agent skills or ownership areas are missing. AgentRail retries when agents change.";
+}
+
+function describeRunnerPolicyPreset(value: RunnerPolicyPreset): string {
+  if (value === "balanced") return "Balanced";
+  if (value === "advisory") return "Advisory";
+  if (value === "external_sandbox") return "External sandbox";
+  return "Strict";
 }
 
 async function promptForRepoAllowlist({
@@ -334,6 +375,7 @@ export function acceptedDefaultsFromFlags(flags: InitFlags): boolean {
     || !flags.persistence
     || !flags.providerMode
     || !flags.routingMode
+    || !flags.runnerPolicyPreset
     || !flags.repo
     || !flags.repoAllowlist?.length
     || !flags.defaultBranch
@@ -373,5 +415,8 @@ export function createSetupConfigFromFlags({
     routingClassifierModel: flags.routingClassifierModel,
     routingConfidenceThreshold: flags.routingConfidenceThreshold,
     routingFallbackBehavior: flags.routingFallbackBehavior,
+    runnerPolicy: flags.runnerPolicyPreset
+      ? normalizeRunnerExecutionPolicy({ preset: flags.runnerPolicyPreset })
+      : undefined,
   });
 }

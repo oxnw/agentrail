@@ -11,6 +11,7 @@ import {
   readSetupConfigFromHome,
   resolveAgentRailHome,
 } from "./agentrail-home.ts";
+import { compileRunnerExecutionPlan, validateRunnerPolicyPlan } from "../runner-execution-policy.ts";
 
 interface Writer {
   write(chunk: string | Uint8Array): boolean;
@@ -47,6 +48,7 @@ interface SetupConfigLike {
       model?: string | null;
     };
   };
+  runnerPolicy?: Record<string, unknown>;
   repos?: Array<{
     path: string;
     slug: string;
@@ -55,7 +57,7 @@ interface SetupConfigLike {
 }
 
 interface DoctorCheck {
-  id: "health" | "auth" | "profile" | "routing" | "ai_routing" | "assigned_task_visibility";
+  id: "health" | "auth" | "profile" | "routing" | "ai_routing" | "runner_policy" | "assigned_task_visibility";
   ok: boolean;
   summary: string;
 }
@@ -67,6 +69,7 @@ interface DoctorInputs {
   expectedRepo: string | null;
   setupApiKey: string | null;
   setupConfig: SetupConfigLike | null;
+  agentRunner: string;
 }
 
 interface JsonResponse<T = unknown> {
@@ -229,6 +232,9 @@ async function resolveDoctorInputs({
       ?? process.env.AGENTRAIL_REPO_ALLOWLIST
       ?? envFileValues.AGENTRAIL_REPO_ALLOWLIST,
   );
+  const agentRunner = process.env.AGENTRAIL_AGENT_RUNNER
+    ?? envFileValues.AGENTRAIL_AGENT_RUNNER
+    ?? "codex";
   const expectedRepo = repoAllowlist[0] ?? primaryRepoFromConfig(config)?.slug ?? null;
   const setupApiKey = flags.setupApiKey
     ?? process.env.AGENTRAIL_OPERATOR_KEY
@@ -256,6 +262,7 @@ async function resolveDoctorInputs({
     expectedRepo,
     setupApiKey,
     setupConfig: config,
+    agentRunner,
   };
 }
 
@@ -369,6 +376,14 @@ async function runDoctorChecks(inputs: DoctorInputs, flags: DoctorFlags): Promis
     summary: classifierReadiness.summary,
   });
   failedCheckId = failedCheckId ?? (classifierReadiness.ok ? null : "ai_routing");
+
+  const runnerPolicyReadiness = checkRunnerPolicyReadiness(inputs);
+  checks.push({
+    id: "runner_policy",
+    ok: runnerPolicyReadiness.ok,
+    summary: runnerPolicyReadiness.summary,
+  });
+  failedCheckId = failedCheckId ?? (runnerPolicyReadiness.ok ? null : "runner_policy");
 
   const setupTaskVisibility = await findVisibleSetupTask(inputs);
   visibleTaskIdentifier = setupTaskVisibility.visibleTaskIdentifier;
@@ -656,6 +671,44 @@ function checkClassifierReadiness(config: SetupConfigLike | null): { ok: boolean
   return {
     ok: true,
     summary: `AI routing can use "${runner}" via "${executable}" with model/profile ${model}.`,
+  };
+}
+
+function checkRunnerPolicyReadiness(inputs: DoctorInputs): { ok: boolean; summary: string } {
+  const plan = compileRunnerExecutionPlan({
+    runner: inputs.agentRunner,
+    model: null,
+    policy: inputs.setupConfig?.runnerPolicy ?? null,
+    worktreePath: "/tmp/agentrail-doctor-worktree",
+    runDir: "/tmp/agentrail-doctor-run",
+    recipePath: "/tmp/agentrail-doctor-run/agent-recipes.md",
+    prompt: "doctor policy check",
+    baseEnv: process.env,
+    values: {
+      AGENTRAIL_RUN_ID: "run_doctor",
+      AGENTRAIL_BASE_URL: inputs.baseUrl,
+      AGENTRAIL_AGENT_ID: inputs.agentId,
+      AGENTRAIL_RUN_CONTEXT_PATH: "/tmp/agentrail-doctor-run/context.json",
+      AGENTRAIL_RUN_REPORT_PATH: "/tmp/agentrail-doctor-run/reports.jsonl",
+    },
+  });
+  const validation = validateRunnerPolicyPlan(plan);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      summary: `Runner policy for "${inputs.agentRunner}" is not enforceable: ${validation.reasons.join("; ")}`,
+    };
+  }
+  if (!commandExists(plan.executable)) {
+    return {
+      ok: false,
+      summary: `Runner policy for "${inputs.agentRunner}" plans executable "${plan.executable}", but it was not found on PATH.`,
+    };
+  }
+  const strengths = [...new Set(plan.enforcement.map((item) => item.strength))].join(", ");
+  return {
+    ok: true,
+    summary: `Runner policy for "${inputs.agentRunner}" can launch as ${plan.executable}; enforcement levels: ${strengths}.`,
   };
 }
 

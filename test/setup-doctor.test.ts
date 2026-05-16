@@ -14,6 +14,24 @@ import {
 import { currentAgentEnvPathForHome } from "../src/cli/agentrail-home.ts";
 import { createMemoryWriter } from "./helpers/memory-writer.ts";
 
+let previousDoctorPath: string | undefined;
+let doctorBinDir: string | null = null;
+
+test.before(async () => {
+  previousDoctorPath = process.env.PATH;
+  doctorBinDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-bin-"));
+  await installFakeExecutable(doctorBinDir, "codex");
+  process.env.PATH = `${doctorBinDir}${path.delimiter}${previousDoctorPath ?? ""}`;
+});
+
+test.after(async () => {
+  if (previousDoctorPath === undefined) delete process.env.PATH;
+  else process.env.PATH = previousDoctorPath;
+  if (doctorBinDir) {
+    await rm(doctorBinDir, { recursive: true, force: true });
+  }
+});
+
 test("agentrail doctor fails when setup state exists but no assigned onboarding task is visible", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-fail-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
@@ -188,6 +206,8 @@ test("agentrail doctor honors an explicit --env-file over the shared current-age
 
   assert.equal(exitCode, 0, stderr.toString());
   assert.match(stdout.toString(), /AgentRail doctor passed/i);
+  assert.match(stdout.toString(), /PASS runner_policy/i);
+  assert.match(stdout.toString(), /Runner policy for "codex"/i);
   assert.equal(stderr.toString(), "");
 });
 
@@ -254,6 +274,62 @@ test("agentrail doctor verifies AI routing can launch the configured local runne
   assert.match(stdout.toString(), /PASS ai_routing/i);
   assert.match(stdout.toString(), /gpt-test/i);
   assert.equal(stderr.toString(), "");
+});
+
+test("agentrail doctor fails runner policy when the selected runner executable is missing", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-doctor-runner-missing-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousSetupApiKey = process.env.AGENTRAIL_SETUP_API_KEY;
+  const previousHome = process.env.AGENTRAIL_HOME;
+  const previousPath = process.env.PATH;
+  let harness: SetupDoctorHarness | null = null;
+  t.after(async () => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await createCleanup({
+      previousSetupApiKey,
+      previousHome,
+      repoRoot,
+      homePath,
+      getHarness: () => harness,
+    })();
+  });
+  process.env.AGENTRAIL_HOME = homePath;
+  process.env.PATH = "";
+
+  harness = await createSetupDoctorHarness();
+  process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;
+
+  await seedSetupVerificationTask({
+    baseUrl: harness.baseUrl,
+    operatorApiKey: harness.operatorApiKey,
+    agentId: harness.agentId,
+  });
+
+  await writeDoctorRepo({
+    repoRoot,
+    homePath,
+    baseUrl: harness.baseUrl,
+    agentApiKey: harness.agentApiKey,
+    agentId: harness.agentId,
+    repoAllowlist: harness.repoAllowlist,
+  });
+
+  const exitCode = await runCli(["doctor"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.match(stderr.toString(), /FAIL runner_policy/i);
+  assert.match(stderr.toString(), /codex/);
+  assert.match(stderr.toString(), /not found on PATH/i);
+  assert.equal(stdout.toString(), "");
 });
 
 test("agentrail doctor fails AI routing when no local executable mapping exists", async (t) => {
@@ -339,4 +415,16 @@ function createCleanup({
       await getHarness()?.close();
     }
   };
+}
+
+async function installFakeExecutable(binDir: string, name: string): Promise<void> {
+  await mkdir(binDir, { recursive: true });
+  const executableName = process.platform === "win32" ? `${name}.cmd` : name;
+  const executablePath = path.join(binDir, executableName);
+  await writeFile(
+    executablePath,
+    process.platform === "win32" ? "@echo off\r\nexit /B 0\r\n" : "#!/bin/sh\nexit 0\n",
+    "utf8",
+  );
+  await chmod(executablePath, 0o755);
 }

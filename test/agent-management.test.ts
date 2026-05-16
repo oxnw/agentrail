@@ -17,6 +17,7 @@ import { RoutingControlPlane } from "../src/intake-routing-control-plane.ts";
 import { RoutingRuleStore } from "../src/routing-rule-store.ts";
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
+import { installFakeExecutableOnPath } from "./helpers/fake-executable.ts";
 
 const now = () => new Date("2026-05-06T12:00:00Z");
 
@@ -28,6 +29,7 @@ test("agent create provisions a managed local agent and doctor passes", async (t
   const stderr = createMemoryWriter();
   const previousHome = process.env.AGENTRAIL_HOME;
   process.env.AGENTRAIL_HOME = homePath;
+  await installFakeExecutableOnPath(t, homePath, "codex");
 
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
@@ -92,6 +94,7 @@ test("agent create auto-generates agent ids and honors explicit env file paths",
   const stderr = createMemoryWriter();
   const previousHome = process.env.AGENTRAIL_HOME;
   process.env.AGENTRAIL_HOME = homePath;
+  await installFakeExecutableOnPath(t, homePath, "codex");
 
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
@@ -154,6 +157,7 @@ test("agent create normalizes localhost base URLs from the environment", async (
   const previousBaseUrl = process.env.AGENTRAIL_BASE_URL;
   process.env.AGENTRAIL_HOME = homePath;
   process.env.AGENTRAIL_BASE_URL = harness.baseUrl.replace(/^https?:\/\//u, "");
+  await installFakeExecutableOnPath(t, homePath, "codex");
 
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
@@ -255,6 +259,7 @@ test("agent create interactive permission preset grants expected scopes", async 
   const stderr = createMemoryWriter();
   const previousHome = process.env.AGENTRAIL_HOME;
   process.env.AGENTRAIL_HOME = homePath;
+  await installFakeExecutableOnPath(t, homePath, "codex");
   const prompt = new ScriptedPromptSession([
     { kind: "select", value: "codex" },
     { kind: "input", value: "gpt-test" },
@@ -324,6 +329,7 @@ test("agent update rotates scopes, refreshes env files, and updates managed rout
   const stderr = createMemoryWriter();
   const previousHome = process.env.AGENTRAIL_HOME;
   process.env.AGENTRAIL_HOME = homePath;
+  await installFakeExecutableOnPath(t, homePath, "codex");
 
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
@@ -423,6 +429,7 @@ test("agent update replays the same rotation request and later accepts a differe
   const harness = await createHarness();
   const previousHome = process.env.AGENTRAIL_HOME;
   process.env.AGENTRAIL_HOME = homePath;
+  await installFakeExecutableOnPath(t, homePath, "codex");
 
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
@@ -560,6 +567,7 @@ test("agent create does not write env files when verification fails after key cr
   const stderr = createMemoryWriter();
   const previousHome = process.env.AGENTRAIL_HOME;
   process.env.AGENTRAIL_HOME = homePath;
+  await installFakeExecutableOnPath(t, homePath, "codex");
 
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
