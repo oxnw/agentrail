@@ -3,6 +3,7 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 
 import { DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS } from "../routing-classifier-config.ts";
+import { normalizeRunnerExecutionPolicy, type RunnerExecutionPolicyLike } from "../runner-execution-policy.ts";
 
 export interface ConnectedRepo {
   path: string;
@@ -72,6 +73,7 @@ export interface SetupConfigLike {
       timeoutMs?: number;
     };
   };
+  runnerPolicy?: RunnerExecutionPolicyLike;
   repos?: ConnectedRepo[];
   targetRepo?: {
     path?: string;
@@ -153,12 +155,14 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
   const normalizedProviders = normalizeProviders(config.providers);
   const normalizedPersistence = normalizePersistence(config.persistence);
   const normalizedRouting = normalizeRouting(config.routing);
+  const runnerPolicy = normalizeRunnerExecutionPolicy(config.runnerPolicy);
   if (Array.isArray(config.repos)) {
     return {
       ...config,
       persistence: normalizedPersistence,
       providers: normalizedProviders,
       routing: normalizedRouting,
+      runnerPolicy,
       repos: config.repos
         .filter((repo): repo is ConnectedRepo => Boolean(repo?.path && repo?.slug && repo?.defaultBranch))
         .map((repo) => ({
@@ -178,6 +182,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
       persistence: normalizedPersistence,
       providers: normalizedProviders,
       routing: normalizedRouting,
+      runnerPolicy,
       repos: [{
         path: legacyPath,
         slug: legacySlug,
@@ -191,6 +196,7 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
     persistence: normalizedPersistence,
     providers: normalizedProviders,
     routing: normalizedRouting,
+    runnerPolicy,
     repos: [],
   };
 }

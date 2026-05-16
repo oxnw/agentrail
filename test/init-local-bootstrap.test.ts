@@ -10,6 +10,7 @@ import { runCli } from "../src/cli/index.ts";
 import { withTemporaryLocalServer } from "../src/cli/local-bootstrap.ts";
 import { createSetupConfig } from "../src/cli/setup-config.ts";
 import { AgentAuthStore } from "../src/agent-auth-store.ts";
+import { installFakeExecutableOnPath } from "./helpers/fake-executable.ts";
 
 test("init creates local operator state and writes local setup env files", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-init-local-"));
@@ -107,6 +108,7 @@ test("standalone agent create starts a temporary local server when the configure
     detectRepoContext,
   });
   assert.equal(initExitCode, 0, stderr.toString());
+  await installFakeExecutableOnPath(t, agentrailHome, "codex");
 
   const createExitCode = await runCli([
     "agent",

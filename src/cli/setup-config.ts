@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS } from "../routing-classifier-config.ts";
+import { normalizeRunnerExecutionPolicy, type RunnerExecutionPolicy, type RunnerExecutionPolicyLike } from "../runner-execution-policy.ts";
 import type { ConnectedRepo } from "./agentrail-home.ts";
 
 export type SetupMode = "server";
@@ -100,6 +101,7 @@ export interface SetupConfig {
       timeoutMs: number;
     };
   };
+  runnerPolicy: RunnerExecutionPolicy;
   repos: ConnectedRepo[];
 }
 
@@ -123,6 +125,7 @@ export interface CreateSetupConfigOptions {
   routingClassifierModel?: string | null;
   routingConfidenceThreshold?: number;
   routingFallbackBehavior?: RoutingFallbackBehavior;
+  runnerPolicy?: RunnerExecutionPolicyLike;
 }
 
 export interface SafetyValidation {
@@ -153,6 +156,7 @@ export function createSetupConfig({
   routingClassifierModel = null,
   routingConfidenceThreshold = 0.8,
   routingFallbackBehavior = "require_suitable_agent",
+  runnerPolicy,
 }: CreateSetupConfigOptions): SetupConfig {
   const repoRoot = path.resolve(cwd, repoPath ?? detectedRepo.repoPath ?? cwd);
   const resolvedServer = resolveServer({
@@ -229,6 +233,7 @@ export function createSetupConfig({
         timeoutMs: DEFAULT_ROUTING_CLASSIFIER_TIMEOUT_MS,
       },
     },
+    runnerPolicy: normalizeRunnerExecutionPolicy(runnerPolicy),
     repos: [{
       path: repoRoot,
       slug: allowlist[0] ?? detectedRepo.remoteSlug ?? repoRoot,
@@ -280,6 +285,9 @@ export function buildInitCommand(config: SetupConfig): string {
 
   if (config.exports.markdown.enabled) {
     parts.push("--markdown-export");
+  }
+  if (config.runnerPolicy.preset !== "strict") {
+    parts.push(`--runner-policy ${config.runnerPolicy.preset.replace(/_/gu, "-")}`);
   }
   if (config.routing.mode !== "rules_only") {
     parts.push("--routing-mode ai-assist");

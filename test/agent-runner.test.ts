@@ -144,7 +144,13 @@ test("agent run --once starts assigned work, records the run, and writes markdow
       prepareWorktree: async ({ worktreePath }) => {
         await initGitWorktree(worktreePath);
       },
-      launchRunner: async ({ logPath, prompt, env, handoffPath, worktreePath, recipePath }) => {
+      launchRunner: async ({ logPath, prompt, env, handoffPath, worktreePath, recipePath, executable, args }) => {
+        assert.equal(executable, "codex");
+        assert.ok(args.includes("--ignore-user-config"));
+        assert.ok(args.includes("--ignore-rules"));
+        assert.ok(args.includes("--sandbox"));
+        assert.ok(args.includes("workspace-write"));
+        assert.equal(args.includes("shell_environment_policy.inherit=all"), false);
         assert.equal(env.AGENTRAIL_BASE_URL, harness.baseUrl);
         assert.equal(env.AGENTRAIL_API_KEY, undefined);
         assert.equal(env.AGENTRAIL_OPERATOR_KEY, undefined);
@@ -156,6 +162,8 @@ test("agent run --once starts assigned work, records the run, and writes markdow
         assert.equal(env.AGENTRAIL_HANDOFF_PATH, handoffPath);
         assert.match(env.AGENTRAIL_RUN_ID ?? "", /^run_/u);
         assert.match(env.AGENTRAIL_RUN_CONTEXT_TOKEN ?? "", /^arrun_/u);
+        assert.equal(args.join("\n").includes("AGENTRAIL_RUN_CONTEXT_TOKEN"), false);
+        assert.equal(args.join("\n").includes(env.AGENTRAIL_RUN_CONTEXT_TOKEN ?? ""), false);
         const runContextPath = env.AGENTRAIL_RUN_CONTEXT_PATH;
         assert.ok(runContextPath, "AGENTRAIL_RUN_CONTEXT_PATH must be defined");
         const context = JSON.parse(await readFile(runContextPath, "utf8"));
@@ -210,25 +218,21 @@ test("agent run --once starts assigned work, records the run, and writes markdow
   assert.ok(runs[0].runContextTokenIssuedAt);
   assert.ok(runs[0].handoffPath, "handoffPath must be defined");
   assert.ok(runs[0].promptPath, "promptPath must be defined");
-  assert.deepEqual(runs[0].launch, {
-    executable: "codex",
-    args: [
-      "-a",
-      "never",
-      "-c",
-      "shell_environment_policy.inherit=all",
-      "exec",
-      "--sandbox",
-      "workspace-write",
-      "--ignore-user-config",
-      "--cd",
-      runs[0].worktreePath,
-      "--add-dir",
-      path.dirname(runs[0].handoffPath),
-      "--json",
-      "-",
-    ],
-  });
+  assert.equal(runs[0].launch.executable, "codex");
+  assert.deepEqual(runs[0].launch.args.slice(0, 4), ["-a", "never", "-c", "shell_environment_policy.inherit=core"]);
+  assert.ok(runs[0].launch.args.includes("exec"));
+  assert.ok(runs[0].launch.args.includes("--sandbox"));
+  assert.ok(runs[0].launch.args.includes("workspace-write"));
+  assert.ok(runs[0].launch.args.includes("--ignore-user-config"));
+  assert.ok(runs[0].launch.args.includes("--ignore-rules"));
+  assert.ok(runs[0].launch.args.includes("--cd"));
+  assert.ok(runs[0].launch.args.includes(runs[0].worktreePath));
+  assert.ok(runs[0].launch.args.includes("--add-dir"));
+  assert.ok(runs[0].launch.args.includes(path.dirname(runs[0].handoffPath)));
+  assert.ok(runs[0].launch.args.includes("--json"));
+  assert.ok(runs[0].launch.args.includes("-"));
+  assert.equal(runs[0].launch.args.includes("shell_environment_policy.inherit=all"), false);
+  assert.equal(runs[0].launch.args.join("\n").includes("AGENTRAIL_RUN_CONTEXT_TOKEN"), false);
 
   const promptText = await readFile(runs[0].promptPath, "utf8");
   assert.match(promptText, /AGEA-RUN-001/);
@@ -1796,7 +1800,7 @@ test("agent run records a user handoff without submitting the task", async (t) =
   assert.equal(run.summary, "Could not validate the task.");
 });
 
-test("agent run blocks the task when Cursor opens for manual continuation", async (t) => {
+test("agent run blocks Cursor in strict mode when runner policy cannot be enforced", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-cursor-manual-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
   const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
@@ -1866,7 +1870,7 @@ test("agent run blocks the task when Cursor opens for manual continuation", asyn
         await mkdir(worktreePath, { recursive: true });
       },
       publishBranch: async () => {
-        throw new Error("publish should not run for Cursor manual continuation");
+        throw new Error("publish should not run when Cursor policy is rejected");
       },
     },
   });
@@ -1877,15 +1881,252 @@ test("agent run blocks the task when Cursor opens for manual continuation", asyn
   assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
   assert.equal(storedTask?.blocker?.kind, "awaiting_user");
   assert.equal(storedTask?.blocker?.sourceAgentId, "agt_runner");
-  assert.equal(storedTask?.blocker?.reason, "manual_runner_continuation");
+  assert.equal(storedTask?.blocker?.reason, "runner_policy_not_enforced");
+  assert.match(storedTask?.blocker?.actionRequired ?? "", /external sandbox|advisory mode/i);
 
   const runStore = new AgentRunStore({ storagePath: agentRunStorePath });
   const [run] = runStore.listRuns();
   assert.equal(run.status, "awaiting_user");
   assert.equal(run.userAction?.kind, "awaiting_user");
   assert.equal(run.userAction?.taskId, task.id);
-  assert.equal(run.userAction?.reason, "manual_runner_continuation");
-  assert.match(run.summary ?? "", /Cursor/);
+  assert.equal(run.userAction?.reason, "runner_policy_not_enforced");
+  assert.match(run.summary ?? "", /Runner policy cannot be enforced for cursor/);
+});
+
+test("agent run blocks before launching Codex when denied read files are present", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-denied-preflight-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
+  const harness = await createHarness({ agentRunStorePath });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  const task = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-DENIED-PREFLIGHT",
+    title: "Do not expose denied files",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "todo",
+    availableActions: ["start"],
+  });
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  const exitCode = await runCli(["agent", "run", "--once"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+        await writeFile(path.join(worktreePath, ".env"), "SECRET=value\n", "utf8");
+      },
+      launchRunner: async () => {
+        throw new Error("launchRunner should not be called when policy preflight fails");
+      },
+      publishBranch: async () => {
+        throw new Error("publish should not run when policy preflight fails");
+      },
+    },
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.equal(storedTask?.blocker?.reason, "runner_policy_denied_files_present");
+  assert.match(storedTask?.blocker?.actionRequired ?? "", /\.env/);
+
+  const runStore = new AgentRunStore({ storagePath: agentRunStorePath });
+  const [run] = runStore.listRuns();
+  assert.equal(run.status, "awaiting_user");
+  assert.equal(run.userAction?.reason, "runner_policy_denied_files_present");
+  assert.match(run.summary ?? "", /\.env/);
+});
+
+test("agent run blocks after Codex creates denied write files", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-denied-postrun-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
+  const harness = await createHarness({ agentRunStorePath });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  const task = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-DENIED-POSTRUN",
+    title: "Do not write denied files",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "todo",
+    availableActions: ["start"],
+  });
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  const exitCode = await runCli(["agent", "run", "--once"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+      },
+      launchRunner: async ({ logPath, worktreePath }) => {
+        await writeFile(logPath, "created denied file\n", "utf8");
+        await writeFile(path.join(worktreePath, ".env"), "SECRET=value\n", "utf8");
+        return {
+          status: "succeeded",
+          exitCode: 0,
+          summary: "Runner wrote a denied file.",
+        };
+      },
+      publishBranch: async () => {
+        throw new Error("publish should not run when policy post-run validation fails");
+      },
+    },
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.equal(storedTask?.blocker?.reason, "runner_policy_violation");
+  assert.match(storedTask?.blocker?.actionRequired ?? "", /created \.env/);
+
+  const runStore = new AgentRunStore({ storagePath: agentRunStorePath });
+  const [run] = runStore.listRuns();
+  assert.equal(run.status, "awaiting_user");
+  assert.equal(run.userAction?.reason, "runner_policy_violation");
+  assert.match(run.summary ?? "", /created \.env/);
+});
+
+test("agent run uses Cursor external sandbox wrappers instead of GUI fallback", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-cursor-wrapper-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
+  const harness = await createHarness({ agentRunStorePath });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  const previousPath = process.env.PATH;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await harness.close();
+  });
+
+  const binPath = path.join(homePath, "bin");
+  await mkdir(binPath, { recursive: true });
+  const resolverExecutable = process.platform === "win32" ? "where.cmd" : "which";
+  const resolverPath = path.join(binPath, resolverExecutable);
+  await writeFile(
+    resolverPath,
+    process.platform === "win32" ? "@echo off\r\nexit /B 1\r\n" : "#!/bin/sh\nexit 1\n",
+    "utf8",
+  );
+  await chmod(resolverPath, 0o755);
+  process.env.PATH = `${binPath}${path.delimiter}${previousPath ?? ""}`;
+
+  const wrapperPath = path.join(binPath, "agentrail-cursor-wrapper");
+  await writeFile(
+    wrapperPath,
+    [
+      "#!/bin/sh",
+      "printf '%s\\n' '{\"version\":1,\"runId\":\"'\"$AGENTRAIL_RUN_ID\"'\",\"status\":\"blocked\",\"summary\":\"External sandbox wrapper ran.\",\"reason\":\"external_wrapper_ran\",\"actionRequired\":\"Review wrapper output.\",\"resumeInstructions\":\"Resolve the wrapper blocker.\"}' > \"$AGENTRAIL_RUN_REPORT_PATH\"",
+      "exit 0",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(wrapperPath, 0o755);
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false, {
+    runnerPolicy: {
+      preset: "external_sandbox",
+      externalSandbox: {
+        command: [wrapperPath],
+      },
+    },
+  });
+  const task = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-CURSOR-WRAPPER",
+    title: "Run Cursor through external sandbox",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "todo",
+    availableActions: ["start"],
+  });
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "cursor",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  const exitCode = await runCli(["agent", "run", "--once"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+      },
+      publishBranch: async () => {
+        throw new Error("publish should not run for wrapper blocker");
+      },
+    },
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.equal(storedTask?.blocker?.reason, "external_wrapper_ran");
+
+  const runStore = new AgentRunStore({ storagePath: agentRunStorePath });
+  const [run] = runStore.listRuns();
+  assert.equal(run.launch.executable, wrapperPath);
+  assert.equal(run.status, "awaiting_user");
+  assert.equal(run.userAction?.reason, "external_wrapper_ran");
 });
 
 test("agent run starts a resolved task with a historical awaiting_user run", async (t) => {
@@ -2281,7 +2522,13 @@ async function createHarness(options?: {
   };
 }
 
-async function writeSetupRepo(repoRoot: string, homePath: string, baseUrl: string, markdownExport: boolean) {
+async function writeSetupRepo(
+  repoRoot: string,
+  homePath: string,
+  baseUrl: string,
+  markdownExport: boolean,
+  options?: { runnerPolicy?: Parameters<typeof createSetupConfig>[0]["runnerPolicy"] },
+) {
   const config = createSetupConfig({
     cwd: repoRoot,
     detectedRepo: {
@@ -2295,6 +2542,7 @@ async function writeSetupRepo(repoRoot: string, homePath: string, baseUrl: strin
     baseUrl,
     providerMode: "disabled",
     markdownExport,
+    runnerPolicy: options?.runnerPolicy,
   });
   await writeSetupFiles({ homePath, config });
 }

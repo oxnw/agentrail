@@ -12,6 +12,7 @@ import {
   writeDoctorRepo,
 } from "./helpers/setup-doctor-fixture.ts";
 import { createMemoryWriter } from "./helpers/memory-writer.ts";
+import { installFakeExecutableOnPath } from "./helpers/fake-executable.ts";
 
 test("agentrail doctor passes after the full local onboarding smoke seeds profile, routing, and setup task state", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-onboarding-e2e-"));
@@ -34,6 +35,7 @@ test("agentrail doctor passes after the full local onboarding smoke seeds profil
     }
   });
   process.env.AGENTRAIL_HOME = homePath;
+  await installFakeExecutableOnPath(t, homePath, "codex");
 
   harness = await createSetupDoctorHarness();
   process.env.AGENTRAIL_SETUP_API_KEY = harness.operatorApiKey;

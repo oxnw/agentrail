@@ -143,6 +143,12 @@ function renderSetupReadme(config: SetupConfig): string {
       ? `- Local AI routing classifier timeout: ${Math.round(config.routing.classifier.timeoutMs / 1000)} seconds by default. Slow local runners can raise \`routing.classifier.timeoutMs\` up to 600 seconds in \`config.json\`.`
       : "",
     "",
+    "## Local agent access",
+    "",
+    `- Local agents use the \`${config.runnerPolicy.preset.replace(/_/gu, "-")}\` runner policy by default.`,
+    "- AgentRail strips broad provider credentials from managed child runners and keeps pull request creation, shipping, and rollback inside AgentRail unless you change the policy.",
+    "- `agentrail doctor` reports whether the selected local runner can enforce this policy.",
+    "",
     "## Next Steps",
     "",
     "1. Run `agentrail agent create` to choose a runner, choose permissions, and create another local agent.",
@@ -216,6 +222,9 @@ function renderPortableInitCommand(config: SetupConfig): string {
 
   if (config.exports.markdown.enabled) {
     parts.push("--markdown-export");
+  }
+  if (config.runnerPolicy.preset !== "strict") {
+    parts.push(`--runner-policy ${config.runnerPolicy.preset.replace(/_/gu, "-")}`);
   }
   if (config.routing.mode === "ai_assist") {
     parts.push("--routing-mode ai-assist");

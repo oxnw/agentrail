@@ -635,6 +635,12 @@ function parseInitArgs(argv: string[]): InitFlags {
           flags.routingFallbackBehavior = normalizeRoutingFallbackBehavior(rawValue);
         }
         break;
+      case "--runner-policy":
+        {
+          const rawValue = nextValue(argv, ++index, arg).replace(/-/gu, "_");
+          flags.runnerPolicyPreset = readEnum(rawValue, ["strict", "balanced", "advisory", "external_sandbox"], arg);
+        }
+        break;
       case "--repo":
         flags.repo = nextValue(argv, ++index, arg);
         break;
@@ -705,6 +711,7 @@ function writeUsage(output: Writer) {
     "  --print-only",
     "  --yes",
     "  --markdown-export",
+    "  --runner-policy <strict|balanced|advisory|external-sandbox>",
     "  --event-types <csv>",
     "  --subscription-id <evsub_...>",
     "  --base-url <url>",

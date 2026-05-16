@@ -7,6 +7,15 @@ import { AgentRunStore, createRunContextToken, hashRunContextToken, type AgentRu
 import { parseSimpleEnv } from "../env-file.ts";
 import { buildManagedRunContextEnvelope } from "../managed-run-context.ts";
 import {
+  compileRunnerExecutionPlan,
+  validateRunnerPolicyFilesystemPostRun,
+  validateRunnerPolicyFilesystemPreflight,
+  validateRunnerPolicyPlan,
+  writeRunnerPolicyGeneratedFiles,
+  type RunnerExecutionPolicyLike,
+  type RunnerPolicyFilesystemSnapshot,
+} from "../runner-execution-policy.ts";
+import {
   currentAgentEnvPathForHome,
   managedAgentEnvPathForHome,
   primaryRepoFromConfig,
@@ -85,6 +94,9 @@ interface AgentReportFlags {
 
 interface LaunchRunnerParams {
   runner: string;
+  executable: string;
+  args: string[];
+  manualContinuationAllowed: boolean;
   model: string | null;
   repoPath: string;
   worktreePath: string;
@@ -509,6 +521,7 @@ async function executeAgentRun({
           apiKey,
           fetchImpl,
           runnerTimeoutMs,
+          runnerPolicy: setupConfig?.runnerPolicy ?? null,
         });
       } catch (error) {
         hadFailure = true;
@@ -566,6 +579,7 @@ async function executeSingleTaskRun({
   apiKey,
   fetchImpl,
   runnerTimeoutMs,
+  runnerPolicy,
 }: {
   agentId: string;
   runner: string;
@@ -584,6 +598,7 @@ async function executeSingleTaskRun({
   apiKey: string;
   fetchImpl: typeof globalThis.fetch;
   runnerTimeoutMs: number;
+  runnerPolicy?: RunnerExecutionPolicyLike | null;
 }): Promise<AgentRunRecord> {
   const timestamp = now().toISOString();
   const runId = `run_${crypto.randomBytes(6).toString("hex")}`;
@@ -598,6 +613,31 @@ async function executeSingleTaskRun({
   const contextPath = path.join(runDir, "context.json");
   const runContextToken = createRunContextToken();
   const prompt = buildPrompt({ task, repo, recipePath: managedRecipePath, branchName, handoffPath, contextPath });
+  const runnerPlan = compileRunnerExecutionPlan({
+    runner,
+    model,
+    policy: runnerPolicy,
+    worktreePath,
+    runDir,
+    recipePath: managedRecipePath,
+    prompt,
+    baseEnv: process.env,
+    values: {
+      AGENTRAIL_AGENT_ID: agentId,
+      AGENTRAIL_RUN_ID: runId,
+      AGENTRAIL_BASE_URL: baseUrl,
+      AGENTRAIL_RUN_CONTEXT_TOKEN: runContextToken,
+      AGENTRAIL_RUN_CONTEXT_PATH: contextPath,
+      AGENTRAIL_AGENT_RUNNER: runner,
+      ...(model ? { AGENTRAIL_AGENT_MODEL: model } : {}),
+      AGENTRAIL_AGENT_RECIPE_PATH: managedRecipePath,
+      AGENTRAIL_HOME: homePath,
+      AGENTRAIL_TASK_ID: task.id,
+      AGENTRAIL_TASK_IDENTIFIER: task.identifier,
+      AGENTRAIL_HANDOFF_PATH: handoffPath,
+      AGENTRAIL_RUN_REPORT_PATH: reportPath,
+    },
+  });
 
   await mkdir(runDir, { recursive: true });
   await mkdir(worktreeRoot, { recursive: true });
@@ -625,7 +665,10 @@ async function executeSingleTaskRun({
     summary: null,
     runContextTokenHash: hashRunContextToken(runContextToken),
     runContextTokenIssuedAt: timestamp,
-    launch: defaultLaunchMetadata(runner, model, worktreePath, managedRecipePath, runDir),
+    launch: {
+      executable: runnerPlan.executable,
+      args: runnerPlan.args,
+    },
   });
 
   if (markdownEnabled) {
@@ -651,9 +694,60 @@ async function executeSingleTaskRun({
       run: running,
       task,
     });
+    const policyValidation = validateRunnerPolicyPlan(runnerPlan);
+    if (!policyValidation.ok) {
+      const summary = `Runner policy cannot be enforced for ${runner}: ${policyValidation.reasons.join("; ")}`;
+      const blocker = {
+        reason: "runner_policy_not_enforced",
+        actionRequired: `Choose a runner/policy AgentRail can enforce, or configure an external sandbox/advisory mode. ${summary}`,
+        resumeInstructions: "Update the agent runner policy or selected runner, then resolve the blocker so AgentRail can start a fresh managed run.",
+      };
+      return await blockManagedRunAwaitingUser({
+        baseUrl,
+        apiKey,
+        fetchImpl,
+        task,
+        runId,
+        agentId,
+        runStore,
+        homePath,
+        markdownEnabled,
+        now,
+        summary,
+        blocker,
+      });
+    }
+
+    const filesystemPreflight = await validateRunnerPolicyFilesystemPreflight(runnerPlan);
+    const filesystemSnapshot: RunnerPolicyFilesystemSnapshot | null = filesystemPreflight.snapshot;
+    if (!filesystemPreflight.ok) {
+      const summary = filesystemPreflight.summary;
+      return await blockManagedRunAwaitingUser({
+        baseUrl,
+        apiKey,
+        fetchImpl,
+        task,
+        runId,
+        agentId,
+        runStore,
+        homePath,
+        markdownEnabled,
+        now,
+        summary,
+        blocker: {
+          reason: filesystemPreflight.reason ?? "runner_policy_denied_files_present",
+          actionRequired: `Remove or relocate files matched by the runner policy before retrying. ${summary}`,
+          resumeInstructions: "Resolve the denied files, then resolve the blocker so AgentRail can start a fresh managed run.",
+        },
+      });
+    }
+    await writeRunnerPolicyGeneratedFiles(runnerPlan);
 
     const result = await launchRunner({
       runner,
+      executable: runnerPlan.executable,
+      args: runnerPlan.args,
+      manualContinuationAllowed: runnerPlan.manualContinuationAllowed,
       model,
       repoPath: repo.path,
       worktreePath,
@@ -663,25 +757,32 @@ async function executeSingleTaskRun({
       logPath,
       handoffPath,
       timeoutMs: runnerTimeoutMs,
-      env: buildManagedRunnerEnv({
-        baseEnv: process.env,
-        values: {
-          AGENTRAIL_AGENT_ID: agentId,
-          AGENTRAIL_RUN_ID: runId,
-          AGENTRAIL_BASE_URL: baseUrl,
-          AGENTRAIL_RUN_CONTEXT_TOKEN: runContextToken,
-          AGENTRAIL_RUN_CONTEXT_PATH: contextPath,
-          AGENTRAIL_AGENT_RUNNER: runner,
-          ...(model ? { AGENTRAIL_AGENT_MODEL: model } : {}),
-          AGENTRAIL_AGENT_RECIPE_PATH: managedRecipePath,
-          AGENTRAIL_HOME: homePath,
-          AGENTRAIL_TASK_ID: task.id,
-          AGENTRAIL_TASK_IDENTIFIER: task.identifier,
-          AGENTRAIL_HANDOFF_PATH: handoffPath,
-          AGENTRAIL_RUN_REPORT_PATH: reportPath,
-        },
-      }),
+      env: runnerPlan.env,
     });
+
+    const filesystemPostRun = await validateRunnerPolicyFilesystemPostRun(runnerPlan, filesystemSnapshot);
+    if (!filesystemPostRun.ok) {
+      const summary = filesystemPostRun.summary;
+      return await blockManagedRunAwaitingUser({
+        baseUrl,
+        apiKey,
+        fetchImpl,
+        task,
+        runId,
+        agentId,
+        runStore,
+        homePath,
+        markdownEnabled,
+        now,
+        summary,
+        blocker: {
+          reason: filesystemPostRun.reason ?? "runner_policy_violation",
+          actionRequired: `The runner modified files denied by policy. Review and remove those changes before retrying. ${summary}`,
+          resumeInstructions: "Resolve the denied file changes, then resolve the blocker so AgentRail can start a fresh managed run.",
+        },
+      });
+    }
+
     const finalResult = await processRunnerHandoff({
       task,
       result,
@@ -728,6 +829,66 @@ async function executeSingleTaskRun({
   }
 }
 
+async function blockManagedRunAwaitingUser({
+  baseUrl,
+  apiKey,
+  fetchImpl,
+  task,
+  runId,
+  agentId,
+  runStore,
+  homePath,
+  markdownEnabled,
+  now,
+  summary,
+  blocker,
+}: {
+  baseUrl: string;
+  apiKey: string;
+  fetchImpl: typeof globalThis.fetch;
+  task: TaskDetail;
+  runId: string;
+  agentId: string;
+  runStore: AgentRunStore;
+  homePath: string;
+  markdownEnabled: boolean;
+  now: () => Date;
+  summary: string;
+  blocker: {
+    reason: string;
+    actionRequired: string;
+    resumeInstructions: string;
+  };
+}): Promise<AgentRunRecord> {
+  const reported = runStore.reportRun(runId, {
+    status: "blocked",
+    summary,
+    ...blocker,
+  });
+  if (!reported) {
+    throw new Error(`Agent run ${runId} disappeared while recording blocker ${blocker.reason}.`);
+  }
+  await blockTaskAwaitingUser({
+    baseUrl,
+    apiKey,
+    fetchImpl,
+    taskId: task.id,
+    runId,
+    agentId,
+    blocker,
+  });
+  const blocked = runStore.updateRun(runId, {
+    status: "awaiting_user",
+    exitCode: null,
+    summary,
+    finishedAt: now().toISOString(),
+  }) ?? reported;
+  if (markdownEnabled) {
+    await writeRunMarkdown({ homePath, run: blocked });
+  }
+  return blocked;
+}
+
 async function writeManagedRunContextSnapshot({
   contextPath,
   run,
@@ -738,37 +899,6 @@ async function writeManagedRunContextSnapshot({
   task: TaskDetail;
 }): Promise<void> {
   await writeFile(contextPath, `${JSON.stringify(buildManagedRunContextEnvelope({ run, taskBody: task }), null, 2)}\n`, "utf8");
-}
-
-function buildManagedRunnerEnv({
-  baseEnv,
-  values,
-}: {
-  baseEnv: NodeJS.ProcessEnv;
-  values: NodeJS.ProcessEnv;
-}): NodeJS.ProcessEnv {
-  const env = {
-    ...baseEnv,
-  };
-  delete env.AGENTRAIL_BASE_URL;
-  delete env.AGENTRAIL_API_KEY;
-  delete env.AGENTRAIL_API_KEY_ID;
-  delete env.AGENTRAIL_ADMIN_API_KEY;
-  delete env.AGENTRAIL_OPERATOR_API_KEY;
-  delete env.AGENTRAIL_OPERATOR_KEY;
-  delete env.AGENTRAIL_OPERATOR_KEY_ID;
-  delete env.AGENTRAIL_SETUP_API_KEY;
-  delete env.GITHUB_TOKEN;
-  delete env.GH_TOKEN;
-  delete env.GITHUB_WEBHOOK_SECRET;
-  delete env.CIRCLECI_TOKEN;
-  delete env.CIRCLECI_WEBHOOK_SECRET;
-  delete env.LINEAR_API_KEY;
-  delete env.LINEAR_WEBHOOK_SECRET;
-  return {
-    ...env,
-    ...values,
-  };
 }
 
 async function processRunnerHandoff({
@@ -1676,48 +1806,6 @@ function buildBranchName(agentId: string, taskId: string): string {
   return `agentrail/${sanitizedAgentId}/${sanitizedTaskId}`;
 }
 
-function defaultLaunchMetadata(runner: string, model: string | null, worktreePath: string, recipePath: string, runDir: string) {
-  if (runner === "claude-code") {
-    const args = ["--print", "--output-format", "stream-json"];
-    if (model) args.push("--model", model);
-    args.push("--append-system-prompt-file", recipePath);
-    return {
-      executable: "claude",
-      args,
-    };
-  }
-  if (runner === "cursor") {
-    return {
-      executable: "cursor",
-      args: [worktreePath],
-    };
-  }
-  return {
-    executable: "codex",
-    args: codexLaunchArgs(worktreePath, runDir, model),
-  };
-}
-
-function codexLaunchArgs(worktreePath: string, runDir: string, model: string | null = null): string[] {
-  return [
-    "-a",
-    "never",
-    "-c",
-    "shell_environment_policy.inherit=all",
-    "exec",
-    "--sandbox",
-    "workspace-write",
-    "--ignore-user-config",
-    "--cd",
-    worktreePath,
-    "--add-dir",
-    runDir,
-    ...(model ? ["--model", model] : []),
-    "--json",
-    "-",
-  ];
-}
-
 async function defaultPublishBranch({ worktreePath, branchName, commitSha }: PublishBranchParams): Promise<void> {
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
@@ -1758,63 +1846,32 @@ async function defaultPrepareWorktree({ repoPath, worktreePath, branchName }: Pr
 }
 
 async function defaultLaunchRunner(params: LaunchRunnerParams): Promise<LaunchRunnerResult> {
-  if (params.runner === "cursor") {
-    const hasCursorAgent = commandExists("cursor-agent");
-    if (!hasCursorAgent) {
-      if (!commandExists("cursor")) {
-        return {
-          status: "failed",
-          exitCode: null,
-          summary: "Cursor CLI is not installed; install cursor-agent or cursor to continue this task.",
-        };
-      }
-      const child = spawn("cursor", [params.worktreePath], {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.on("error", () => {
-        // The run is already marked waiting for manual continuation; avoid an unhandled child error.
-      });
-      child.unref();
+  if (params.runner === "cursor" && params.executable === "cursor-agent" && params.manualContinuationAllowed && !commandExists("cursor-agent")) {
+    if (!commandExists("cursor")) {
       return {
-        status: "awaiting_user",
+        status: "failed",
         exitCode: null,
-        summary: "Opened Cursor for manual continuation.",
+        summary: "Cursor CLI is not installed; install cursor-agent or cursor to continue this task.",
       };
     }
-    return await runChildProcess({
-      executable: "cursor-agent",
-      args: [params.worktreePath],
-      prompt: params.prompt,
-      cwd: params.worktreePath,
-      logPath: params.logPath,
-      timeoutMs: params.timeoutMs,
-      env: params.env,
+    const child = spawn("cursor", [params.worktreePath], {
+      detached: true,
+      stdio: "ignore",
     });
-  }
-
-  if (params.runner === "claude-code") {
-    const args = ["--print", "--output-format", "stream-json"];
-    if (params.model) {
-      args.push("--model", params.model);
-    }
-    if (params.recipePath) {
-      args.push("--append-system-prompt-file", params.recipePath);
-    }
-    return await runChildProcess({
-      executable: "claude",
-      args,
-      prompt: params.prompt,
-      cwd: params.worktreePath,
-      logPath: params.logPath,
-      timeoutMs: params.timeoutMs,
-      env: params.env,
+    child.on("error", () => {
+      // The run is already marked waiting for manual continuation; avoid an unhandled child error.
     });
+    child.unref();
+    return {
+      status: "awaiting_user",
+      exitCode: null,
+      summary: "Opened Cursor for manual continuation.",
+    };
   }
 
   return await runChildProcess({
-    executable: "codex",
-    args: codexLaunchArgs(params.worktreePath, path.dirname(params.handoffPath ?? params.logPath), params.model),
+    executable: params.executable,
+    args: params.args,
     prompt: params.prompt,
     cwd: params.worktreePath,
     logPath: params.logPath,

@@ -56,7 +56,9 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
 
   assert.equal(configBody.mode, "server");
   assert.equal(configBody.server.baseUrl, "http://127.0.0.1:3000");
-  assert.doesNotMatch(configText, /apiKey|AGENTRAIL_API_KEY/);
+  assert.equal(configBody.runnerPolicy.preset, "strict");
+  assert.equal(configBody.runnerPolicy.publish.mode, "agentrail_owned");
+  assert.doesNotMatch(configText, /"apiKey"\s*:/);
   assert.match(envExample, /AGENTRAIL_BASE_URL=http:\/\/127\.0\.0\.1:3000/);
   assert.match(envExample, /AGENTRAIL_API_KEY=/);
   assert.match(envExample, /AGENTRAIL_API_KEY_ID=/);
@@ -93,6 +95,11 @@ test("writeSetupFiles creates local setup files without agent secrets", async (t
   assert.doesNotMatch(readme, /Linear should send webhooks to/i);
   assert.match(readme, /Provider secrets stay out of `config\.json`/i);
   assert.match(readme, /Rules-only routing is enabled/i);
+  assert.match(readme, /Local agent access/i);
+  assert.match(readme, /`strict` runner policy/i);
+  assert.match(readme, /strips broad provider credentials/i);
+  assert.match(readme, /AgentRail strips broad provider credentials/i);
+  assert.match(readme, /runner can enforce this policy/i);
   assert.match(readme, /labels, repos, projects, and explicit rules only/i);
   assert.match(readme, /AgentRail can connect more repos later with `agentrail repo add`/i);
   assert.match(readme, /--repo "\$PWD"/);
