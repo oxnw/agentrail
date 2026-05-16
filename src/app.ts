@@ -26,6 +26,7 @@ import type { GitHubIssueIntakeAdapter } from "./github-issue-intake-adapter.ts"
 import type { LinearIssueSourceAdapter } from "./linear-issue-source-adapter.ts";
 import type { LinearCommentWebhookAdapter } from "./linear-comment-webhook-adapter.ts";
 import type { AgentRunReportInput, AgentRunStore, AgentRunStatus } from "./agent-run-store.ts";
+import { buildManagedRunContextEnvelope } from "./managed-run-context.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -643,6 +644,27 @@ async function routeRequest({
       response,
       agentRunStore,
       runId: agentRunMatch[1],
+    });
+    return;
+  }
+
+  const agentRunContextMatch =
+    request.method === "GET"
+      ? pathname.match(/^\/agent-runs\/(run_[A-Za-z0-9_]+)\/context$/)
+      : null;
+  if (agentRunContextMatch) {
+    obs.operation = "get_agent_run_context";
+
+    handleGetAgentRunContext({
+      request,
+      response,
+      agentRunStore,
+      taskLifecycleStore,
+      runId: agentRunContextMatch[1],
+      observeRun(run) {
+        obs.agentId = run.agentId;
+        obs.taskId = run.taskId;
+      },
     });
     return;
   }
@@ -1337,6 +1359,84 @@ function handleGetAgentRun({ response, agentRunStore, runId }: GetAgentRunOption
   });
 }
 
+interface GetAgentRunContextOptions {
+  request: http.IncomingMessage;
+  response: http.ServerResponse;
+  agentRunStore?: AgentRunStore | null;
+  taskLifecycleStore: unknown;
+  runId: string;
+  observeRun?: (run: NonNullable<ReturnType<AgentRunStore["getRun"]>>) => void;
+}
+
+function handleGetAgentRunContext({
+  request,
+  response,
+  agentRunStore,
+  taskLifecycleStore,
+  runId,
+  observeRun,
+}: GetAgentRunContextOptions) {
+  if (!agentRunStore) {
+    writeError(response, 404, "not_found", "Agent run store is not configured.", {
+      availableActions: []
+    });
+    return;
+  }
+
+  const token = readBearerToken(request);
+  if (!token) {
+    writeError(response, 401, "unauthorized", "Run context requires a bearer token.", {
+      availableActions: []
+    }, { "www-authenticate": "Bearer" });
+    return;
+  }
+
+  const existingRun = agentRunStore.getRun(runId);
+  if (!existingRun) {
+    writeError(response, 404, "not_found", "Agent run not found.", {
+      availableActions: []
+    });
+    return;
+  }
+
+  const run = agentRunStore.verifyRunContextToken(runId, token);
+  if (!run) {
+    writeError(response, 403, "forbidden", "Run context token is not valid for this run.", {
+      availableActions: []
+    });
+    return;
+  }
+  observeRun?.(run);
+
+  if (!taskLifecycleStore || typeof (taskLifecycleStore as { getTask?: unknown }).getTask !== "function") {
+    writeError(response, 404, "not_found", "Task source not found.", {
+      availableActions: []
+    });
+    return;
+  }
+
+  try {
+    const taskBody = (taskLifecycleStore as { getTask: (id: string) => unknown }).getTask(run.taskId);
+    if (!isTaskAssignedToRunAgent(taskBody, run.agentId)) {
+      writeError(response, 409, "conflict", "The run task is no longer assigned to this agent.", {
+        availableActions: ["report_blocked"]
+      });
+      return;
+    }
+    writeJson(response, 200, {
+      ...buildManagedRunContextEnvelope({ run, taskBody }),
+      meta: responseMeta()
+    });
+  } catch (error) {
+    if (error instanceof TaskLifecycleError) {
+      writeError(response, error.statusCode, error.code, error.message, error.details);
+      return;
+    }
+
+    throw error;
+  }
+}
+
 interface ReportAgentRunOptions {
   request: http.IncomingMessage;
   response: http.ServerResponse;
@@ -1544,6 +1644,13 @@ function validateRequiredPayloadString(payload: Record<string, unknown>, fieldNa
   return value.trim();
 }
 
+function readBearerToken(request: http.IncomingMessage): string | null {
+  const header = request.headers.authorization;
+  if (typeof header !== "string") return null;
+  const match = header.match(/^Bearer\s+(.+)$/iu);
+  return match ? match[1].trim() : null;
+}
+
 function canReportAgentRun(runAgentId: string, principal: ReturnType<AgentAuthStore["authenticate"]> | null): boolean {
   if (!principal) return true;
   if (principal.scopes.includes("auth:admin")) return true;
@@ -1592,6 +1699,19 @@ function isTaskVisibleToPrincipal(body: unknown, principal: ReturnType<AgentAuth
   const legacyAssigneeId = taskBody?.data?.assignee?.id;
   if (!legacyAssigneeId) return true;
   return legacyAssigneeId === principalAgentId;
+}
+
+function isTaskAssignedToRunAgent(body: unknown, runAgentId: string): boolean {
+  const taskBody = body as { data?: { assigneeAgentId?: string | null; assignee?: { id?: string } } } | null;
+  const assigneeAgentId = taskBody?.data?.assigneeAgentId;
+  if (typeof assigneeAgentId === "string" && assigneeAgentId.length > 0) {
+    return assigneeAgentId === runAgentId;
+  }
+  if (assigneeAgentId === null) return false;
+
+  const legacyAssigneeId = taskBody?.data?.assignee?.id;
+  if (!legacyAssigneeId) return true;
+  return legacyAssigneeId === runAgentId;
 }
 
 function isAgentRunStatus(value: string | null): value is AgentRunStatus {

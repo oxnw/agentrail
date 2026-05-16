@@ -145,7 +145,7 @@ test("agent run --once starts assigned work, records the run, and writes markdow
         await initGitWorktree(worktreePath);
       },
       launchRunner: async ({ logPath, prompt, env, handoffPath, worktreePath, recipePath }) => {
-        assert.equal(env.AGENTRAIL_BASE_URL, undefined);
+        assert.equal(env.AGENTRAIL_BASE_URL, harness.baseUrl);
         assert.equal(env.AGENTRAIL_API_KEY, undefined);
         assert.equal(env.AGENTRAIL_OPERATOR_KEY, undefined);
         assert.equal(env.GITHUB_TOKEN, undefined);
@@ -154,6 +154,14 @@ test("agent run --once starts assigned work, records the run, and writes markdow
         assert.equal(env.LINEAR_API_KEY, undefined);
         assert.equal(env.AGENTRAIL_AGENT_ID, "agt_runner");
         assert.equal(env.AGENTRAIL_HANDOFF_PATH, handoffPath);
+        assert.match(env.AGENTRAIL_RUN_ID ?? "", /^run_/u);
+        assert.match(env.AGENTRAIL_RUN_CONTEXT_TOKEN ?? "", /^arrun_/u);
+        const runContextPath = env.AGENTRAIL_RUN_CONTEXT_PATH;
+        assert.ok(runContextPath, "AGENTRAIL_RUN_CONTEXT_PATH must be defined");
+        const context = JSON.parse(await readFile(runContextPath, "utf8"));
+        assert.equal(context.data.run.runId, env.AGENTRAIL_RUN_ID);
+        assert.equal(context.data.task.id, task.id);
+        assert.deepEqual(context.availableActions, ["submit"]);
         assert.ok(recipePath, "managed recipePath must be defined");
         assert.notEqual(recipePath, staleRecipePath);
         const recipeText = await readFile(recipePath, "utf8");
@@ -197,6 +205,9 @@ test("agent run --once starts assigned work, records the run, and writes markdow
   assert.equal(runs.length, 1);
   assert.equal(runs[0].taskId, task.id);
   assert.equal(runs[0].status, "succeeded");
+  assert.match(runs[0].runContextTokenHash ?? "", /^[0-9a-f]{64}$/u);
+  assert.equal(runs[0].runContextTokenHash?.startsWith("arrun_"), false);
+  assert.ok(runs[0].runContextTokenIssuedAt);
   assert.ok(runs[0].handoffPath, "handoffPath must be defined");
   assert.ok(runs[0].promptPath, "promptPath must be defined");
   assert.deepEqual(runs[0].launch, {
@@ -223,6 +234,9 @@ test("agent run --once starts assigned work, records the run, and writes markdow
   assert.match(promptText, /AGEA-RUN-001/);
   assert.match(promptText, /Recipe file:/);
   assert.match(promptText, /Handoff file:/);
+  assert.match(promptText, /Run context file:/);
+  assert.match(promptText, /agentrail run current/);
+  assert.match(promptText, /agentrail run actions/);
   assert.match(promptText, /agentrail agent report --status progress/);
   assert.match(promptText, /agentrail agent report --status completed/);
   assert.match(promptText, /handoff file is AgentRail's recovery path/);
@@ -912,7 +926,7 @@ test("agent run consumes a completion handoff reported through the managed local
       },
       launchRunner: async ({ env, logPath, worktreePath }) => {
         assert.match(env.AGENTRAIL_RUN_ID ?? "", /^run_/u);
-        assert.equal(env.AGENTRAIL_BASE_URL, undefined);
+        assert.equal(env.AGENTRAIL_BASE_URL, harness.baseUrl);
         assert.equal(env.AGENTRAIL_API_KEY, undefined);
         assert.ok(env.AGENTRAIL_RUN_REPORT_PATH, "AGENTRAIL_RUN_REPORT_PATH must be defined");
         await writeFile(logPath, "reported through managed local report\n", "utf8");
@@ -1271,7 +1285,7 @@ test("agent run preserves locally reported blockers without requiring a handoff 
         await initGitWorktree(worktreePath);
       },
       launchRunner: async ({ env, logPath }) => {
-        assert.equal(env.AGENTRAIL_BASE_URL, undefined);
+        assert.equal(env.AGENTRAIL_BASE_URL, harness.baseUrl);
         assert.equal(env.AGENTRAIL_API_KEY, undefined);
         assert.ok(env.AGENTRAIL_RUN_REPORT_PATH, "AGENTRAIL_RUN_REPORT_PATH must be defined");
         await writeFile(logPath, "blocked by missing token\n", "utf8");
@@ -1987,6 +2001,156 @@ test("agent run starts a resolved task with a historical awaiting_user run", asy
   assert.equal(runStore.listRuns({ status: "succeeded" }).length, 1);
 });
 
+test("run current and run actions read managed run context from a local snapshot", async (t) => {
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-run-context-cli-"));
+  const contextPath = path.join(homePath, "context.json");
+  const restoreEnv = captureRunContextEnv();
+  const context = {
+    data: {
+      run: {
+        runId: "run_cli",
+        agentId: "agt_runner",
+        runner: "codex",
+        taskId: "tsk_cli",
+        taskIdentifier: "AGEA-CLI",
+        status: "running",
+        worktreePath: "/tmp/agentrail/run_cli",
+        branchName: "agentrail/agt_runner/tsk_cli",
+      },
+      task: {
+        id: "tsk_cli",
+        identifier: "AGEA-CLI",
+        title: "Show current run",
+        status: "in_progress",
+        availableActions: ["submit"],
+        acceptanceCriteria: [],
+      },
+      nextActions: [
+        {
+          id: "submit",
+          label: "Finish the code change, commit locally, write the handoff file, then report completion.",
+        },
+      ],
+    },
+    availableActions: ["submit"],
+  };
+
+  t.after(async () => {
+    restoreEnv();
+    await rm(homePath, { recursive: true, force: true });
+  });
+
+  await writeFile(contextPath, `${JSON.stringify(context)}\n`, "utf8");
+  process.env.AGENTRAIL_RUN_ID = "run_cli";
+  process.env.AGENTRAIL_RUN_CONTEXT_PATH = contextPath;
+  delete process.env.AGENTRAIL_BASE_URL;
+  delete process.env.AGENTRAIL_RUN_CONTEXT_TOKEN;
+
+  const currentStdout = createMemoryWriter();
+  const currentStderr = createMemoryWriter();
+  const currentExitCode = await runCli(["run", "current"], {
+    cwd: homePath,
+    stdout: currentStdout,
+    stderr: currentStderr,
+  });
+  assert.equal(currentExitCode, 0, currentStderr.toString());
+  assert.match(currentStdout.toString(), /Run: run_cli/);
+  assert.match(currentStdout.toString(), /Task: AGEA-CLI Show current run/);
+  assert.match(currentStdout.toString(), /Available actions: submit/);
+
+  const actionsStdout = createMemoryWriter();
+  const actionsStderr = createMemoryWriter();
+  const actionsExitCode = await runCli(["run", "actions", "--json"], {
+    cwd: homePath,
+    stdout: actionsStdout,
+    stderr: actionsStderr,
+  });
+  assert.equal(actionsExitCode, 0, actionsStderr.toString());
+  assert.deepEqual(JSON.parse(actionsStdout.toString()).availableActions, ["submit"]);
+});
+
+test("run current prefers live run context when a context token is available", async (t) => {
+  const restoreEnv = captureRunContextEnv();
+  t.after(() => {
+    restoreEnv();
+  });
+
+  process.env.AGENTRAIL_RUN_ID = "run_live";
+  process.env.AGENTRAIL_BASE_URL = "http://127.0.0.1:31337";
+  process.env.AGENTRAIL_RUN_CONTEXT_TOKEN = "arrun_live_context_token_123456789";
+  delete process.env.AGENTRAIL_RUN_CONTEXT_PATH;
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["run", "current", "--json"], {
+    cwd: process.cwd(),
+    stdout,
+    stderr,
+    runContextFetch: async (input, init) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      assert.equal(url.pathname, "/agent-runs/run_live/context");
+      assert.equal((init?.headers as Record<string, string>).authorization, "Bearer arrun_live_context_token_123456789");
+      return new Response(JSON.stringify({
+        data: {
+          run: {
+            runId: "run_live",
+            agentId: "agt_runner",
+            runner: "codex",
+            taskId: "tsk_live",
+            taskIdentifier: "AGEA-LIVE",
+            status: "running",
+            worktreePath: "/tmp/live",
+            branchName: "agentrail/agt_runner/tsk_live",
+          },
+          task: {
+            id: "tsk_live",
+            identifier: "AGEA-LIVE",
+            title: "Live context",
+            status: "in_progress",
+            availableActions: ["submit"],
+            acceptanceCriteria: [],
+          },
+          nextActions: [
+            {
+              id: "submit",
+              label: "Finish the code change, commit locally, write the handoff file, then report completion.",
+            },
+          ],
+        },
+        availableActions: ["submit"],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(JSON.parse(stdout.toString()).data.run.runId, "run_live");
+});
+
+test("run current reports missing managed run context", async (t) => {
+  const restoreEnv = captureRunContextEnv();
+  t.after(() => {
+    restoreEnv();
+  });
+  delete process.env.AGENTRAIL_RUN_ID;
+  delete process.env.AGENTRAIL_BASE_URL;
+  delete process.env.AGENTRAIL_RUN_CONTEXT_TOKEN;
+  delete process.env.AGENTRAIL_RUN_CONTEXT_PATH;
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["run", "current"], {
+    cwd: process.cwd(),
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.match(stderr.toString(), /requires AGENTRAIL_RUN_ID/);
+});
+
 test("agent status reads the persisted run store", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-status-"));
   const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
@@ -2057,6 +2221,26 @@ test("agent status reads the persisted run store", async (t) => {
   assert.equal(body.data[0].runId, "run_status");
   assert.equal(body.data[0].status, "awaiting_user");
 });
+
+function captureRunContextEnv(): () => void {
+  const keys = [
+    "AGENTRAIL_RUN_ID",
+    "AGENTRAIL_BASE_URL",
+    "AGENTRAIL_RUN_CONTEXT_PATH",
+    "AGENTRAIL_RUN_CONTEXT_TOKEN",
+  ] as const;
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  return () => {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
+}
 
 async function createHarness(options?: {
   submitTask?: (taskId: string, payload: unknown, idempotencyKey: string | undefined) => Promise<unknown>;

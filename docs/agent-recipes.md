@@ -9,20 +9,24 @@ work is done.
 ## Shared Agent Contract
 
 Use AgentRail for lifecycle state, but do not make the child LLM discover or
-poll lifecycle state.
+poll broad lifecycle state.
 
 Managed runner environment:
 
 - `AGENTRAIL_RUN_REPORT_PATH` points to the local report file consumed by
   AgentRail after the child process exits.
 - `AGENTRAIL_HANDOFF_PATH` points to the structured handoff file.
+- `AGENTRAIL_RUN_CONTEXT_PATH` points to the current run context snapshot.
 - `AGENTRAIL_TASK_ID` and `AGENTRAIL_TASK_IDENTIFIER` identify the assigned
   work already selected by AgentRail.
 
 Operating rules:
 
-- Do not call AgentRail task, CI, review, ship, or rollback endpoints from the
-  child LLM.
+- Use only run-scoped AgentRail commands from the child process:
+  `agentrail run current`, `agentrail run actions`, and
+  `agentrail agent report`.
+- Do not call broad AgentRail task, CI, review, ship, rollback, provider, or
+  operator endpoints from the child LLM.
 - Work only inside the provided git worktree.
 - Run the smallest relevant validation before reporting completion.
 - Commit locally when code changed.
@@ -30,6 +34,13 @@ Operating rules:
 - Use `target: "agentrail"` when AgentRail should publish and continue the
   lifecycle.
 - Use `target: "user"` when user intervention is required.
+
+To inspect the current assignment:
+
+```bash
+agentrail run current
+agentrail run actions
+```
 
 ## Claude Code
 
@@ -43,7 +54,9 @@ agentrail agent run --agent-id agt_runner --once
 ```
 
 The prompt passed by AgentRail already contains the assigned task. Claude should
-edit code, run focused validation, write the handoff file, and report:
+edit code, run focused validation, write the handoff file, and report. If it
+needs to re-read the current assignment, it may use `agentrail run current` or
+`agentrail run actions`.
 
 ```text
 agentrail agent report --status completed --summary "short completion summary" --handoff-file "$AGENTRAIL_HANDOFF_PATH"
@@ -59,8 +72,10 @@ cd /path/to/target-repo
 agentrail agent run --agent-id agt_runner --once
 ```
 
-The child Codex process should not query AgentRail. It receives a compact task
-prompt and reports locally:
+The child Codex process receives a compact task prompt and reports locally. It
+may call `agentrail run current` or `agentrail run actions` if it needs to
+re-read its current assignment. Those commands are scoped to the current run
+and do not expose task lists or provider credentials.
 
 ```text
 agentrail agent report --status progress --summary "short update"
@@ -75,9 +90,11 @@ Suggested rule text:
 
 ```text
 This repository is worked through AgentRail. AgentRail has already assigned the
-task and owns lifecycle state. Do not call AgentRail task, CI, review, ship, or
-rollback endpoints. Edit code in the provided worktree, validate the change,
-commit locally, write the handoff file, and report with `agentrail agent report`.
+task and owns lifecycle state. If you need to inspect the current assignment,
+use `agentrail run current` or `agentrail run actions`. Do not call broad
+AgentRail task, CI, review, ship, rollback, provider, or operator endpoints.
+Edit code in the provided worktree, validate the change, commit locally, write
+the handoff file, and report with `agentrail agent report`.
 ```
 
 ## TypeScript Harness Recipe

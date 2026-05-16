@@ -114,13 +114,14 @@ The intended production flow is AgentRail-owned:
    when enabled, uses AI to route tasks to the right agents.
 3. AgentRail records the assignment and `routingReason`, then wakes the
    assigned agent.
-4. The coding agent asks AgentRail for its next task.
+4. In managed local mode, AgentRail wakes the assigned coding agent with the
+   current task context.
 5. The agent edits files, runs tests, and commits locally.
-6. The agent submits back to AgentRail.
+6. The agent reports back to AgentRail.
 7. AgentRail's adapter creates or reuses the provider PR, tracks CI and review,
    and returns compact lifecycle state to the agent.
-8. The agent follows `availableActions` until the task is fixed, approved, and
-   shippable.
+8. AgentRail follows lifecycle actions until the task is fixed, approved, and
+   shippable. External harnesses may follow `availableActions` directly.
 
 In local/self-hosted mode, `agentrail server start` owns wake orchestration. It
 loads managed agent env files from `~/.agentrail/agents/`, starts an
@@ -195,8 +196,11 @@ polling GitHub, CI, and review APIs.
    explicitly provisioned hosted API base URL. Public AgentRail Cloud is not
    generally available yet.
 2. Open the target repository where the agent should edit code.
-3. Export the AgentRail connection settings in the agent's shell.
-4. Start the coding agent with the AgentRail operating instructions.
+3. For managed local agents, use the env files created by AgentRail setup and
+   let `agentrail server start` wake the agent. For manual harnesses, export the
+   AgentRail connection settings in the agent's shell.
+4. Start the coding agent with the AgentRail operating instructions, or let the
+   server-owned supervisor start it.
 
 Example:
 
@@ -219,7 +223,9 @@ Codex or Cursor:
 - AgentRail waits on task events, starts the configured coding agent only for
   actionable code work, and consumes the local report after the child process
   exits.
-- Do not ask the child LLM to query AgentRail task, CI, or review endpoints.
+- Managed children may use `agentrail run current`, `agentrail run actions`,
+  and `agentrail agent report`. Do not ask the child LLM to query broad
+  AgentRail task, CI, review, provider, or operator endpoints.
 
 The agent still edits files in the target repository. AgentRail owns:
 
@@ -264,8 +270,13 @@ pip install -e /path/to/agentrail/sdk/python
 
 ## Core Runtime Loop
 
+Managed local child agents are different from external harnesses. They should
+not list tasks or poll lifecycle APIs. They receive a single run-scoped context
+and may use `agentrail run current`, `agentrail run actions`, and
+`agentrail agent report`.
+
 Agents should follow the API's `availableActions` field instead of guessing the
-next step.
+next step when they are external harnesses using the SDK or HTTP API directly.
 
 1. List assigned work.
 2. Read the selected task.
