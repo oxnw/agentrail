@@ -3,8 +3,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { AgentRunStore, type AgentRunRecord, type AgentRunReportInput, type AgentRunStatus } from "../agent-run-store.ts";
+import { AgentRunStore, createRunContextToken, hashRunContextToken, type AgentRunRecord, type AgentRunReportInput, type AgentRunStatus } from "../agent-run-store.ts";
 import { parseSimpleEnv } from "../env-file.ts";
+import { buildManagedRunContextEnvelope } from "../managed-run-context.ts";
 import {
   currentAgentEnvPathForHome,
   managedAgentEnvPathForHome,
@@ -33,6 +34,8 @@ interface AgentEnvValues {
   AGENTRAIL_AGENT_RECIPE_PATH?: string;
   AGENTRAIL_HANDOFF_PATH?: string;
   AGENTRAIL_RUN_REPORT_PATH?: string;
+  AGENTRAIL_RUN_CONTEXT_PATH?: string;
+  AGENTRAIL_RUN_CONTEXT_TOKEN?: string;
   AGENTRAIL_RUNNER_TIMEOUT_SECONDS?: string;
 }
 
@@ -592,7 +595,9 @@ async function executeSingleTaskRun({
   const handoffPath = path.join(runDir, "handoff.json");
   const managedRecipePath = path.join(runDir, "agent-recipes.md");
   const reportPath = path.join(runDir, "reports.jsonl");
-  const prompt = buildPrompt({ task, repo, recipePath: managedRecipePath, branchName, handoffPath });
+  const contextPath = path.join(runDir, "context.json");
+  const runContextToken = createRunContextToken();
+  const prompt = buildPrompt({ task, repo, recipePath: managedRecipePath, branchName, handoffPath, contextPath });
 
   await mkdir(runDir, { recursive: true });
   await mkdir(worktreeRoot, { recursive: true });
@@ -618,6 +623,8 @@ async function executeSingleTaskRun({
     updatedAt: timestamp,
     exitCode: null,
     summary: null,
+    runContextTokenHash: hashRunContextToken(runContextToken),
+    runContextTokenIssuedAt: timestamp,
     launch: defaultLaunchMetadata(runner, model, worktreePath, managedRecipePath, runDir),
   });
 
@@ -639,6 +646,11 @@ async function executeSingleTaskRun({
     if (!running) {
       throw new Error(`Agent run ${runId} disappeared before launch.`);
     }
+    await writeManagedRunContextSnapshot({
+      contextPath,
+      run: running,
+      task,
+    });
 
     const result = await launchRunner({
       runner,
@@ -656,6 +668,9 @@ async function executeSingleTaskRun({
         values: {
           AGENTRAIL_AGENT_ID: agentId,
           AGENTRAIL_RUN_ID: runId,
+          AGENTRAIL_BASE_URL: baseUrl,
+          AGENTRAIL_RUN_CONTEXT_TOKEN: runContextToken,
+          AGENTRAIL_RUN_CONTEXT_PATH: contextPath,
           AGENTRAIL_AGENT_RUNNER: runner,
           ...(model ? { AGENTRAIL_AGENT_MODEL: model } : {}),
           AGENTRAIL_AGENT_RECIPE_PATH: managedRecipePath,
@@ -711,6 +726,18 @@ async function executeSingleTaskRun({
     }
     throw error;
   }
+}
+
+async function writeManagedRunContextSnapshot({
+  contextPath,
+  run,
+  task,
+}: {
+  contextPath: string;
+  run: AgentRunRecord;
+  task: TaskDetail;
+}): Promise<void> {
+  await writeFile(contextPath, `${JSON.stringify(buildManagedRunContextEnvelope({ run, taskBody: task }), null, 2)}\n`, "utf8");
 }
 
 function buildManagedRunnerEnv({
@@ -1563,16 +1590,23 @@ function renderManagedAgentRecipe(): string {
     "## Required Flow",
     "",
     "1. Work only inside the provided git worktree for this task.",
-    "2. Do not hand-roll AgentRail API calls, query task lifecycle endpoints, push branches, create pull requests, ship, or roll back directly.",
-    "3. Report meaningful progress with `agentrail agent report --status progress --summary \"short update\"`.",
-    "4. If blocked, report the blocker with `agentrail agent report --status blocked --summary \"what user action is needed\" --reason \"short reason\" --action-required \"what the user must do\" --resume-instructions \"how to continue after the user acts\"`.",
-    "5. For any blocker, also write a `target: \"user\"` handoff file at `$AGENTRAIL_HANDOFF_PATH` so AgentRail can recover if the report command fails.",
-    "6. Run the smallest relevant validation before reporting completion.",
-    "7. Commit locally when the task requires a code change.",
-    "8. Write the structured handoff JSON file at `$AGENTRAIL_HANDOFF_PATH` before exiting.",
-    "9. Report completion with `agentrail agent report --status completed --summary \"short completion summary\" --handoff-file \"$AGENTRAIL_HANDOFF_PATH\"`.",
-    "10. Use `target: \"agentrail\"` when AgentRail should publish and continue the lifecycle.",
-    "11. Use `target: \"user\"` when missing credentials, provider failures, sandbox restrictions, tooling, or validation failures require user intervention.",
+    "2. Use only run-scoped AgentRail commands from the child process: `agentrail run current`, `agentrail run actions`, and `agentrail agent report`.",
+    "3. Do not hand-roll AgentRail API calls, query broad task lifecycle endpoints, push branches, create pull requests, ship, or roll back directly.",
+    "4. Report meaningful progress with `agentrail agent report --status progress --summary \"short update\"`.",
+    "5. If blocked, report the blocker with `agentrail agent report --status blocked --summary \"what user action is needed\" --reason \"short reason\" --action-required \"what the user must do\" --resume-instructions \"how to continue after the user acts\"`.",
+    "6. For any blocker, also write a `target: \"user\"` handoff file at `$AGENTRAIL_HANDOFF_PATH` so AgentRail can recover if the report command fails.",
+    "7. Run the smallest relevant validation before reporting completion.",
+    "8. Commit locally when the task requires a code change.",
+    "9. Write the structured handoff JSON file at `$AGENTRAIL_HANDOFF_PATH` before exiting.",
+    "10. Report completion with `agentrail agent report --status completed --summary \"short completion summary\" --handoff-file \"$AGENTRAIL_HANDOFF_PATH\"`.",
+    "11. Use `target: \"agentrail\"` when AgentRail should publish and continue the lifecycle.",
+    "12. Use `target: \"user\"` when missing credentials, provider failures, sandbox restrictions, tooling, or validation failures require user intervention.",
+    "",
+    "## Run-Scoped AgentRail Commands",
+    "",
+    "- `agentrail run current` re-reads only this run's assigned task and current action.",
+    "- `agentrail run actions` shows only the allowed next AgentRail actions for this run.",
+    "- `agentrail agent report` reports progress, blockers, or completion for this run.",
     "",
     "## Handoff Contract",
     "",
@@ -1590,12 +1624,14 @@ function buildPrompt({
   recipePath,
   branchName,
   handoffPath,
+  contextPath,
 }: {
   task: TaskDetail;
   repo: ConnectedRepo;
   recipePath: string;
   branchName: string;
   handoffPath: string;
+  contextPath: string;
 }): string {
   return [
     `You are working on AgentRail task ${task.identifier}.`,
@@ -1607,6 +1643,8 @@ function buildPrompt({
     `Status: ${task.status}`,
     `Recipe file: ${recipePath}`,
     `Handoff file: ${handoffPath}`,
+    `Run context file: ${contextPath}`,
+    `Available AgentRail actions: ${task.availableActions.join(", ") || "none"}`,
     ``,
     `Goal: ${task.context?.goal ?? task.description ?? task.title}`,
     task.description ? `Description:\n${task.description}` : "",
@@ -1617,7 +1655,9 @@ function buildPrompt({
     `Use the recipe file as your standing instructions.`,
     `Work only inside the provided git worktree.`,
     `Do not edit AGENTS.md, CLAUDE.md, AgentRail recipe files, or other instruction/config files unless the task explicitly requires it.`,
-    `Do not hand-roll AgentRail API calls, push branches, or create pull requests directly; use agentrail agent report for status updates.`,
+    `AgentRail commands available to you: agentrail run current, agentrail run actions, and agentrail agent report.`,
+    `Use agentrail run current or agentrail run actions only if you need to re-read this run's assignment or allowed next actions.`,
+    `Do not hand-roll AgentRail API calls, push branches, or create pull requests directly; use the run-scoped AgentRail commands instead.`,
     `Report meaningful progress with: agentrail agent report --status progress --summary "short update".`,
     `If blocked by missing credentials, provider access, sandbox limits, or validation failures, report: agentrail agent report --status blocked --summary "what user action is needed" --reason "short reason" --action-required "what the user must do" --resume-instructions "how to continue after the user acts".`,
     `For any blocker, also write a target "user" handoff file; if the report command fails, the handoff file is AgentRail's recovery path.`,

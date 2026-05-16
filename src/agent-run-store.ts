@@ -9,6 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 
 export type AgentRunStatus =
@@ -56,6 +57,8 @@ export interface AgentRunRecord {
   updatedAt: string;
   exitCode: number | null;
   summary: string | null;
+  runContextTokenHash: string | null;
+  runContextTokenIssuedAt: string | null;
   userAction: AgentRunUserAction | null;
   reports: AgentRunReport[];
   reportedHandoff: Record<string, unknown> | null;
@@ -66,8 +69,8 @@ export interface AgentRunRecord {
 }
 
 export type AgentRunInput =
-  Omit<AgentRunRecord, "reports" | "reportedHandoff" | "userAction">
-  & Partial<Pick<AgentRunRecord, "reports" | "reportedHandoff" | "userAction">>;
+  Omit<AgentRunRecord, "reports" | "reportedHandoff" | "runContextTokenHash" | "runContextTokenIssuedAt" | "userAction">
+  & Partial<Pick<AgentRunRecord, "reports" | "reportedHandoff" | "runContextTokenHash" | "runContextTokenIssuedAt" | "userAction">>;
 
 export type AgentRunReportInput =
   | {
@@ -129,6 +132,18 @@ function isNodeErrorWithCode(error: unknown, code: string): boolean {
 function warnInvalidState(storagePath: string | undefined, reason: string): void {
   if (!storagePath) return;
   process.emitWarning(`Ignoring invalid AgentRunStore state at ${storagePath}: ${reason}`);
+}
+
+export function createRunContextToken(): string {
+  return `arrun_${randomBytes(24).toString("base64url")}`;
+}
+
+export function hashRunContextToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+export function isRunContextToken(value: string): boolean {
+  return /^arrun_[A-Za-z0-9_-]{24,}$/u.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -195,6 +210,14 @@ function normalizeRunRecord(value: unknown): AgentRunRecord | null {
     : [];
   if (reports.some((entry) => entry === null)) return null;
   if (value.reportedHandoff !== undefined && !isNullableRecord(value.reportedHandoff)) return null;
+  const runContextTokenHash = value.runContextTokenHash === undefined
+    ? null
+    : isNullableString(value.runContextTokenHash) ? value.runContextTokenHash : undefined;
+  if (runContextTokenHash === undefined) return null;
+  const runContextTokenIssuedAt = value.runContextTokenIssuedAt === undefined
+    ? null
+    : isNullableString(value.runContextTokenIssuedAt) ? value.runContextTokenIssuedAt : undefined;
+  if (runContextTokenIssuedAt === undefined) return null;
   if (
     !isRecord(value.launch)
     || !isString(value.launch.executable)
@@ -222,6 +245,8 @@ function normalizeRunRecord(value: unknown): AgentRunRecord | null {
     updatedAt: value.updatedAt,
     exitCode: value.exitCode,
     summary: value.summary,
+    runContextTokenHash,
+    runContextTokenIssuedAt,
     userAction,
     reports: reports as AgentRunReport[],
     reportedHandoff: value.reportedHandoff === undefined || value.reportedHandoff === null
@@ -413,6 +438,17 @@ export class AgentRunStore {
     const run = [...this.runs.values()].find((entry) =>
       entry.agentId === agentId && entry.taskId === taskId && ACTIVE_RUN_STATUSES.has(entry.status));
     return run ? clone(run) : null;
+  }
+
+  verifyRunContextToken(runId: string, token: string): AgentRunRecord | null {
+    if (!isRunContextToken(token)) return null;
+    this.reload();
+    const run = this.runs.get(runId);
+    if (!run?.runContextTokenHash) return null;
+    const actual = Buffer.from(hashRunContextToken(token), "hex");
+    const expected = Buffer.from(run.runContextTokenHash, "hex");
+    if (actual.length === 0 || actual.length !== expected.length) return null;
+    return timingSafeEqual(actual, expected) ? clone(run) : null;
   }
 
   createRun(run: AgentRunInput): AgentRunRecord {

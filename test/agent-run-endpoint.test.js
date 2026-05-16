@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { createServer } from "../src/app.ts";
 import { AgentAuthStore } from "../src/agent-auth-store.ts";
-import { AgentRunStore } from "../src/agent-run-store.ts";
+import { AgentRunStore, hashRunContextToken } from "../src/agent-run-store.ts";
 import { AgentTaskQueue } from "../src/agent-task-queue.ts";
 import { TaskEventStore } from "../src/task-event-store.ts";
 
@@ -142,6 +142,175 @@ test("GET /operator/agent-runs/{runId} returns a single run", async (t) => {
   const body = await response.json();
   assert.equal(body.data.runId, "run_single");
   assert.equal(body.data.status, "awaiting_user");
+});
+
+test("GET /agent-runs/{runId}/context returns only the linked run and task for a valid run token", async (t) => {
+  const now = () => new Date("2026-05-16T10:00:00.000Z");
+  const authStore = new AgentAuthStore({ now });
+  const eventStore = new TaskEventStore({ now });
+  const agentRunStore = new AgentRunStore({ now });
+  const taskQueue = new AgentTaskQueue({ now, eventStore });
+  const token = "arrun_test_context_token_123456789";
+  const task = taskQueue.createTask({
+    identifier: "AGEA-RUN-CONTEXT",
+    title: "Expose run context",
+    description: "Return only the current run task.",
+    assignee: { id: "agt_claudia", name: "Claudia" },
+    assigneeAgentId: "agt_claudia",
+    status: "in_progress",
+    availableActions: ["submit"],
+  });
+  agentRunStore.createRun({
+    ...makeRun("run_context", "running"),
+    taskId: task.id,
+    runContextTokenHash: hashRunContextToken(token),
+    runContextTokenIssuedAt: now().toISOString(),
+  });
+  const server = createServer({
+    store: eventStore,
+    authStore,
+    agentRunStore,
+    taskLifecycleStore: taskQueue,
+    now,
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/agent-runs/run_context/context`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.data.run.runId, "run_context");
+  assert.equal(body.data.run.agentId, "agt_claudia");
+  assert.equal(body.data.task.id, task.id);
+  assert.equal(body.data.task.identifier, "AGEA-RUN-CONTEXT");
+  assert.equal(body.data.task.description, "Return only the current run task.");
+  assert.deepEqual(body.availableActions, ["submit"]);
+  assert.deepEqual(body.data.nextActions.map((action) => action.id), ["submit"]);
+  assert.match(body.data.nextActions[0].label, /commit locally/);
+});
+
+test("GET /agent-runs/{runId}/context rejects missing and cross-run tokens", async (t) => {
+  const now = () => new Date("2026-05-16T10:05:00.000Z");
+  const authStore = new AgentAuthStore({ now });
+  const eventStore = new TaskEventStore({ now });
+  const agentRunStore = new AgentRunStore({ now });
+  const taskQueue = new AgentTaskQueue({ now, eventStore });
+  const firstToken = "arrun_first_context_token_123456789";
+  const secondToken = "arrun_second_context_token_12345678";
+  const firstTask = taskQueue.createTask({
+    identifier: "AGEA-RUN-CONTEXT-1",
+    title: "First context",
+    assignee: { id: "agt_claudia", name: "Claudia" },
+    assigneeAgentId: "agt_claudia",
+    status: "in_progress",
+    availableActions: ["submit"],
+  });
+  const secondTask = taskQueue.createTask({
+    identifier: "AGEA-RUN-CONTEXT-2",
+    title: "Second context",
+    assignee: { id: "agt_claudia", name: "Claudia" },
+    assigneeAgentId: "agt_claudia",
+    status: "in_progress",
+    availableActions: ["submit"],
+  });
+  agentRunStore.createRun({
+    ...makeRun("run_context_one", "running"),
+    taskId: firstTask.id,
+    runContextTokenHash: hashRunContextToken(firstToken),
+    runContextTokenIssuedAt: now().toISOString(),
+  });
+  agentRunStore.createRun({
+    ...makeRun("run_context_two", "running"),
+    taskId: secondTask.id,
+    runContextTokenHash: hashRunContextToken(secondToken),
+    runContextTokenIssuedAt: now().toISOString(),
+  });
+  const server = createServer({
+    store: eventStore,
+    authStore,
+    agentRunStore,
+    taskLifecycleStore: taskQueue,
+    now,
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const baseUrl = await listen(server);
+  const missingAuth = await fetch(`${baseUrl}/agent-runs/run_context_one/context`);
+  assert.equal(missingAuth.status, 401);
+  assert.equal((await missingAuth.json()).error.code, "unauthorized");
+
+  const crossRun = await fetch(`${baseUrl}/agent-runs/run_context_two/context`, {
+    headers: {
+      authorization: `Bearer ${firstToken}`,
+    },
+  });
+  assert.equal(crossRun.status, 403);
+  assert.equal((await crossRun.json()).error.code, "forbidden");
+
+  const missingRun = await fetch(`${baseUrl}/agent-runs/run_context_missing/context`, {
+    headers: {
+      authorization: `Bearer ${firstToken}`,
+    },
+  });
+  assert.equal(missingRun.status, 404);
+  assert.equal((await missingRun.json()).error.code, "not_found");
+});
+
+test("GET /agent-runs/{runId}/context conflicts when the task is reassigned", async (t) => {
+  const now = () => new Date("2026-05-16T10:10:00.000Z");
+  const authStore = new AgentAuthStore({ now });
+  const eventStore = new TaskEventStore({ now });
+  const agentRunStore = new AgentRunStore({ now });
+  const taskQueue = new AgentTaskQueue({ now, eventStore });
+  const token = "arrun_reassigned_context_token_1234";
+  const task = taskQueue.createTask({
+    identifier: "AGEA-RUN-REASSIGNED",
+    title: "Reassigned context",
+    assignee: { id: "agt_other", name: "Other" },
+    assigneeAgentId: "agt_other",
+    status: "in_progress",
+    availableActions: ["submit"],
+  });
+  agentRunStore.createRun({
+    ...makeRun("run_context_reassigned", "running"),
+    taskId: task.id,
+    runContextTokenHash: hashRunContextToken(token),
+    runContextTokenIssuedAt: now().toISOString(),
+  });
+  const server = createServer({
+    store: eventStore,
+    authStore,
+    agentRunStore,
+    taskLifecycleStore: taskQueue,
+    now,
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/agent-runs/run_context_reassigned/context`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert.equal(response.status, 409);
+  const body = await response.json();
+  assert.equal(body.error.code, "conflict");
+  assert.deepEqual(body.error.details.availableActions, ["report_blocked"]);
 });
 
 test("GET /operator/agent-runs rejects excessive limit", async (t) => {

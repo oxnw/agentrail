@@ -12,6 +12,7 @@ import { runConfigCommand, runRepoCommand, runServerStart } from "./global-manag
 import { runLinearCommand } from "./linear-management.ts";
 import { ensureLocalOperatorBootstrap, hasExistingLocalAgents, withTemporaryLocalServer } from "./local-bootstrap.ts";
 import { runEventCommand } from "./event-subscriptions.ts";
+import { runRunContextCommand } from "./run-context.ts";
 import { createPromptSession, PromptCancelledError, type PromptSession } from "./prompt.ts";
 import { runProviderCommand } from "./provider-management.ts";
 import { detectRepoContext } from "./repo-detection.ts";
@@ -40,6 +41,7 @@ export interface RunCliOptions {
   createPrompt?: () => PromptSession;
   providerFetch?: typeof globalThis.fetch;
   eventFetch?: typeof globalThis.fetch;
+  runContextFetch?: typeof globalThis.fetch;
   agentRunner?: AgentRunnerHooks;
   writeSetupFiles?: (options: {
     homePath?: string;
@@ -113,6 +115,15 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
         stdout,
         stderr,
         fetch: options.eventFetch,
+      });
+    }
+
+    if (command === "run") {
+      return await runRunContextCommand(args, {
+        cwd,
+        stdout,
+        stderr,
+        fetch: options.runContextFetch,
       });
     }
 
@@ -678,6 +689,8 @@ function writeUsage(output: Writer) {
     "  agentrail event subscribe --url <url> --event-types <csv> [flags]",
     "  agentrail event subscriptions [flags]",
     "  agentrail event unsubscribe --subscription-id <evsub_...> [flags]",
+    "  agentrail run current [--json]",
+    "  agentrail run actions [--json]",
     "  agentrail agent create [flags]",
     "  agentrail agent update [flags]",
     "  agentrail agent run [--once] [--agent-id <id>] [--max-runs <n>]",
