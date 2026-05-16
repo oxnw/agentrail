@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createServer } from "../src/app.ts";
@@ -30,7 +30,7 @@ interface PullRequestPayload {
 interface AgentRailHandoff {
   target: "agentrail";
   summary: string;
-  commitSha: string;
+  commitSha?: string;
   checks?: unknown[];
   artifacts?: unknown[];
   pullRequest?: Record<string, unknown> | null;
@@ -971,6 +971,113 @@ test("agent run consumes a completion handoff reported through the managed local
   assert.equal(run.status, "succeeded");
   assert.equal(run.reports[0].status, "completed");
   assert.equal(run.reportedHandoff?.target, "agentrail");
+});
+
+test("agent run default workspace keeps git metadata and runner mailbox inside the writable worktree", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-default-workspace-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const agentRunStorePath = path.join(homePath, "stores", "agent-runs.json");
+  const harness = await createHarness({
+    agentRunStorePath,
+    submitTask: async (taskId, payload) => {
+      const pullRequest = readPullRequestPayload(payload);
+      return {
+        data: {
+          taskId,
+          submissionId: "sub_default_workspace",
+          prUrl: "https://github.com/oxnw/agentrail/pull/626",
+          prNumber: 626,
+          head: pullRequest?.head,
+          base: pullRequest?.base,
+          headSha: pullRequest?.headSha,
+        },
+        availableActions: ["view_ci_status", "view_review_feedback"],
+      };
+    },
+  });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await initGitWorktree(repoRoot);
+  runGit(repoRoot, ["remote", "add", "origin", "https://github.com/oxnw/agentrail.git"]);
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  const task = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-DEFAULT-WORKSPACE",
+    title: "Use default managed workspace",
+    description: "The child should edit, validate, and report without writing outside the worktree.",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "todo",
+    availableActions: ["start"],
+  });
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  const exitCode = await runCli(["agent", "run", "--once"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      launchRunner: async ({ env, logPath, handoffPath, worktreePath, prompt, recipePath }) => {
+        assert.ok(handoffPath, "handoffPath must be defined");
+        assert.ok(recipePath, "recipePath must be defined");
+        assert.ok(env.AGENTRAIL_RUN_REPORT_PATH, "AGENTRAIL_RUN_REPORT_PATH must be defined");
+        const mailboxDir = path.join(worktreePath, ".agentrail-run");
+        assert.equal(path.dirname(handoffPath), mailboxDir);
+        assert.equal(path.dirname(env.AGENTRAIL_RUN_REPORT_PATH), mailboxDir);
+        assert.equal(env.AGENTRAIL_HANDOFF_PATH, handoffPath);
+        assert.match(prompt, /AgentRail will commit and publish/u);
+        assert.doesNotMatch(prompt, /commit locally/u);
+        const recipe = await readFile(recipePath, "utf8");
+        assert.match(recipe, /Leave completed worktree changes in place for AgentRail to commit/u);
+        assert.doesNotMatch(recipe, /Commit locally when/u);
+        assert.equal((await lstat(path.join(worktreePath, ".git"))).isDirectory(), true);
+        assert.match(await readFile(path.join(worktreePath, ".git", "info", "exclude"), "utf8"), /\.agentrail-run\//u);
+
+        await writeFile(logPath, "default workspace completed\n", "utf8");
+        await writeFile(path.join(worktreePath, "README.md"), "default workspace completed\n", "utf8");
+        await writeAgentRailHandoff(handoffPath, {
+          target: "agentrail",
+          summary: "Default workspace completed.",
+        });
+        return {
+          status: "succeeded",
+          exitCode: 0,
+          summary: "Default workspace completed.",
+        };
+      },
+      publishBranch: async ({ branchName, commitSha, worktreePath }) => {
+        assert.equal(branchName, `agentrail/agt_runner/${task.id}`);
+        assert.match(commitSha, /^[0-9a-f]{40}$/u);
+        assert.equal(runGit(worktreePath, ["cat-file", "-t", commitSha]), "commit\n");
+      },
+    },
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.equal(harness.taskQueue.getRawTask(task.id)?.status, "in_review");
+  const [run] = new AgentRunStore({ storagePath: agentRunStorePath }).listRuns();
+  assert.equal(run.status, "succeeded");
+  assert.ok(run.handoffPath, "archived handoff path must be recorded");
+  assert.equal(path.dirname(run.handoffPath), path.join(homePath, "runs", run.runId));
+  assert.match(await readFile(run.handoffPath, "utf8"), /Default workspace completed/u);
+  const committedReadme = runGit(path.join(homePath, "worktrees", "agt_runner", run.runId), ["show", "HEAD:README.md"]);
+  assert.equal(committedReadme, "default workspace completed\n");
 });
 
 test("agent report posts progress using runner environment", async (t) => {

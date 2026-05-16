@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { AgentRunStore, createRunContextToken, hashRunContextToken, type AgentRunRecord, type AgentRunReportInput, type AgentRunStatus } from "../agent-run-store.ts";
@@ -30,6 +30,8 @@ import type { SetupConfig } from "./setup-config.ts";
 interface Writer {
   write(chunk: string | Uint8Array): boolean;
 }
+
+const RUNNER_MAILBOX_DIRNAME = ".agentrail-run";
 
 interface AgentEnvValues {
   AGENTRAIL_BASE_URL?: string;
@@ -160,7 +162,7 @@ type RunnerHandoff =
       version: 1;
       target: "agentrail";
       summary: string;
-      commitSha: string;
+      commitSha: string | null;
       checks: unknown[];
       artifacts: unknown[];
       pullRequest: Record<string, unknown> | null;
@@ -605,14 +607,17 @@ async function executeSingleTaskRun({
   const branchName = buildBranchName(agentId, task.id);
   const runDir = path.join(homePath, "runs", runId);
   const worktreePath = path.join(worktreeRoot, runId);
+  const runnerMailboxDir = path.join(worktreePath, RUNNER_MAILBOX_DIRNAME);
   const promptPath = path.join(runDir, "prompt.md");
   const logPath = path.join(runDir, "runner.log");
   const handoffPath = path.join(runDir, "handoff.json");
+  const runnerHandoffPath = path.join(runnerMailboxDir, "handoff.json");
   const managedRecipePath = path.join(runDir, "agent-recipes.md");
   const reportPath = path.join(runDir, "reports.jsonl");
+  const runnerReportPath = path.join(runnerMailboxDir, "reports.jsonl");
   const contextPath = path.join(runDir, "context.json");
   const runContextToken = createRunContextToken();
-  const prompt = buildPrompt({ task, repo, recipePath: managedRecipePath, branchName, handoffPath, contextPath });
+  const prompt = buildPrompt({ task, repo, recipePath: managedRecipePath, branchName, handoffPath: runnerHandoffPath, contextPath });
   const runnerPlan = compileRunnerExecutionPlan({
     runner,
     model,
@@ -634,8 +639,8 @@ async function executeSingleTaskRun({
       AGENTRAIL_HOME: homePath,
       AGENTRAIL_TASK_ID: task.id,
       AGENTRAIL_TASK_IDENTIFIER: task.identifier,
-      AGENTRAIL_HANDOFF_PATH: handoffPath,
-      AGENTRAIL_RUN_REPORT_PATH: reportPath,
+      AGENTRAIL_HANDOFF_PATH: runnerHandoffPath,
+      AGENTRAIL_RUN_REPORT_PATH: runnerReportPath,
     },
   });
 
@@ -681,6 +686,7 @@ async function executeSingleTaskRun({
       worktreePath,
       branchName,
     });
+    await prepareRunnerMailbox({ worktreePath, runnerMailboxDir });
 
     const running = runStore.updateRun(runId, {
       status: "running",
@@ -755,9 +761,15 @@ async function executeSingleTaskRun({
       promptPath,
       recipePath: managedRecipePath,
       logPath,
-      handoffPath,
+      handoffPath: runnerHandoffPath,
       timeoutMs: runnerTimeoutMs,
       env: runnerPlan.env,
+    });
+    await archiveRunnerMailbox({
+      runnerReportPath,
+      reportPath,
+      runnerHandoffPath,
+      handoffPath,
     });
 
     const filesystemPostRun = await validateRunnerPolicyFilesystemPostRun(runnerPlan, filesystemSnapshot);
@@ -899,6 +911,70 @@ async function writeManagedRunContextSnapshot({
   task: TaskDetail;
 }): Promise<void> {
   await writeFile(contextPath, `${JSON.stringify(buildManagedRunContextEnvelope({ run, taskBody: task }), null, 2)}\n`, "utf8");
+}
+
+async function prepareRunnerMailbox({
+  worktreePath,
+  runnerMailboxDir,
+}: {
+  worktreePath: string;
+  runnerMailboxDir: string;
+}): Promise<void> {
+  await mkdir(runnerMailboxDir, { recursive: true });
+  await addGitExcludeEntry(worktreePath, `${RUNNER_MAILBOX_DIRNAME}/`);
+}
+
+async function addGitExcludeEntry(worktreePath: string, entry: string): Promise<void> {
+  const excludePath = resolveGitPath(worktreePath, "info/exclude");
+  if (!excludePath) {
+    return;
+  }
+  await mkdir(path.dirname(excludePath), { recursive: true });
+  const existing = await readOptionalTextFile(excludePath);
+  const existingLines = existing.split(/\r?\n/u).map((line) => line.trim());
+  if (existingLines.includes(entry)) {
+    return;
+  }
+  const prefix = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
+  await appendFile(excludePath, `${prefix}${entry}\n`, "utf8");
+}
+
+function resolveGitPath(worktreePath: string, gitPath: string): string | null {
+  const result = spawnSync("git", ["-C", worktreePath, "rev-parse", "--git-path", gitPath], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+  const resolved = result.stdout.trim();
+  return path.isAbsolute(resolved) ? resolved : path.join(worktreePath, resolved);
+}
+
+async function archiveRunnerMailbox({
+  runnerReportPath,
+  reportPath,
+  runnerHandoffPath,
+  handoffPath,
+}: {
+  runnerReportPath: string;
+  reportPath: string;
+  runnerHandoffPath: string;
+  handoffPath: string;
+}): Promise<void> {
+  await copyOptionalFile(runnerReportPath, reportPath);
+  await copyOptionalFile(runnerHandoffPath, handoffPath);
+}
+
+async function copyOptionalFile(sourcePath: string, destinationPath: string): Promise<void> {
+  try {
+    await mkdir(path.dirname(destinationPath), { recursive: true });
+    await copyFile(sourcePath, destinationPath);
+  } catch (error) {
+    if (isNodeErrorWithCode(error, "ENOENT")) {
+      return;
+    }
+    throw error;
+  }
 }
 
 async function processRunnerHandoff({
@@ -1108,11 +1184,12 @@ async function publishAgentRailHandoff({
   publishBranch: (params: PublishBranchParams) => Promise<void>;
   handoff: Extract<RunnerHandoff, { target: "agentrail" }>;
 }): Promise<LaunchRunnerResult> {
+  const commitSha = handoff.commitSha ?? commitManagedRunnerChanges({ worktreePath, task, handoff });
   await publishBranch({
     repoPath: repo.path,
     worktreePath,
     branchName,
-    commitSha: handoff.commitSha,
+    commitSha,
   });
 
   const pullRequest = {
@@ -1120,7 +1197,7 @@ async function publishAgentRailHandoff({
     base: repo.defaultBranch ?? "main",
     title: task.title,
     body: handoff.summary,
-    headSha: handoff.commitSha,
+    headSha: commitSha,
     ...(handoff.pullRequest ?? {}),
   };
   await submitTask({
@@ -1300,13 +1377,15 @@ async function validateRunnerHandoff(value: unknown, worktreePath: string): Prom
     };
   }
   if (value.target === "agentrail") {
-    const commitSha = requiredString(value.commitSha, "commitSha");
-    await assertCommitReachable(worktreePath, commitSha);
+    const commitSha = optionalString(value.commitSha, "commitSha");
+    if (commitSha) {
+      await assertCommitReachable(worktreePath, commitSha);
+    }
     return {
       version: 1,
       target: "agentrail",
       summary: requiredString(value.summary, "summary"),
-      commitSha,
+      commitSha: commitSha ?? null,
       checks: Array.isArray(value.checks) ? value.checks : [],
       artifacts: Array.isArray(value.artifacts) ? value.artifacts : [],
       pullRequest: isRecord(value.pullRequest) ? value.pullRequest : null,
@@ -1322,6 +1401,17 @@ function requiredString(value: unknown, fieldName: string): string {
   return value;
 }
 
+function optionalString(value: unknown, fieldName: string): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`Runner handoff field \`${fieldName}\` must be a string when provided.`);
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 async function assertCommitReachable(worktreePath: string, commitSha: string): Promise<void> {
   const exitCode = await new Promise<number | null>((resolve, reject) => {
     const child = spawn("git", ["-C", worktreePath, "merge-base", "--is-ancestor", commitSha, "HEAD"], {
@@ -1333,6 +1423,42 @@ async function assertCommitReachable(worktreePath: string, commitSha: string): P
   if (exitCode !== 0) {
     throw new Error(`Runner handoff commit ${commitSha} is not reachable from the task worktree HEAD.`);
   }
+}
+
+function commitManagedRunnerChanges({
+  worktreePath,
+  task,
+  handoff,
+}: {
+  worktreePath: string;
+  task: TaskDetail;
+  handoff: Extract<RunnerHandoff, { target: "agentrail" }>;
+}): string {
+  const status = runGitCommand(
+    ["-C", worktreePath, "status", "--porcelain", "--untracked-files=normal"],
+    `Failed to inspect worktree changes for ${task.identifier}.`,
+  );
+  if (status.trim().length === 0) {
+    throw new Error(`Runner handoff for ${task.identifier} did not provide a commitSha and left no worktree changes to commit.`);
+  }
+
+  runGitCommand(["-C", worktreePath, "add", "-A"], `Failed to stage runner changes for ${task.identifier}.`);
+  const stagedFiles = runGitCommand(
+    ["-C", worktreePath, "diff", "--cached", "--name-only"],
+    `Failed to inspect staged changes for ${task.identifier}.`,
+  );
+  if (stagedFiles.trim().length === 0) {
+    throw new Error(`Runner handoff for ${task.identifier} did not provide a commitSha and produced no staged changes.`);
+  }
+
+  runGitCommand(["-C", worktreePath, "commit", "-m", buildManagedRunnerCommitMessage(task, handoff)], `Failed to commit runner changes for ${task.identifier}.`);
+  return runGitCommand(["-C", worktreePath, "rev-parse", "HEAD"], `Failed to resolve committed runner changes for ${task.identifier}.`).trim();
+}
+
+function buildManagedRunnerCommitMessage(task: TaskDetail, handoff: Extract<RunnerHandoff, { target: "agentrail" }>): string {
+  const source = task.title || handoff.summary || task.identifier;
+  const firstLine = source.replace(/\s+/gu, " ").trim() || task.identifier;
+  return `agentrail: ${firstLine}`.slice(0, 120);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1726,7 +1852,7 @@ function renderManagedAgentRecipe(): string {
     "5. If blocked, report the blocker with `agentrail agent report --status blocked --summary \"what user action is needed\" --reason \"short reason\" --action-required \"what the user must do\" --resume-instructions \"how to continue after the user acts\"`.",
     "6. For any blocker, also write a `target: \"user\"` handoff file at `$AGENTRAIL_HANDOFF_PATH` so AgentRail can recover if the report command fails.",
     "7. Run the smallest relevant validation before reporting completion.",
-    "8. Commit locally when the task requires a code change.",
+    "8. Leave completed worktree changes in place for AgentRail to commit; do not run `git add`, `git commit`, `git push`, or create a pull request directly.",
     "9. Write the structured handoff JSON file at `$AGENTRAIL_HANDOFF_PATH` before exiting.",
     "10. Report completion with `agentrail agent report --status completed --summary \"short completion summary\" --handoff-file \"$AGENTRAIL_HANDOFF_PATH\"`.",
     "11. Use `target: \"agentrail\"` when AgentRail should publish and continue the lifecycle.",
@@ -1740,7 +1866,7 @@ function renderManagedAgentRecipe(): string {
     "",
     "## Handoff Contract",
     "",
-    "- For `target: \"agentrail\"`, write JSON with `version`, `target`, `summary`, `commitSha`, and optional `checks`, `artifacts`, and `pullRequest`.",
+    "- For `target: \"agentrail\"`, write JSON with `version`, `target`, `summary`, and optional `checks`, `artifacts`, `pullRequest`, and `commitSha` if you already have a reachable commit.",
     "- For `target: \"user\"`, write JSON with `version`, `target`, `summary`, `reason`, `actionRequired`, and `resumeInstructions`.",
     "- Do not edit `AGENTS.md`, `CLAUDE.md`, `.agentrail/*`, or other instruction files unless the task explicitly asks for that change.",
     "- Do not expose secrets in logs, prompts, commits, or final summaries.",
@@ -1787,14 +1913,14 @@ function buildPrompt({
     `Do not edit AGENTS.md, CLAUDE.md, AgentRail recipe files, or other instruction/config files unless the task explicitly requires it.`,
     `AgentRail commands available to you: agentrail run current, agentrail run actions, and agentrail agent report.`,
     `Use agentrail run current or agentrail run actions only if you need to re-read this run's assignment or allowed next actions.`,
-    `Do not hand-roll AgentRail API calls, push branches, or create pull requests directly; use the run-scoped AgentRail commands instead.`,
+    `Do not hand-roll AgentRail API calls, run git add, run git commit, push branches, or create pull requests directly; use the run-scoped AgentRail commands instead.`,
     `Report meaningful progress with: agentrail agent report --status progress --summary "short update".`,
     `If blocked by missing credentials, provider access, sandbox limits, or validation failures, report: agentrail agent report --status blocked --summary "what user action is needed" --reason "short reason" --action-required "what the user must do" --resume-instructions "how to continue after the user acts".`,
     `For any blocker, also write a target "user" handoff file; if the report command fails, the handoff file is AgentRail's recovery path.`,
-    `When the work is ready, commit locally and write the handoff JSON file at the handoff path.`,
+    `When the work is ready, leave the validated worktree changes in place and write the handoff JSON file at the handoff path; AgentRail will commit and publish the changes.`,
     `After writing the handoff file, report completion with: agentrail agent report --status completed --summary "short completion summary" --handoff-file "$AGENTRAIL_HANDOFF_PATH".`,
-    `Use target "agentrail" when AgentRail should publish the commit, or target "user" when user action is required.`,
-    `AgentRail handoff shape: {"version":1,"target":"agentrail","summary":"...","commitSha":"...","checks":[],"artifacts":[]}.`,
+    `Use target "agentrail" when AgentRail should commit, publish, and continue the lifecycle, or target "user" when user action is required.`,
+    `AgentRail handoff shape: {"version":1,"target":"agentrail","summary":"...","checks":[],"artifacts":[]}.`,
     `User handoff shape: {"version":1,"target":"user","summary":"...","reason":"...","actionRequired":"...","resumeInstructions":"..."}.`,
     `Do not expose secrets in output.`,
   ].filter(Boolean).join("\n");
@@ -1831,18 +1957,41 @@ async function defaultPublishBranch({ worktreePath, branchName, commitSha }: Pub
 
 async function defaultPrepareWorktree({ repoPath, worktreePath, branchName }: PrepareWorktreeParams): Promise<void> {
   await mkdir(path.dirname(worktreePath), { recursive: true });
-  const branchExists = spawnSync("git", ["-C", repoPath, "rev-parse", "--verify", branchName], {
-    stdio: "ignore",
-  }).status === 0;
-  const args = branchExists
-    ? ["-C", repoPath, "worktree", "add", "--detach", worktreePath, "HEAD"]
-    : ["-C", repoPath, "worktree", "add", "-b", branchName, worktreePath, "HEAD"];
+  runGitCommand(["clone", "--no-local", "--no-hardlinks", repoPath, worktreePath], `Failed to clone ${repoPath} into ${worktreePath}.`);
+  const remoteUrl = readOptionalGitOutput(repoPath, ["remote", "get-url", "origin"]);
+  if (remoteUrl) {
+    runGitCommand(["-C", worktreePath, "remote", "set-url", "origin", remoteUrl], `Failed to set origin for ${worktreePath}.`);
+  }
+  copyOptionalGitConfig(repoPath, worktreePath, "user.email");
+  copyOptionalGitConfig(repoPath, worktreePath, "user.name");
+  runGitCommand(["-C", worktreePath, "checkout", "-B", branchName, "HEAD"], `Failed to create branch ${branchName} in ${worktreePath}.`);
+}
+
+function copyOptionalGitConfig(sourceRepoPath: string, worktreePath: string, key: string): void {
+  const value = readOptionalGitOutput(sourceRepoPath, ["config", "--get", key]);
+  if (!value) return;
+  runGitCommand(["-C", worktreePath, "config", key, value], `Failed to copy git config ${key} into ${worktreePath}.`);
+}
+
+function readOptionalGitOutput(repoPath: string, args: string[]): string | null {
+  const result = spawnSync("git", ["-C", repoPath, ...args], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+  const value = result.stdout.trim();
+  return value.length > 0 ? value : null;
+}
+
+function runGitCommand(args: string[], failureMessage: string): string {
   const result = spawnSync("git", args, {
     encoding: "utf8",
   });
   if (result.status !== 0) {
-    throw new Error(result.stderr?.trim() || `Failed to create git worktree at ${worktreePath}.`);
+    throw new Error(result.stderr?.trim() || result.stdout?.trim() || failureMessage);
   }
+  return result.stdout;
 }
 
 async function defaultLaunchRunner(params: LaunchRunnerParams): Promise<LaunchRunnerResult> {
@@ -1935,6 +2084,17 @@ async function runChildProcess({
     child.stderr.on("data", (chunk) => {
       stderrChunks.push(Buffer.from(chunk));
     });
+    child.stdin.on("error", (error) => {
+      if (isNodeErrorWithCode(error, "EPIPE")) {
+        stderrChunks.push(Buffer.from(`[agentrail] runner stdin closed before the prompt was fully written: ${error.message}\n`));
+        return;
+      }
+      if (settled) {
+        return;
+      }
+      cleanup();
+      reject(error);
+    });
     child.on("error", (error) => {
       cleanup();
       reject(error);
@@ -1965,8 +2125,15 @@ async function runChildProcess({
         })
         .catch(reject);
     });
-    child.stdin.write(prompt);
-    child.stdin.end();
+    try {
+      child.stdin.write(prompt);
+      child.stdin.end();
+    } catch (error) {
+      if (!isNodeErrorWithCode(error, "EPIPE")) {
+        cleanup();
+        reject(error);
+      }
+    }
   });
 }
 
