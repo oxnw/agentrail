@@ -30,10 +30,10 @@ test("projectCiState makes in-review CI failures actionable without relaunching 
   });
 
   assert.equal(failed?.outcome, "failed_transition");
-  assert.deepEqual(failed?.task.availableActions, ["submit", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(failed?.task.availableActions, ["fix", "view_ci_status", "view_review_feedback"]);
   assert.equal(failed?.task.status, "in_review");
   assert.equal(eventStore.events.at(-1)?.type, "task.ci_failed");
-  assert.deepEqual(eventStore.events.at(-1)?.data.availableActions, ["submit", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(eventStore.events.at(-1)?.data.availableActions, ["fix", "view_ci_status", "view_review_feedback"]);
   assert.equal(eventStore.events.at(-1)?.data.affectedAgentId, "agt_runner");
 
   const recovered = await queue.projectCiState(task.id, {
@@ -61,7 +61,7 @@ test("projectCiState preserves requested review changes when CI recovers", async
     status: "in_review",
     assignee: { id: "agt_runner", name: "Runner" },
     assigneeAgentId: "agt_runner",
-    availableActions: ["submit", "view_ci_status", "view_review_feedback"],
+    availableActions: ["fix", "view_ci_status", "view_review_feedback"],
     reviewOutcome: "changes_requested",
     ciStatus: "failed",
   });
@@ -75,10 +75,10 @@ test("projectCiState preserves requested review changes when CI recovers", async
   });
 
   assert.equal(recovered?.outcome, "recovered_transition");
-  assert.deepEqual(recovered?.task.availableActions, ["submit", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(recovered?.task.availableActions, ["fix", "view_ci_status", "view_review_feedback"]);
   assert.equal(recovered?.task.reviewOutcome, "changes_requested");
   assert.equal(eventStore.events.at(-1)?.type, "task.ci_recovered");
-  assert.deepEqual(eventStore.events.at(-1)?.data.availableActions, ["submit", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(eventStore.events.at(-1)?.data.availableActions, ["fix", "view_ci_status", "view_review_feedback"]);
 });
 
 test("projectReviewState relaunches agents only for requested review changes", async () => {
@@ -102,7 +102,7 @@ test("projectReviewState relaunches agents only for requested review changes", a
   });
 
   assert.equal(changesRequested?.outcome, "changes_requested_transition");
-  assert.deepEqual(changesRequested?.task.availableActions, ["submit", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(changesRequested?.task.availableActions, ["fix", "view_ci_status", "view_review_feedback"]);
   assert.equal(eventStore.events.at(-1)?.type, "task.review_changes_requested");
   assert.equal(eventStore.events.at(-1)?.data.affectedAgentId, "agt_runner");
 
@@ -129,7 +129,7 @@ test("projectReviewState does not clear requested changes from a single approval
     status: "in_review",
     assignee: { id: "agt_runner", name: "Runner" },
     assigneeAgentId: "agt_runner",
-    availableActions: ["submit", "view_ci_status", "view_review_feedback"],
+    availableActions: ["fix", "view_ci_status", "view_review_feedback"],
     reviewOutcome: "changes_requested",
     ciStatus: "passed",
   });
@@ -144,7 +144,7 @@ test("projectReviewState does not clear requested changes from a single approval
 
   assert.equal(singleApproval?.outcome, "unchanged");
   assert.equal(singleApproval?.task.reviewOutcome, "changes_requested");
-  assert.deepEqual(singleApproval?.task.availableActions, ["submit", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(singleApproval?.task.availableActions, ["fix", "view_ci_status", "view_review_feedback"]);
   assert.equal(eventStore.events.length, 0);
 
   const pullRequestApproval = await queue.projectReviewState(task.id, {

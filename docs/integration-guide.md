@@ -283,7 +283,7 @@ next step when they are external harnesses using the SDK or HTTP API directly.
 3. Edit and test locally.
 4. Submit an attempt with an idempotency key.
 5. Wait for task events, or read CI and review summaries.
-6. Resubmit if CI or review requires changes.
+6. Fix the task if CI or review requires changes.
 7. Ship only when CI is green and review is approved.
 
 ## Submit Model

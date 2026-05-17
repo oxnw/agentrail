@@ -173,7 +173,7 @@ test("getTaskReviewFeedback keeps changes requested when another reviewer later 
 
   assert.equal(result.data.latestDecision.outcome, "changes_requested");
   assert.equal(result.data.latestDecision.reviewer.id, "alice");
-  assert.deepEqual(result.availableActions, ["submit"]);
+  assert.deepEqual(result.availableActions, ["fix"]);
 });
 
 test("getTaskReviewFeedback approves only after the blocking reviewer approves or is dismissed", async () => {

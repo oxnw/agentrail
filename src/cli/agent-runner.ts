@@ -1507,8 +1507,12 @@ async function selectRunnableTasks({
     .filter((task) => !runStore.findActiveRunByTask(agentId, task.id))
     .filter((task) => task.status === "in_progress"
       || task.availableActions.includes("start")
-      || (task.status === "in_review" && task.availableActions.includes("submit")));
+      || (task.status === "in_review" && hasRetryWorkAction(task.availableActions)));
   return candidates.slice(0, limit);
+}
+
+function hasRetryWorkAction(availableActions: string[]): boolean {
+  return availableActions.includes("fix") || availableActions.includes("submit");
 }
 
 async function waitForTaskEvent({

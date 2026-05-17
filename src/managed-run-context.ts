@@ -65,6 +65,12 @@ export function describeManagedRunAction(action: string): ManagedRunContextActio
       label: "Finish the code change, commit locally, write the handoff file, then report completion.",
     };
   }
+  if (action === "fix") {
+    return {
+      id: "fix",
+      label: "Fix the task based on the latest CI or review feedback, then report completion.",
+    };
+  }
   if (action === "start") {
     return {
       id: "start",

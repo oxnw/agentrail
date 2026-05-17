@@ -392,7 +392,7 @@ function toTaskSummary(task: TaskRecord): TaskSummary {
     priority: task.priority,
     dueAt: task.dueAt,
     updatedAt: task.updatedAt,
-    availableActions: task.availableActions.filter((action) => ["start", "submit", "ship", "resolve_blocker"].includes(action)),
+    availableActions: task.availableActions.filter((action) => ["start", "submit", "fix", "ship", "resolve_blocker"].includes(action)),
     blocker: task.blocker ? structuredClone(task.blocker) : null,
   };
 }

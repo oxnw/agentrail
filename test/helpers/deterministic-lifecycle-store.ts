@@ -89,7 +89,7 @@ class AgentShipCycleDemoStore {
       if (submissionNumber === 1) {
         task.ciStatus = "failed";
         task.reviewOutcome = "changes_requested";
-        task.availableActions = ["submit", "view_ci_status", "view_review_feedback"];
+        task.availableActions = ["fix", "view_ci_status", "view_review_feedback"];
       } else {
         task.ciStatus = "passed";
         task.reviewOutcome = "approved";
@@ -169,9 +169,9 @@ class AgentShipCycleDemoStore {
           : [],
         flakyHints: [],
         updatedAt: task.updatedAt,
-        availableActions: passed ? ["view_review_feedback"] : ["view_review_feedback", "submit"]
+        availableActions: passed ? ["view_review_feedback"] : ["view_review_feedback", "fix"]
       },
-      availableActions: passed ? ["view_review_feedback"] : ["view_review_feedback", "submit"],
+      availableActions: passed ? ["view_review_feedback"] : ["view_review_feedback", "fix"],
       meta: {
         tokenBudgetHint: failed ? "standard" : "compact",
         truncatedFields: []
@@ -210,9 +210,9 @@ class AgentShipCycleDemoStore {
               }
             ]
           : [],
-        availableActions: approved ? ["ship"] : ["submit"]
+        availableActions: approved ? ["ship"] : ["fix"]
       },
-      availableActions: approved ? ["ship"] : ["submit"]
+      availableActions: approved ? ["ship"] : ["fix"]
     };
   }
 
@@ -482,7 +482,7 @@ function toTaskSummary(task) {
     priority: task.priority,
     dueAt: task.dueAt,
     updatedAt: task.updatedAt,
-    availableActions: task.availableActions.filter((action) => ["start", "submit", "ship"].includes(action))
+    availableActions: task.availableActions.filter((action) => ["start", "submit", "fix", "ship"].includes(action))
   };
 }
 

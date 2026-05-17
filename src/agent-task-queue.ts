@@ -992,12 +992,12 @@ function availableActionsForCiState(task: TaskRecord, nextStatus: CiOverallStatu
     return task.availableActions;
   }
   if (task.reviewOutcome === "changes_requested") {
-    return ["submit", "view_ci_status", "view_review_feedback"];
+    return ["fix", "view_ci_status", "view_review_feedback"];
   }
   if (nextStatus === "failed") {
-    return ["submit", "view_ci_status", "view_review_feedback"];
+    return ["fix", "view_ci_status", "view_review_feedback"];
   }
-  if (nextStatus === "passed" && task.availableActions.includes("submit")) {
+  if (nextStatus === "passed" && isRetryWorkActionable(task)) {
     return ["ship", "view_ci_status", "view_review_feedback"];
   }
   return task.availableActions;
@@ -1019,12 +1019,16 @@ function availableActionsForReviewState(task: TaskRecord, outcome: "approved" | 
     return task.availableActions;
   }
   if (outcome === "changes_requested") {
-    return ["submit", "view_ci_status", "view_review_feedback"];
+    return ["fix", "view_ci_status", "view_review_feedback"];
   }
   if (outcome === "approved" && task.ciStatus !== "failed") {
     return ["ship", "view_ci_status", "view_review_feedback"];
   }
   return task.availableActions;
+}
+
+function isRetryWorkActionable(task: TaskRecord): boolean {
+  return task.availableActions.includes("fix") || task.availableActions.includes("submit");
 }
 
 function changedCiFields(previousActions: string[], nextActions: string[]): string[] {
