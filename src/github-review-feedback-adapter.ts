@@ -278,7 +278,7 @@ function actionsForDecision(outcome) {
   }
 
   if (outcome === "changes_requested") {
-    return ["submit"];
+    return ["fix"];
   }
 
   if (outcome === "not_required") {

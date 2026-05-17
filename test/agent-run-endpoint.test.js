@@ -157,8 +157,8 @@ test("GET /agent-runs/{runId}/context returns only the linked run and task for a
     description: "Return only the current run task.",
     assignee: { id: "agt_claudia", name: "Claudia" },
     assigneeAgentId: "agt_claudia",
-    status: "in_progress",
-    availableActions: ["submit"],
+    status: "in_review",
+    availableActions: ["fix", "view_ci_status", "view_review_feedback"],
   });
   agentRunStore.createRun({
     ...makeRun("run_context", "running"),
@@ -192,9 +192,9 @@ test("GET /agent-runs/{runId}/context returns only the linked run and task for a
   assert.equal(body.data.task.id, task.id);
   assert.equal(body.data.task.identifier, "AGEA-RUN-CONTEXT");
   assert.equal(body.data.task.description, "Return only the current run task.");
-  assert.deepEqual(body.availableActions, ["submit"]);
-  assert.deepEqual(body.data.nextActions.map((action) => action.id), ["submit"]);
-  assert.match(body.data.nextActions[0].label, /commit locally/);
+  assert.deepEqual(body.availableActions, ["fix", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(body.data.nextActions.map((action) => action.id), ["fix", "view_ci_status", "view_review_feedback"]);
+  assert.match(body.data.nextActions[0].label, /Fix the task/);
 });
 
 test("GET /agent-runs/{runId}/context rejects missing and cross-run tokens", async (t) => {

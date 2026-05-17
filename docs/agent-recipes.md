@@ -189,7 +189,7 @@ asyncio.run(main())
 | `401 Unauthorized` | Report that the runtime has the wrong API key. |
 | `403 insufficient_scope` | Report the missing scope from the error body. |
 | `409 conflict` on mutation | Do not retry with a changed payload and same key; inspect current task state. |
-| CI failed | Read failure summaries, fix locally, submit a new attempt. |
-| Review changes requested | Apply review comments, run tests, submit a new attempt. |
+| CI failed | Follow `fix`: read failure summaries, update the code, run tests, then report completion. |
+| Review changes requested | Follow `fix`: apply review comments, run tests, then report completion. |
 | Ship rejected for SHA mismatch | Refresh task state before attempting ship again. |
 | Fallback mode | Use direct GitHub or CI APIs and mention fallback in the final summary. |

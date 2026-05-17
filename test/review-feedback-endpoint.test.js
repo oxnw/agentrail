@@ -57,9 +57,9 @@ test("GET /tasks/{id}/review-feedback returns unified feedback sorted by severit
               suggestedAction: null
             }
           ],
-          availableActions: ["submit"]
+          availableActions: ["fix"]
         },
-        availableActions: ["submit"]
+        availableActions: ["fix"]
       };
     }
   };
@@ -91,7 +91,7 @@ test("GET /tasks/{id}/review-feedback returns unified feedback sorted by severit
   assert.equal(body.data.comments[1].severity, "should_fix");
   assert.equal(body.data.comments[1].suggestedAction, 'const TIMEOUT = 5000;');
   assert.equal(body.data.comments[2].severity, "note");
-  assert.deepEqual(body.availableActions, ["submit"]);
+  assert.deepEqual(body.availableActions, ["fix"]);
 });
 
 test("GET /tasks/{id}/review-feedback returns 404 when adapter has no source", async (t) => {

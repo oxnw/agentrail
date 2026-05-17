@@ -900,8 +900,8 @@ paths:
                           authorRole: ceo
                           body: Include 409 behavior when ship is called before CI green.
                           severity: must_fix
-                      availableActions: [submit]
-                    availableActions: [submit]
+                      availableActions: [fix]
+                    availableActions: [fix]
         '404':
           $ref: '#/components/responses/NotFound'
   /tasks/{id}/ship:

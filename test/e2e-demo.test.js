@@ -83,7 +83,7 @@ test("agent can complete a deterministic lifecycle flow through AgentRail endpoi
   );
   assert.equal(requestedChanges.response.status, 200);
   assert.equal(requestedChanges.body.data.latestDecision.outcome, "changes_requested");
-  assert.deepEqual(requestedChanges.body.availableActions, ["submit"]);
+  assert.deepEqual(requestedChanges.body.availableActions, ["fix"]);
 
   const secondSubmit = await requestJson(baseUrl, "/tasks/tsk_DEMOISSUETOSHIP01/submit", {
     method: "POST",
