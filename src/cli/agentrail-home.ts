@@ -9,6 +9,7 @@ export interface ConnectedRepo {
   path: string;
   slug: string;
   defaultBranch: string;
+  circleciProjectSlug?: string;
 }
 
 export interface GitHubProviderWebhookRegistrationLike {
@@ -169,6 +170,9 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
           path: repo.path,
           slug: repo.slug,
           defaultBranch: repo.defaultBranch,
+          ...(typeof repo.circleciProjectSlug === "string" && repo.circleciProjectSlug.trim().length > 0
+            ? { circleciProjectSlug: repo.circleciProjectSlug.trim() }
+            : {}),
         })),
     };
   }

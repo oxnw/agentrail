@@ -75,6 +75,9 @@ Provider connections are optional and can be added after `init`.
 ```bash
 agentrail provider connect github
 agentrail provider connect circleci
+
+# AgentRail will ask for the full CircleCI project slug, for example:
+# circleci/<org-id>/<project-id>
 agentrail provider connect linear
 ```
 

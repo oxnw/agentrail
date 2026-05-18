@@ -85,9 +85,9 @@ export async function runProviderCommand(argv: string[], {
     const env = await readSimpleEnv(providerEnvPathForHome(homePath));
     const providers = config.providers ?? {};
     stdout.write(`AgentRail home: ${homePath}\n`);
-    stdout.write(renderProviderStatus("github", providers, env));
-    stdout.write(renderProviderStatus("circleci", providers, env));
-    stdout.write(renderProviderStatus("linear", providers, env));
+    stdout.write(renderProviderStatus("github", providers, env, config.repos ?? []));
+    stdout.write(renderProviderStatus("circleci", providers, env, config.repos ?? []));
+    stdout.write(renderProviderStatus("linear", providers, env, config.repos ?? []));
     return 0;
   }
 
@@ -121,7 +121,7 @@ export async function runProviderCommand(argv: string[], {
       if (provider === "linear") {
         return await connectLinear({ homePath, config, flags, prompt, stdout, stderr, fetch: fetchImpl ?? globalThis.fetch });
       }
-      return await connectCircleCI({ homePath, config, flags, prompt, stdout, stderr });
+      return await connectCircleCI({ homePath, config, flags, prompt, stdout, stderr, fetch: fetchImpl ?? globalThis.fetch });
     } finally {
       await prompt?.close();
     }
@@ -298,6 +298,7 @@ async function connectCircleCI({
   prompt,
   stdout,
   stderr,
+  fetch,
 }: {
   homePath: string;
   config: SetupConfigLike;
@@ -305,6 +306,7 @@ async function connectCircleCI({
   prompt: PromptSession | null;
   stdout: Writer;
   stderr: Writer;
+  fetch: typeof globalThis.fetch;
 }): Promise<number> {
   const currentTokenEnv = config.providers?.circleci?.tokenEnv ?? "CIRCLECI_TOKEN";
   const currentWebhookEnv = config.providers?.circleci?.webhookSecretEnv ?? "CIRCLECI_WEBHOOK_SECRET";
@@ -329,9 +331,10 @@ async function connectCircleCI({
       title: "CircleCI connection",
       body: [
         "Connect CircleCI so AgentRail can monitor CI for existing tasks.",
+        "Paste the full CircleCI project slug from Project Settings > Overview, for example `circleci/<org-id>/<project-id>`.",
         deliveryMode === "webhook"
-          ? `Paste your CircleCI token and webhook secret when prompted. AgentRail will hide them as you type, then save them as \`${tokenEnvName}\` and \`${webhookSecretEnvName}\` in \`~/.agentrail/provider.env\`.`
-          : `Paste your CircleCI token when prompted. AgentRail will hide it as you type, then save it as \`${tokenEnvName}\` in \`~/.agentrail/provider.env\`.`,
+          ? `Paste your CircleCI token, project slug, and webhook secret when prompted. AgentRail will hide secrets as you type, save the secrets in \`~/.agentrail/provider.env\`, and persist the project slug in repo config.`
+          : `Paste your CircleCI token and project slug when prompted. AgentRail will hide the token as you type, save it in \`~/.agentrail/provider.env\`, and persist the project slug in repo config.`,
       ].join("\n"),
     });
   }
@@ -359,6 +362,22 @@ async function connectCircleCI({
       : `Missing ${webhookSecretEnvName} in this shell. Export it first, then run \`agentrail provider connect circleci --delivery-mode webhook\` again.\n`);
     return 1;
   }
+  let circleCiProjectSlugs: Map<string, string>;
+  try {
+    const resolved = await resolveCircleCiProjectSlugs({
+      repos: config.repos ?? [],
+      projectSlugFlag: flags.projectSlug,
+      prompt,
+      stderr,
+    });
+    if (!resolved) {
+      return 1;
+    }
+    circleCiProjectSlugs = resolved;
+  } catch (error) {
+    stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
   const pollIntervalMs = await resolvePollIntervalMs({
     prompt,
     deliveryMode,
@@ -366,6 +385,24 @@ async function connectCircleCI({
     currentMs: config.providers?.circleci?.pollIntervalMs,
     message: "How often should AgentRail poll CircleCI for CI updates?",
   });
+
+  const spinner = prompt?.spinner() ?? null;
+  try {
+    spinner?.start("Testing CircleCI connection");
+    await verifyCircleCiConnection({
+      token: tokenValue,
+      fetch,
+      projectSlugs: [...circleCiProjectSlugs.values()],
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (spinner) {
+      spinner.error(message);
+    } else {
+      stderr.write(`${message}\n`);
+    }
+    return 1;
+  }
 
   await writeProviderEnv(homePath, deliveryMode === "webhook"
     ? {
@@ -384,19 +421,30 @@ async function connectCircleCI({
     pollIntervalMs: deliveryMode === "polling" ? pollIntervalMs ?? 60_000 : undefined,
     webhookSecretEnv: deliveryMode === "webhook" ? webhookSecretEnvName : undefined,
   };
+  nextConfig.repos = (nextConfig.repos ?? []).map((repo) => ({
+    ...repo,
+    ...(circleCiProjectSlugs.has(repo.slug)
+      ? { circleciProjectSlug: circleCiProjectSlugs.get(repo.slug)! }
+      : {}),
+  }));
   await writeConfig(homePath, nextConfig);
   const env = await readSimpleEnv(providerEnvPathForHome(homePath));
   const result = await testProvider("circleci", nextConfig.providers ?? {}, env, {
-    fetch: globalThis.fetch,
+    fetch,
     repos: nextConfig.repos ?? [],
   });
   if (!result.ok) {
     stderr.write(`${result.message}\n`);
     return 1;
   }
-  stdout.write(deliveryMode === "webhook"
-    ? `\u2713 Connected CircleCI using ${tokenEnvName} and ${webhookSecretEnvName} in webhook mode.\n`
-    : `\u2713 Connected CircleCI using ${tokenEnvName} in polling mode.\n`);
+  const successMessage = deliveryMode === "webhook"
+    ? `\u2713 Connected CircleCI using ${tokenEnvName}, ${webhookSecretEnvName}, and ${circleCiProjectSlugs.size === 1 ? "project slug" : `${circleCiProjectSlugs.size} project slugs`} in webhook mode.`
+    : `\u2713 Connected CircleCI using ${tokenEnvName} and ${circleCiProjectSlugs.size === 1 ? "project slug" : `${circleCiProjectSlugs.size} project slugs`} in polling mode.`;
+  if (spinner) {
+    spinner.stop(successMessage);
+  } else {
+    stdout.write(`${successMessage}\n`);
+  }
   return 0;
 }
 
@@ -536,6 +584,7 @@ interface ProviderConnectFlags {
   webhookSecretEnv?: string;
   deliveryMode?: ProviderDeliveryMode;
   pollIntervalSeconds?: number;
+  projectSlug?: string;
 }
 
 interface ParsedProviderConnectFlags {
@@ -582,6 +631,9 @@ function parseProviderConnectFlags(argv: string[]): ParsedProviderConnectFlags {
           }
           flags.pollIntervalSeconds = value;
         }
+        break;
+      case "--project-slug":
+        flags.projectSlug = nextValue(argv, ++index, arg).trim();
         break;
       default:
         throw new Error(`Unknown flag "${arg}".`);
@@ -671,7 +723,119 @@ function quoteEnv(value: string): string {
   return JSON.stringify(value);
 }
 
-function renderProviderStatus(provider: ProviderName, providers: ProviderConfig, env: Record<string, string>): string {
+async function resolveCircleCiProjectSlugs({
+  repos,
+  projectSlugFlag,
+  prompt,
+  stderr,
+}: {
+  repos: NonNullable<SetupConfigLike["repos"]>;
+  projectSlugFlag?: string;
+  prompt: PromptSession | null;
+  stderr: Writer;
+}): Promise<Map<string, string> | null> {
+  if (!Array.isArray(repos) || repos.length === 0) {
+    stderr.write("CircleCI connection requires at least one connected repo in AgentRail config.\n");
+    return null;
+  }
+  if (projectSlugFlag && repos.length > 1) {
+    stderr.write("`--project-slug` only works when exactly one repo is connected. Re-run interactively to enter a slug per repo.\n");
+    return null;
+  }
+
+  const resolved = new Map<string, string>();
+  for (const repo of repos) {
+    const raw = projectSlugFlag ?? (prompt
+      ? await prompt.input({
+        message: `Paste the CircleCI project slug for ${repo.slug}`,
+        defaultValue: repo.circleciProjectSlug ?? "",
+      })
+      : "");
+    const projectSlug = normalizeCircleCiProjectSlug(raw);
+    if (!projectSlug) {
+      stderr.write(prompt
+        ? `A CircleCI project slug is required for ${repo.slug}.\n`
+        : "Missing `--project-slug`. Provide the full CircleCI project slug and run `agentrail provider connect circleci` again.\n");
+      return null;
+    }
+    resolved.set(repo.slug, projectSlug);
+  }
+  return resolved;
+}
+
+function normalizeCircleCiProjectSlug(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().replace(/^\/+|\/+$/gu, "");
+  if (!trimmed) return null;
+  const parts = trimmed.split("/");
+  if (parts.length !== 3) {
+    throw new Error(`Invalid CircleCI project slug "${trimmed}". Expected a full slug like \`circleci/<org-id>/<project-id>\` or \`gh/<owner>/<repo>\`.`);
+  }
+  if (parts.some((part) => part.trim().length === 0)) {
+    throw new Error(`Invalid CircleCI project slug "${trimmed}". Each path segment must be non-empty.`);
+  }
+  return parts.join("/");
+}
+
+function encodeCircleCiProjectSlug(projectSlug: string): string {
+  return projectSlug
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+async function verifyCircleCiConnection({
+  token,
+  fetch,
+  projectSlugs,
+}: {
+  token: string;
+  fetch: typeof globalThis.fetch;
+  projectSlugs: string[];
+}): Promise<void> {
+  if (typeof fetch !== "function") {
+    throw new Error("CircleCI connection testing requires a fetch implementation.");
+  }
+  for (const projectSlug of projectSlugs) {
+    const response = await fetch(`https://circleci.com/api/v2/project/${encodeCircleCiProjectSlug(projectSlug)}/pipeline?branch=main`, {
+      headers: {
+        "Circle-Token": token,
+      },
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(
+        response.status === 401 || response.status === 403
+          ? `CircleCI connection test failed: CircleCI rejected the token for project slug ${projectSlug}.`
+          : response.status === 404
+            ? `CircleCI connection test failed: project slug ${projectSlug} was not found or is not accessible to this token.`
+            : `CircleCI connection test failed for project slug ${projectSlug}: ${response.status} ${text.slice(0, 200)}`.trim(),
+      );
+    }
+    await response.json().catch(() => null);
+  }
+}
+
+function collectCircleCiProjectSlugs(repos: SetupConfigLike["repos"]): string[] {
+  return [...new Set((repos ?? [])
+    .map((repo) => normalizeCircleCiProjectSlug(repo.circleciProjectSlug))
+    .filter((value): value is string => Boolean(value)))];
+}
+
+function renderCircleCiProjectSlugs(repos: SetupConfigLike["repos"]): string[] {
+  const configured = (repos ?? [])
+    .filter((repo) => typeof repo.circleciProjectSlug === "string" && repo.circleciProjectSlug.trim().length > 0)
+    .map((repo) => `  ${repo.slug} -> ${repo.circleciProjectSlug!.trim()}`);
+  if (configured.length === 0) {
+    return ["  project slugs: none configured"];
+  }
+  return [
+    `  project slugs: ${configured.length}`,
+    ...configured,
+  ];
+}
+
+function renderProviderStatus(provider: ProviderName, providers: ProviderConfig, env: Record<string, string>, repos: SetupConfigLike["repos"] = []): string {
   if (provider === "github") {
     const tokenEnv = providers.github?.tokenEnv ?? "GITHUB_TOKEN";
     const mode = providers.github?.mode ?? "disabled";
@@ -708,6 +872,7 @@ function renderProviderStatus(provider: ProviderName, providers: ProviderConfig,
       `  mode: ${mode}`,
       `  delivery mode: ${deliveryMode}`,
       `  token env: ${tokenEnv} (${tokenAvailable})`,
+      ...renderCircleCiProjectSlugs(repos),
       ...(deliveryMode === "polling" && pollIntervalMs ? [`  poll interval: ${Math.round(pollIntervalMs / 1000)}s`] : []),
       ...(deliveryMode === "webhook" ? [`  webhook secret env: ${webhookSecretEnv} (${webhookAvailable})`] : []),
       "",
@@ -799,14 +964,34 @@ async function testProvider(
     if (providers.circleci?.mode !== "real") {
       return { ok: false, message: "CircleCI is not connected yet. Run `agentrail provider connect circleci`." };
     }
-    if (!resolveConfiguredValue(tokenEnv, env)) {
+    const token = resolveConfiguredValue(tokenEnv, env);
+    if (!token) {
       return { ok: false, message: `CircleCI is configured, but ${tokenEnv} is not available in ~/.agentrail/provider.env or the current shell.` };
+    }
+    const projectSlugs = collectCircleCiProjectSlugs(repos);
+    if (projectSlugs.length === 0) {
+      return {
+        ok: false,
+        message: "CircleCI is configured, but no CircleCI project slug is stored for any connected repo. Re-run `agentrail provider connect circleci`.",
+      };
     }
     const deliveryMode = normalizeDeliveryMode(providers.circleci?.deliveryMode, "polling");
     if (deliveryMode === "webhook" && !resolveConfiguredValue(webhookSecretEnv, env)) {
       return { ok: false, message: `CircleCI is configured, but ${webhookSecretEnv} is not available in ~/.agentrail/provider.env or the current shell.` };
     }
-    return { ok: true, message: `CircleCI looks configured. AgentRail can read ${tokenEnv} and use ${deliveryMode} delivery.` };
+    try {
+      await verifyCircleCiConnection({
+        token,
+        fetch,
+        projectSlugs,
+      });
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+    return {
+      ok: true,
+      message: `CircleCI connection test passed. AgentRail can authenticate ${tokenEnv}, access ${projectSlugs.length} configured CircleCI project slug${projectSlugs.length === 1 ? "" : "s"}, and use ${deliveryMode} delivery.`,
+    };
   }
 
   const tokenEnv = providers.linear?.tokenEnv ?? "LINEAR_API_KEY";
