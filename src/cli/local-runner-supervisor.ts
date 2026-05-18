@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { parseSimpleEnv } from "../env-file.ts";
 
@@ -45,6 +47,15 @@ interface ManagedRunnerProcess {
 }
 
 const DEFAULT_RESTART_DELAY_MS = 5_000;
+const DEFAULT_CLI_ENTRYPOINT = resolveDefaultCliEntrypoint(import.meta.url);
+
+export function resolveDefaultCliEntrypoint(moduleUrl: string): string {
+  const jsEntrypoint = fileURLToPath(new URL("./index.js", moduleUrl));
+  if (existsSync(jsEntrypoint)) {
+    return jsEntrypoint;
+  }
+  return fileURLToPath(new URL("./index.ts", moduleUrl));
+}
 
 export function createLocalRunnerSupervisor(options: LocalRunnerSupervisorOptions): LocalRunnerSupervisor {
   return new LocalRunnerSupervisor(options);
@@ -99,7 +110,7 @@ export class LocalRunnerSupervisor {
   private launch(agent: ManagedAgentEnv): void {
     if (this.stopped) return;
     const args = [
-      this.options.cliEntrypoint ?? process.argv[1] ?? "agentrail",
+      this.options.cliEntrypoint ?? DEFAULT_CLI_ENTRYPOINT,
       "agent",
       "run",
       "--env-file",

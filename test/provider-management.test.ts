@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { runCli } from "../src/cli/index.ts";
@@ -25,6 +25,21 @@ test("provider connect github writes provider.env and updates config", async (t)
       status: 200,
       json: { login: "octocat" },
     },
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [{ id: 1, state: "active", path: ".github/workflows/ci.yml" }] },
+    },
   ]);
 
   const stdout = createMemoryWriter();
@@ -41,8 +56,9 @@ test("provider connect github writes provider.env and updates config", async (t)
   assert.equal(exitCode, 0, stderr.toString());
   assert.match(stdout.toString(), /^\u2713 Connected GitHub using GITHUB_TOKEN in polling mode\.\n$/);
   assert.doesNotMatch(stdout.toString(), /Run `agentrail provider test github`/);
-  assert.equal(fetch.calls.length, 1);
+  assert.equal(fetch.calls.length, 4);
   assert.equal(fetch.calls[0]?.url, "https://api.github.com/user");
+  assert.equal(fetch.calls[3]?.url, "https://api.github.com/repos/oxnw/agentrail/actions/workflows");
   assert.equal(fetch.calls[0]?.headers.authorization, "Bearer ghp_test_provider_token");
 
   const providerEnv = await readFile(path.join(homePath, "provider.env"), "utf8");
@@ -79,6 +95,21 @@ test("provider connect github in webhook mode registers repo hooks before writin
         config: { url: "https://agentrail.example.com/providers/github/webhooks" },
       },
     },
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [{ id: 1, state: "active", path: ".github/workflows/ci.yml" }] },
+    },
   ]);
 
   const stdout = createMemoryWriter();
@@ -94,7 +125,7 @@ test("provider connect github in webhook mode registers repo hooks before writin
 
   assert.equal(exitCode, 0, stderr.toString());
   assert.match(stdout.toString(), /^\u2713 Connected GitHub using GITHUB_TOKEN in webhook mode\.\n$/);
-  assert.equal(fetch.calls.length, 3);
+  assert.equal(fetch.calls.length, 6);
   assert.equal(fetch.calls[0]?.url, "https://api.github.com/user");
   assert.equal(fetch.calls[1]?.url, "https://api.github.com/repos/oxnw/agentrail/hooks?per_page=100");
   assert.equal(fetch.calls[1]?.method, "GET");
@@ -133,6 +164,21 @@ test("provider connect github interactively prompts for a masked token", async (
       status: 200,
       json: { login: "octocat" },
     },
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [{ id: 1, state: "active", path: ".github/workflows/ci.yml" }] },
+    },
   ]);
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
@@ -166,7 +212,7 @@ test("provider connect github interactively prompts for a masked token", async (
     { kind: "start", message: "Testing GitHub connection" },
     { kind: "stop", message: "\u2713 Connected GitHub using GITHUB_TOKEN in polling mode." },
   ]);
-  assert.equal(fetch.calls.length, 1);
+  assert.equal(fetch.calls.length, 4);
   assert.equal(fetch.calls[0]?.headers.authorization, "Bearer ghp_interactive_provider_token");
 
   const providerEnv = await readFile(path.join(homePath, "provider.env"), "utf8");
@@ -307,6 +353,142 @@ test("provider test circleci validates the configured project slug", async (t) =
   assert.equal(fetch.calls[0]?.headers["Circle-Token"], "circleci_test_token");
 });
 
+test("provider doctor github reports missing workflow readiness", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
+  });
+  await rm(path.join(repoRoot, ".github"), { recursive: true, force: true });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.github = {
+    mode: "real",
+    tokenEnv: "GITHUB_TOKEN",
+    deliveryMode: "polling",
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const fetch = createFetchStub([
+    { ok: true, status: 200, json: { login: "octocat" } },
+    { ok: true, status: 200, json: { full_name: "oxnw/agentrail" } },
+    { ok: true, status: 200, json: { workflows: [] } },
+  ]);
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "doctor", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(stderr.toString(), "");
+  assert.match(stdout.toString(), /GitHub readiness: blocked/u);
+  assert.match(stdout.toString(), /No workflow files were found under `.github\/workflows`/u);
+});
+
+test("provider connect github creates a starter workflow for a Node repo when readiness needs it", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    GITHUB_TOKEN: "ghp_test_provider_token",
+  });
+  await rm(path.join(repoRoot, ".github"), { recursive: true, force: true });
+  await writeFile(path.join(repoRoot, "package.json"), JSON.stringify({
+    name: "provider-ready-repo",
+    private: true,
+    scripts: {
+      typecheck: "tsc --noEmit",
+      test: "node --test",
+    },
+  }, null, 2));
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.github = {
+    mode: "real",
+    tokenEnv: "GITHUB_TOKEN",
+    deliveryMode: "polling",
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const fetch = createFetchStub([
+    { ok: true, status: 200, json: { login: "octocat" } },
+    { ok: true, status: 200, json: { login: "octocat" } },
+    { ok: true, status: 200, json: { full_name: "oxnw/agentrail" } },
+    { ok: true, status: 200, json: { workflows: [] } },
+    { ok: true, status: 200, json: { login: "octocat" } },
+    { ok: true, status: 200, json: { full_name: "oxnw/agentrail" } },
+    { ok: true, status: 200, json: { workflows: [{ id: 1, state: "active", path: ".github/workflows/agentrail-ci.yml" }] } },
+  ]);
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "connect", "github"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  const workflowPath = path.join(repoRoot, ".github", "workflows", "agentrail-ci.yml");
+  const workflow = await readFile(workflowPath, "utf8");
+  assert.match(workflow, /pull_request:/u);
+  assert.match(workflow, /npm run typecheck/u);
+  assert.match(stdout.toString(), /Applied: oxnw\/agentrail: created \.github\/workflows\/agentrail-ci\.yml/u);
+  assert.match(stdout.toString(), /GitHub: ready/u);
+});
+
+test("provider connect circleci creates a starter config for a Node repo when readiness needs it", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    CIRCLECI_TOKEN: "circleci_test_token",
+  });
+  await rm(path.join(repoRoot, ".circleci"), { recursive: true, force: true });
+  await writeFile(path.join(repoRoot, "package.json"), JSON.stringify({
+    name: "provider-ready-repo",
+    private: true,
+    scripts: {
+      test: "node --test",
+    },
+  }, null, 2));
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.circleci = {
+    mode: "real",
+    tokenEnv: "CIRCLECI_TOKEN",
+    deliveryMode: "polling",
+  };
+  config.repos[0].circleciProjectSlug = "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1";
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const fetch = createFetchStub([
+    { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { items: [] } },
+  ]);
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "connect", "circleci", "--project-slug", "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  const configFile = await readFile(path.join(repoRoot, ".circleci", "config.yml"), "utf8");
+  assert.match(configFile, /version: 2\.1/u);
+  assert.match(configFile, /npm test/u);
+  assert.match(stdout.toString(), /Applied: oxnw\/agentrail: created \.circleci\/config\.yml/u);
+  assert.match(stdout.toString(), /CircleCI: ready/u);
+});
+
 test("provider connect linear validates the API key, writes provider.env, and updates config", async (t) => {
   const { repoRoot, homePath } = await setupProviderTest(t);
   const fetch = createFetchStub([
@@ -316,6 +498,16 @@ test("provider connect linear validates the API key, writes provider.env, and up
       json: {
         data: {
           viewer: { id: "lin_user_1", name: "Maya Reviewer" },
+        },
+      },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: {
+        data: {
+          viewer: { id: "lin_user_1", name: "Maya Reviewer" },
+          teams: { nodes: [{ id: "team_1", key: "ENG", name: "Engineering" }] },
         },
       },
     },
@@ -355,7 +547,7 @@ test("provider connect linear validates the API key, writes provider.env, and up
       message: "\u2713 Connected Linear using LINEAR_API_KEY in polling mode. Start AgentRail to discover and refresh issues automatically, or run `agentrail linear import ENG-123` to import one now.",
     },
   ]);
-  assert.equal(fetch.calls.length, 1);
+  assert.equal(fetch.calls.length, 2);
   assert.equal(fetch.calls[0]?.url, "https://api.linear.app/graphql");
   assert.equal(fetch.calls[0]?.headers.authorization, "lin_api_key_interactive");
 
@@ -408,6 +600,21 @@ test("provider connect emits deprecation warnings for --sync-mode via injected s
       ok: true,
       status: 200,
       json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [{ id: 1, state: "active", path: ".github/workflows/ci.yml" }] },
     },
   ]);
   const stdout = createMemoryWriter();
@@ -719,6 +926,21 @@ test("provider test github validates token and configured repo access", async (t
       status: 200,
       json: { login: "octocat" },
     },
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [{ id: 1, state: "active", path: ".github/workflows/ci.yml" }] },
+    },
   ]);
 
   const connectStdout = createMemoryWriter();
@@ -774,6 +996,21 @@ test("provider test github prefers provider.env over stale runtime env", async (
       status: 200,
       json: { login: "octocat" },
     },
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [{ id: 1, state: "active", path: ".github/workflows/ci.yml" }] },
+    },
   ]);
 
   const connectStdout = createMemoryWriter();
@@ -826,6 +1063,21 @@ test("provider test github fails when token cannot access configured repo", asyn
       ok: true,
       status: 200,
       json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: "oxnw/agentrail" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [{ id: 1, state: "active", path: ".github/workflows/ci.yml" }] },
     },
   ]);
 
@@ -935,6 +1187,50 @@ async function setupProviderTest(
     baseUrl: options.baseUrl,
   });
   await writeSetupFiles({ homePath, config });
+  await writeFile(path.join(repoRoot, "package.json"), JSON.stringify({
+    name: "provider-test-repo",
+    private: true,
+    scripts: {
+      typecheck: "tsc --noEmit",
+      test: "node --test",
+    },
+  }, null, 2));
+  await mkdir(path.join(repoRoot, ".github", "workflows"), { recursive: true });
+  await writeFile(path.join(repoRoot, ".github", "workflows", "ci.yml"), [
+    "name: CI",
+    "",
+    "on:",
+    "  pull_request:",
+    "  push:",
+    "",
+    "jobs:",
+    "  test:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    "      - run: npm ci",
+    "      - run: npm test",
+    "",
+  ].join("\n"), "utf8");
+  await mkdir(path.join(repoRoot, ".circleci"), { recursive: true });
+  await writeFile(path.join(repoRoot, ".circleci", "config.yml"), [
+    "version: 2.1",
+    "",
+    "jobs:",
+    "  test:",
+    "    docker:",
+    "      - image: cimg/node:22.11",
+    "    steps:",
+    "      - checkout",
+    "      - run: npm ci",
+    "      - run: npm test",
+    "",
+    "workflows:",
+    "  ci:",
+    "    jobs:",
+    "      - test",
+    "",
+  ].join("\n"), "utf8");
   return { repoRoot, homePath };
 }
 

@@ -39,6 +39,29 @@ export const pipelineListResponse = {
   ]
 };
 
+export const pipelineListResponseWithoutVcs = {
+  items: [
+    {
+      id: "pipeline-current",
+      number: 88,
+      state: "created",
+      created_at: "2026-05-02T10:00:00Z",
+      updated_at: "2026-05-02T10:04:00Z",
+      trigger: { type: "api" },
+      trigger_parameters: {
+        github_app: {
+          branch: "feature/circleci-status",
+          commit_sha: "abc123"
+        },
+        git: {
+          branch: "feature/circleci-status",
+          checkout_sha: "abc123"
+        }
+      }
+    }
+  ]
+};
+
 export const currentWorkflowListResponse = {
   items: [
     {

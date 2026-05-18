@@ -750,6 +750,24 @@ export class RoutingControlPlane {
       };
     }
 
+    const soleAgentFallback = this.selectSoleActiveAgentFallback(snapshot);
+    if (soleAgentFallback) {
+      const target = { type: "agent" as const, id: soleAgentFallback.agentId };
+      return {
+        decision: this.buildDecision({
+          outcome: "assigned",
+          target,
+          assignmentSource: "single_agent_fallback",
+          confidence: 0.35,
+          matchedRules: [],
+          summary: `No deterministic route matched; assigned the only active agent (${soleAgentFallback.displayName}) as a local fallback for this Linear task.`,
+          conflictReasons: [],
+          classifier: null,
+        }),
+        inputDigest,
+      };
+    }
+
     const assignmentSource: TaskAssignmentSource = "manual_triage";
     const summary = `No deterministic route matched; the task was sent to triage ${ruleSet.classifier.fallbackTriageQueueId}.`;
 
@@ -1009,12 +1027,20 @@ export class RoutingControlPlane {
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
   }
 
+  private selectSoleActiveAgentFallback(snapshot: ProviderIssueSnapshot): AgentProfile | null {
+    if (snapshot.provider !== "linear") {
+      return null;
+    }
+    const activeProfiles = this.listAgentProfiles()
+      .filter(profile => profile.status === "active");
+    return activeProfiles.length === 1 ? activeProfiles[0]! : null;
+  }
+
   private selectClassifierAgent(candidates: RoutingClassifierCandidate[], output: RoutingClassifierOutput): RoutingClassifierCandidate | null {
     const required = output.requiredCapabilities.map(lower);
     const optional = output.optionalCapabilities.map(lower);
     const ownershipHints = output.ownershipHints.map(lower);
     const scored = candidates
-      .filter(candidate => candidate.activeTaskCount < candidate.maxConcurrentTasks)
       .filter(candidate => {
         const capabilities = new Set(candidate.capabilityTags.map(lower));
         return required.every(capability => capabilities.has(capability));
@@ -1025,9 +1051,10 @@ export class RoutingControlPlane {
         const optionalScore = optional.filter(capability => capabilities.has(capability)).length * 10;
         const ownershipScore = ownershipHints.filter(hint => ownership.has(hint)).length * 5;
         const idleScore = candidate.activeTaskCount === 0 ? 2 : 0;
+        const capacityPenalty = Math.max(0, candidate.activeTaskCount - candidate.maxConcurrentTasks + 1) * 3;
         return {
           candidate,
-          score: optionalScore + ownershipScore + idleScore,
+          score: optionalScore + ownershipScore + idleScore - capacityPenalty,
         };
       })
       .sort((left, right) =>
@@ -1044,7 +1071,6 @@ export class RoutingControlPlane {
     const unmatched = output.unmatchedCapabilities.map(lower);
     const ownershipHints = output.ownershipHints.map(lower);
     const scored = candidates
-      .filter(candidate => candidate.activeTaskCount < candidate.maxConcurrentTasks)
       .map(candidate => {
         const capabilities = new Set(candidate.capabilityTags.map(lower));
         const ownership = new Set(candidate.ownershipTags.map(lower));
@@ -1053,9 +1079,10 @@ export class RoutingControlPlane {
         const optionalScore = optional.filter(capability => capabilities.has(capability)).length * 10;
         const ownershipScore = ownershipHints.filter(hint => ownership.has(hint)).length * 5;
         const idleScore = candidate.activeTaskCount === 0 ? 2 : 0;
+        const capacityPenalty = Math.max(0, candidate.activeTaskCount - candidate.maxConcurrentTasks + 1) * 3;
         return {
           candidate,
-          score: requiredScore + unmatchedScore + optionalScore + ownershipScore + idleScore,
+          score: requiredScore + unmatchedScore + optionalScore + ownershipScore + idleScore - capacityPenalty,
         };
       })
       .sort((left, right) =>
@@ -1278,7 +1305,7 @@ export class RoutingControlPlane {
     if (profile.repoAllowlist.length > 0 && !profile.repoAllowlist.some(candidate => lower(candidate) === lower(repo))) {
       return false;
     }
-    return this.hasAgentCapacity(profile, providerIssueId);
+    return true;
   }
 
   private activeAssignedTaskCount(profile: AgentProfile, providerIssueId: string): number {
@@ -1289,15 +1316,6 @@ export class RoutingControlPlane {
       excludeTaskId: existing?.id,
       excludeTask: (task) => isSetupVerificationTask(task.identifier, task.source?.provider),
     });
-  }
-
-  private hasAgentCapacity(profile: AgentProfile, providerIssueId: string): boolean {
-    if (!Number.isInteger(profile.maxConcurrentTasks) || profile.maxConcurrentTasks <= 0) {
-      return false;
-    }
-
-    const activeAssignedCount = this.activeAssignedTaskCount(profile, providerIssueId);
-    return activeAssignedCount < profile.maxConcurrentTasks;
   }
 
   private extractIssueNumber(providerIssueId: string): number | undefined {

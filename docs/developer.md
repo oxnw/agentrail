@@ -89,6 +89,14 @@ agentrail provider connect linear
 
 The CLI writes local provider env files and masks secret prompts.
 
+Readiness commands:
+
+```bash
+agentrail provider status
+agentrail provider doctor github
+agentrail provider doctor circleci
+```
+
 ## AI Routing Configuration
 
 AgentRail routing has two setup modes:

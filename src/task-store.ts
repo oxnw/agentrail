@@ -26,7 +26,7 @@ export interface TaskContext {
 
 export type TaskStatus = "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled";
 export type TaskPriority = "low" | "medium" | "high" | "critical";
-export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "classifier_best_effort" | "manual_triage";
+export type TaskAssignmentSource = "deterministic_rule" | "classifier" | "classifier_best_effort" | "single_agent_fallback" | "manual_triage";
 export type CiOverallStatus = "passed" | "failed" | "running" | "queued" | "cancelled" | "skipped" | "neutral" | "error";
 
 export interface TaskProviderIssueSnapshot {

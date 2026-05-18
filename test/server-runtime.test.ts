@@ -103,6 +103,87 @@ test("buildRuntime submit adapter calls GitHub API, not AgentRail public base UR
   }
 });
 
+test("buildRuntime submits Linear-backed tasks against the configured connected GitHub repo", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string | URL, options?: RequestInit) => {
+    const href = String(url);
+    calls.push(href);
+    assert.equal((options?.headers as Record<string, string> | undefined)?.authorization, "Bearer ghs_test");
+    if (href.includes("/pulls?state=all")) {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href.includes("/pulls?state=open")) {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href === "https://api.github.com/repos/oxnw/agentrail-e2e-sandbox/pulls") {
+      return new Response(JSON.stringify({
+        number: 74,
+        html_url: "https://github.com/oxnw/agentrail-e2e-sandbox/pull/74",
+        head: { ref: "agentrail/linear-submit", sha: "linear-head-sha" },
+        base: { ref: "main" },
+        created_at: "2026-05-18T15:00:00Z",
+      }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`Unexpected fetch URL: ${href}`);
+  }) as typeof globalThis.fetch;
+
+  try {
+    const runtime = buildRuntime({
+      githubToken: "ghs_test",
+      githubMode: "real",
+      circleciToken: null,
+      now,
+      eventStore: new TaskEventStore({ now }),
+      publicBaseUrl: "http://127.0.0.1:3144",
+      repos: [{
+        path: "/tmp/agentrail-e2e-sandbox",
+        slug: "oxnw/agentrail-e2e-sandbox",
+        defaultBranch: "main",
+      }],
+    });
+    const task = runtime.taskLifecycleStore.createTask({
+      identifier: "linear:tsting:issues/TES-6",
+      title: "Linear benchmark issue",
+      assignee: { id: "agt_test", name: "Test Agent" },
+      assigneeAgentId: "agt_test",
+      status: "in_progress",
+      availableActions: ["submit"],
+      source: {
+        provider: "linear",
+        linearIssueId: "lin_issue_06",
+        linearIdentifier: "TES-6",
+        baseBranch: "main",
+      },
+    });
+
+    const response = await runtime.taskLifecycleStore.submitTask(task.id, {
+      summary: "Submit Linear issue",
+      pullRequest: {
+        head: "agentrail/linear-submit",
+      },
+    }, "runtime-submit-linear-base");
+
+    const updated = runtime.taskLifecycleStore.getRawTask(task.id);
+    assert.equal((response as any).data.prNumber, 74);
+    assert.equal(updated?.source?.owner, "oxnw");
+    assert.equal(updated?.source?.repo, "agentrail-e2e-sandbox");
+    assert.equal(updated?.source?.ciProvider, "github_actions");
+    assert.ok(calls.every((href) => href.startsWith("https://api.github.com/")), calls.join("\n"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("buildRuntime ship adapter merges through GitHub and records shipped task state", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ href: string; method: string }> = [];

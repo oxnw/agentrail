@@ -690,6 +690,8 @@ function writeUsage(output: Writer) {
     "  agentrail config set --base-url <url> [--provider-mode <mode>] [--markdown-export|--no-markdown-export]",
     "  agentrail provider connect <github|circleci|linear>",
     "  agentrail provider list",
+    "  agentrail provider status",
+    "  agentrail provider doctor [github|circleci|linear]",
     "  agentrail provider test <github|circleci|linear>",
     "  agentrail linear import <issue-id|issue-url|issue-uuid>",
     "  agentrail event subscribe --url <url> --event-types <csv> [flags]",

@@ -3001,7 +3001,7 @@ components:
               properties:
                 outcome:
                   type: string
-                  enum: [approved, changes_requested, pending, not_required]
+                  enum: [approved, changes_requested, pending, not_required, review_required]
                 reviewer:
                   type: object
                   additionalProperties: false

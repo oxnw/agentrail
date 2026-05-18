@@ -136,6 +136,13 @@ agentrail provider connect linear
 Provider setup stores secrets locally and masks prompt input. Environment
 variables are still supported for CI/non-interactive automation.
 
+Use the readiness commands before calling setup done:
+
+```bash
+agentrail provider status
+agentrail provider doctor
+```
+
 After connecting Linear, import an issue:
 
 ```bash

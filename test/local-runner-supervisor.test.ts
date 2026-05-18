@@ -4,8 +4,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 
-import { createLocalRunnerSupervisor } from "../src/cli/local-runner-supervisor.ts";
+import { createLocalRunnerSupervisor, resolveDefaultCliEntrypoint } from "../src/cli/local-runner-supervisor.ts";
 
 class FakeChild extends EventEmitter {
   killed = false;
@@ -96,6 +97,22 @@ test("local runner supervisor starts one managed agent run child per valid env f
 
   await supervisor.stop();
   assert.equal(children.every((child) => child.killed), true);
+});
+
+test("resolveDefaultCliEntrypoint prefers built index.js when present", () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "agentrail-supervisor-entrypoint-"));
+  try {
+    const cliDir = path.join(tempDir, "dist", "cli");
+    mkdirSync(cliDir, { recursive: true });
+    writeFileSync(path.join(cliDir, "local-runner-supervisor.js"), "// built supervisor\n");
+    writeFileSync(path.join(cliDir, "index.js"), "// built cli\n");
+    writeFileSync(path.join(cliDir, "index.ts"), "// source cli\n");
+
+    const resolved = resolveDefaultCliEntrypoint(new URL(`file://${path.join(cliDir, "local-runner-supervisor.js")}`).href);
+    assert.equal(resolved, path.join(cliDir, "index.js"));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("local runner supervisor skips incomplete env files and keeps valid agents running", async (t) => {

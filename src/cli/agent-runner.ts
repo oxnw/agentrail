@@ -8,6 +8,8 @@ import { parseSimpleEnv } from "../env-file.ts";
 import { buildManagedRunContextEnvelope } from "../managed-run-context.ts";
 import {
   compileRunnerExecutionPlan,
+  hardenProtectedInstructionFiles,
+  restoreProtectedInstructionFileModes,
   validateRunnerPolicyFilesystemPostRun,
   validateRunnerPolicyFilesystemPreflight,
   validateRunnerPolicyPlan,
@@ -462,6 +464,7 @@ async function executeAgentRun({
     if (maxRuns !== undefined && totalRuns >= maxRuns) {
       return hadFailure ? 1 : 0;
     }
+    runStore.reconcileOrphanedActiveRuns(agentId, { currentProcessId: process.pid });
     const activeRuns = runStore.countActiveRuns(agentId);
     const openSlots = Math.max(0, runCapacity - activeRuns);
     if (openSlots === 0) {
@@ -673,12 +676,15 @@ async function executeSingleTaskRun({
     launch: {
       executable: runnerPlan.executable,
       args: runnerPlan.args,
+      processId: process.pid,
     },
   });
 
   if (markdownEnabled) {
     await writeRunMarkdown({ homePath, run: initialRun });
   }
+
+  let filesystemSnapshot: RunnerPolicyFilesystemSnapshot | null = null;
 
   try {
     await prepareWorktree({
@@ -725,7 +731,7 @@ async function executeSingleTaskRun({
     }
 
     const filesystemPreflight = await validateRunnerPolicyFilesystemPreflight(runnerPlan);
-    const filesystemSnapshot: RunnerPolicyFilesystemSnapshot | null = filesystemPreflight.snapshot;
+    filesystemSnapshot = filesystemPreflight.snapshot;
     if (!filesystemPreflight.ok) {
       const summary = filesystemPreflight.summary;
       return await blockManagedRunAwaitingUser({
@@ -747,6 +753,7 @@ async function executeSingleTaskRun({
         },
       });
     }
+    await hardenProtectedInstructionFiles(runnerPlan);
     await writeRunnerPolicyGeneratedFiles(runnerPlan);
 
     const result = await launchRunner({
@@ -827,6 +834,14 @@ async function executeSingleTaskRun({
     }
     return completed;
   } catch (error) {
+    if (runnerPlan && filesystemSnapshot) {
+      try {
+        await restoreProtectedInstructionFileModes(runnerPlan, filesystemSnapshot);
+      } catch (restoreError) {
+        const restoreMessage = restoreError instanceof Error ? restoreError.message : String(restoreError);
+        process.stderr.write(`Failed to restore protected instruction file modes after runner error: ${restoreMessage}\n`);
+      }
+    }
     const message = error instanceof Error ? error.message : String(error);
     const blocker = buildRunnerFailureBlocker(message, runId);
     runStore.reportRun(runId, {

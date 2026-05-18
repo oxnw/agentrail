@@ -13,6 +13,7 @@ import {
   failedUnitTestsResponse,
   jobCompletedWebhook,
   pipelineListResponse,
+  pipelineListResponseWithoutVcs,
   priorBuildJobsResponse,
   priorWorkflowListResponse,
   workflowCompletedWebhook
@@ -179,6 +180,106 @@ test("CircleCiStatusAdapter returns REST pipeline revision when task source lack
   const body = await adapter.getTaskCiStatus(circleCiTaskId);
 
   assert.equal(body.data.headSha, "abc123");
+});
+
+test("CircleCiStatusAdapter matches pipeline-run API metadata when CircleCI omits vcs fields", async () => {
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask(circleCiTaskSource),
+    fetch: async (url) => {
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse(pipelineListResponseWithoutVcs);
+      }
+
+      if (String(url).endsWith("/pipeline/pipeline-current/workflow")) {
+        return jsonResponse(currentWorkflowListResponse);
+      }
+
+      if (String(url).endsWith("/workflow/workflow-build-current/job")) {
+        return jsonResponse(currentBuildJobsResponse);
+      }
+
+      if (String(url).endsWith("/workflow/workflow-lint-current/job")) {
+        return jsonResponse(currentLintJobsResponse);
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/101/tests")) {
+        return jsonResponse(failedUnitTestsResponse);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  const body = await adapter.getTaskCiStatus(circleCiTaskId);
+
+  assert.equal(body.data.headSha, "abc123");
+  assert.equal(body.data.overallStatus, "failed");
+  assert.equal(body.data.workflows.length, 2);
+});
+
+test("CircleCiStatusAdapter refreshes workflow job state across repeated polls", async () => {
+  let buildJobsResponse = currentBuildJobsResponse;
+  let lintJobsResponse = currentLintJobsResponse;
+  let workflowListResponse = currentWorkflowListResponse;
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask(circleCiTaskSource),
+    fetch: async (url) => {
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse(pipelineListResponseWithoutVcs);
+      }
+
+      if (String(url).endsWith("/pipeline/pipeline-current/workflow")) {
+        return jsonResponse(workflowListResponse);
+      }
+
+      if (String(url).endsWith("/workflow/workflow-build-current/job")) {
+        return jsonResponse(buildJobsResponse);
+      }
+
+      if (String(url).endsWith("/workflow/workflow-lint-current/job")) {
+        return jsonResponse(lintJobsResponse);
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/101/tests")) {
+        return jsonResponse(failedUnitTestsResponse);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  const first = await adapter.getTaskCiStatus(circleCiTaskId);
+  assert.equal(first.data.overallStatus, "failed");
+
+  workflowListResponse = {
+    items: currentWorkflowListResponse.items.map((workflow) => ({
+      ...workflow,
+      status: "success",
+      stopped_at: "2026-05-02T10:06:00Z",
+    })),
+  };
+  buildJobsResponse = {
+    items: currentBuildJobsResponse.items.map((job) => ({
+      ...job,
+      status: "success",
+      stopped_at: job.stopped_at ?? "2026-05-02T10:05:59Z",
+    })),
+  };
+  lintJobsResponse = currentLintJobsResponse;
+
+  const second = await adapter.getTaskCiStatus(circleCiTaskId);
+  assert.equal(second.data.overallStatus, "passed");
+  assert.deepEqual(second.data.summary, {
+    total: 3,
+    passed: 3,
+    failed: 0,
+    running: 0,
+    queued: 0,
+    cancelled: 0,
+    skipped: 0,
+  });
 });
 
 test("CircleCiStatusAdapter reuses webhook snapshots instead of polling pipelines again", async () => {

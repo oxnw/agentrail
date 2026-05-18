@@ -12,12 +12,14 @@ export class GitHubSubmitAdapter {
   declare delegate: any;
   declare idempotencyRecords: Map<string, any>;
   declare getTask: ((taskId: string) => TaskRecord | null) | null;
+  declare repos: Array<{ slug: string; defaultBranch?: string | null }> | null;
   constructor({
     getTask = null,
     githubToken = process.env.GITHUB_TOKEN,
     fetch = globalThis.fetch,
     apiBaseUrl = DEFAULT_GITHUB_API_BASE_URL,
     delegate = null,
+    repos = [],
   } = {}) {
     if (typeof fetch !== "function") {
       throw new TypeError("GitHubSubmitAdapter requires a fetch implementation.");
@@ -29,13 +31,14 @@ export class GitHubSubmitAdapter {
     this.apiBaseUrl = apiBaseUrl.replace(/\/$/, "");
     this.delegate = delegate;
     this.idempotencyRecords = new Map();
+    this.repos = Array.isArray(repos) ? repos : [];
   }
 
   async submitTask(taskId, payload, idempotencyKey) {
-    const source = resolveTaskSource(taskId, {
+    const rawSource = resolveTaskSource(taskId, {
       getTask: this.getTask,
     });
-    if (!source) {
+    if (!rawSource) {
       if (this.delegate) {
         return this.delegate.submitTask(taskId, payload, idempotencyKey);
       }
@@ -43,6 +46,7 @@ export class GitHubSubmitAdapter {
         availableActions: ["list_my_tasks"],
       });
     }
+    const source = this.resolveGitHubSource(rawSource);
 
     validateSource(source);
     validateIdempotencyKey(idempotencyKey);
@@ -74,7 +78,7 @@ export class GitHubSubmitAdapter {
 
     const existingPR = await this.findExistingPR(source, head, base, idempotencyKey);
     if (existingPR) {
-      const response = buildExistingResponse(taskId, existingPR, idempotencyKey);
+      const response = buildExistingResponse(taskId, existingPR, idempotencyKey, source);
       this.idempotencyRecords.set(key, { fingerprint, response: structuredClone(response) });
       return response;
     }
@@ -99,7 +103,7 @@ export class GitHubSubmitAdapter {
       await this.postIssueComment(source, source.issueNumber, pr).catch(() => {});
     }
 
-    const response = buildCreatedResponse(taskId, pr, idempotencyKey);
+    const response = buildCreatedResponse(taskId, pr, idempotencyKey, source);
     this.idempotencyRecords.set(key, { fingerprint, response: structuredClone(response) });
     return response;
   }
@@ -155,10 +159,10 @@ export class GitHubSubmitAdapter {
   }
 
   async shipTask(taskId, payload, idempotencyKey) {
-    const source = resolveTaskSource(taskId, {
+    const rawSource = resolveTaskSource(taskId, {
       getTask: this.getTask,
     });
-    if (!source) {
+    if (!rawSource) {
       if (this.delegate && typeof this.delegate.shipTask === "function") {
         return this.delegate.shipTask(taskId, payload, idempotencyKey);
       }
@@ -166,6 +170,7 @@ export class GitHubSubmitAdapter {
         availableActions: ["list_my_tasks"],
       });
     }
+    const source = this.resolveGitHubSource(rawSource);
 
     validateSource(source);
     validateIdempotencyKey(idempotencyKey);
@@ -368,6 +373,34 @@ export class GitHubSubmitAdapter {
     }
     return h;
   }
+
+  resolveGitHubSource(source) {
+    if (
+      typeof source?.owner === "string"
+      && source.owner.length > 0
+      && typeof source?.repo === "string"
+      && source.repo.length > 0
+    ) {
+      return source;
+    }
+    if (source?.provider !== "linear") {
+      return source;
+    }
+    const primaryRepo = this.repos?.[0] ?? null;
+    if (!primaryRepo?.slug || typeof primaryRepo.slug !== "string") {
+      return source;
+    }
+    const [owner, repo] = primaryRepo.slug.split("/", 2);
+    if (!owner || !repo) {
+      return source;
+    }
+    return {
+      ...source,
+      owner,
+      repo,
+      baseBranch: source.baseBranch ?? primaryRepo.defaultBranch ?? "main",
+    };
+  }
 }
 
 function validateSource(source) {
@@ -406,7 +439,7 @@ function extractIdempotencyKey(body) {
   return body.slice(start, end).trim();
 }
 
-function buildExistingResponse(taskId, pr, idempotencyKey) {
+function buildExistingResponse(taskId, pr, idempotencyKey, source) {
   return {
     data: {
       submissionId: `ghpr_${pr.number}`,
@@ -414,6 +447,9 @@ function buildExistingResponse(taskId, pr, idempotencyKey) {
       status: "in_review",
       prUrl: pr.html_url,
       prNumber: pr.number,
+      owner: source.owner ?? null,
+      repo: source.repo ?? null,
+      ciProvider: inferSubmitCiProvider(source),
       head: pr.head?.ref ?? null,
       base: pr.base?.ref ?? null,
       headSha: pr.head?.sha ?? null,
@@ -426,7 +462,7 @@ function buildExistingResponse(taskId, pr, idempotencyKey) {
   };
 }
 
-function buildCreatedResponse(taskId, pr, idempotencyKey) {
+function buildCreatedResponse(taskId, pr, idempotencyKey, source) {
   return {
     data: {
       submissionId: `ghpr_${pr.number}`,
@@ -434,6 +470,9 @@ function buildCreatedResponse(taskId, pr, idempotencyKey) {
       status: "in_review",
       prUrl: pr.html_url,
       prNumber: pr.number,
+      owner: source.owner ?? null,
+      repo: source.repo ?? null,
+      ciProvider: inferSubmitCiProvider(source),
       head: pr.head?.ref ?? null,
       base: pr.base?.ref ?? null,
       headSha: pr.head?.sha ?? null,
@@ -444,6 +483,16 @@ function buildCreatedResponse(taskId, pr, idempotencyKey) {
     },
     availableActions: ["view_review_feedback"],
   };
+}
+
+function inferSubmitCiProvider(source) {
+  if (typeof source?.ciProvider === "string" && source.ciProvider.length > 0) {
+    return source.ciProvider;
+  }
+  if (typeof source?.projectSlug === "string" && source.projectSlug.length > 0) {
+    return "circleci";
+  }
+  return "github_actions";
 }
 
 export { extractIdempotencyKey, IDEMPOTENCY_TAG };

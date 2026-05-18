@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
   DEFAULT_RUNNER_EXECUTION_POLICY,
   buildRunnerPolicyEnv,
   compileRunnerExecutionPlan,
+  hardenProtectedInstructionFiles,
   normalizeRunnerExecutionPolicy,
   validateRunnerPolicyFilesystemPostRun,
   validateRunnerPolicyFilesystemPreflight,
@@ -70,6 +71,7 @@ test("compileRunnerExecutionPlan maps strict Codex policy to sandboxed exec args
   assert.deepEqual(plan.args.slice(0, 4), ["-a", "never", "-c", "shell_environment_policy.inherit=core"]);
   assert.ok(plan.args.includes("--sandbox"));
   assert.ok(plan.args.includes("workspace-write"));
+  assert.ok(plan.args.includes("--ephemeral"));
   assert.ok(plan.args.includes("--ignore-user-config"));
   assert.ok(plan.args.includes("--ignore-rules"));
   assert.ok(plan.args.includes("features.hooks=false"));
@@ -168,7 +170,7 @@ test("Codex filesystem post-run validation blocks denied write path changes", as
   assert.deepEqual(result.matches, ["created .env"]);
 });
 
-test("Codex filesystem post-run validation blocks instruction file drift", async (t) => {
+test("Codex filesystem post-run validation restores instruction file drift", async (t) => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-policy-instruction-drift-"));
   const worktreePath = path.join(tempDir, "worktree");
   const runDir = path.join(tempDir, "run");
@@ -193,10 +195,69 @@ test("Codex filesystem post-run validation blocks instruction file drift", async
   await writeFile(path.join(worktreePath, "AGENTS.md"), "Injected external memory context\n", "utf8");
   const result = await validateRunnerPolicyFilesystemPostRun(plan, preflight.snapshot);
 
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, "runner_policy_violation");
-  assert.match(result.summary, /modified AGENTS\.md/);
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, null);
+  assert.match(result.summary, /restored/);
   assert.deepEqual(result.matches, ["modified AGENTS.md"]);
+  assert.equal(await readFile(path.join(worktreePath, "AGENTS.md"), "utf8"), "Original project instructions\n");
+});
+
+test("hardenProtectedInstructionFiles removes write bits from protected instruction files", async (t) => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-policy-harden-instructions-"));
+  const worktreePath = path.join(tempDir, "worktree");
+  const runDir = path.join(tempDir, "run");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  await mkdir(worktreePath, { recursive: true });
+  await mkdir(runDir, { recursive: true });
+  const agentsPath = path.join(worktreePath, "AGENTS.md");
+  await writeFile(agentsPath, "Original project instructions\n", { encoding: "utf8", mode: 0o644 });
+
+  const plan = compileRunnerExecutionPlan({
+    ...basePlanInput,
+    runner: "codex",
+    worktreePath,
+    runDir,
+    recipePath: path.join(runDir, "agent-recipes.md"),
+  });
+
+  await hardenProtectedInstructionFiles(plan);
+
+  const hardenedMode = (await stat(agentsPath)).mode & 0o777;
+  assert.equal(hardenedMode & 0o222, 0);
+});
+
+test("Codex filesystem post-run validation restores original instruction file mode when content is unchanged", async (t) => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-policy-instruction-mode-"));
+  const worktreePath = path.join(tempDir, "worktree");
+  const runDir = path.join(tempDir, "run");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  await mkdir(worktreePath, { recursive: true });
+  await mkdir(runDir, { recursive: true });
+  const agentsPath = path.join(worktreePath, "AGENTS.md");
+  await writeFile(agentsPath, "Original project instructions\n", { encoding: "utf8", mode: 0o644 });
+
+  const plan = compileRunnerExecutionPlan({
+    ...basePlanInput,
+    runner: "codex",
+    worktreePath,
+    runDir,
+    recipePath: path.join(runDir, "agent-recipes.md"),
+  });
+
+  const preflight = await validateRunnerPolicyFilesystemPreflight(plan);
+  assert.equal(preflight.ok, true);
+
+  await hardenProtectedInstructionFiles(plan);
+  assert.equal(((await stat(agentsPath)).mode & 0o777) & 0o222, 0);
+
+  const result = await validateRunnerPolicyFilesystemPostRun(plan, preflight.snapshot);
+
+  assert.equal(result.ok, true);
+  assert.equal((await stat(agentsPath)).mode & 0o777, 0o644);
 });
 
 test("compileRunnerExecutionPlan rejects Cursor in strict mode without an external sandbox", () => {

@@ -109,6 +109,8 @@ Inspect local config and connected repos:
 agentrail config show
 agentrail repo list
 agentrail provider list
+agentrail provider status
+agentrail provider doctor
 ```
 
 Repair a task source if older imported data needs to be corrected:

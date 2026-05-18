@@ -51,6 +51,18 @@ const COMMON_FIELDS: ReadonlyArray<keyof TaskSourceFields> = [
 
 const LINEAR_FIELDS: ReadonlyArray<keyof TaskSourceFields | "provider"> = [
   "provider",
+  "owner",
+  "repo",
+  "branch",
+  "baseBranch",
+  "headSha",
+  "projectSlug",
+  "ciProvider",
+  "reviewers",
+  "pullNumber",
+  "prUrl",
+  "submissionId",
+  "mergedSha",
   "linearIssueId",
   "linearIdentifier",
   "linearTeamId",
@@ -143,11 +155,11 @@ export function normalizeTaskSource(source: TaskSource | null | undefined): Task
 export function getTaskSourceRepoKey(source: TaskSource | null | undefined): string | null {
   if (
     !source
-    || (source.provider !== "github" && source.provider !== "gitlab")
     || !source.owner
     || !source.repo
   ) {
     return null;
   }
-  return `${source.provider}:${source.owner}/${source.repo}`;
+  const repoProvider = source.provider === "gitlab" ? "gitlab" : "github";
+  return `${repoProvider}:${source.owner}/${source.repo}`;
 }

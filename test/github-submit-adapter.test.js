@@ -164,6 +164,91 @@ test("resolves submit source from persisted routed task when not configured in t
   assert.ok(fetchCalls.some((call) => call.method === "POST" && call.url.endsWith("/pulls")));
 });
 
+test("uses the connected GitHub repo for Linear-backed tasks that submit pull requests", async () => {
+  const fetchCalls = [];
+  const pr = makePR({
+    html_url: "https://github.com/oxnw/agentrail-e2e-sandbox/pull/74",
+    head: { ref: "agentrail/linear-e2e", sha: "linear-sha-1" },
+  });
+
+  const adapter = new GitHubSubmitAdapter({
+    githubToken: "ghs_test",
+    repos: [{ slug: "oxnw/agentrail-e2e-sandbox", defaultBranch: "main" }],
+    getTask: (requestedTaskId) => {
+      assert.equal(requestedTaskId, taskId);
+      return {
+        id: taskId,
+        source: {
+          provider: "linear",
+          linearIssueId: "lin_123",
+          linearIdentifier: "TES-6",
+          branch: "agentrail/linear-e2e",
+        },
+        submissions: [],
+        latestSubmissionId: null,
+      };
+    },
+    fetch: async (url, options) => {
+      fetchCalls.push({ url: String(url), method: options?.method ?? "GET" });
+      if (String(url).includes("/pulls") && options?.method === "POST" && !String(url).includes("requested_reviewers")) {
+        return jsonResponse(pr);
+      }
+      if (String(url).includes("/pulls?")) {
+        return jsonResponse([]);
+      }
+      return jsonResponse({});
+    },
+  });
+
+  const result = await adapter.submitTask(
+    taskId,
+    { summary: "Submit Linear-backed task" },
+    "idem-linear-submit-001",
+  );
+
+  assert.equal(result.data.owner, "oxnw");
+  assert.equal(result.data.repo, "agentrail-e2e-sandbox");
+  assert.equal(result.data.ciProvider, "github_actions");
+  assert.ok(fetchCalls.some((call) => call.url.includes("/repos/oxnw/agentrail-e2e-sandbox/pulls")));
+});
+
+test("preserves CircleCI metadata when submitting a GitHub-backed PR", async () => {
+  const pr = makePR({
+    head: { ref: "feat/fix-auth", sha: "circleci-sha-1" },
+  });
+
+  const adapter = new GitHubSubmitAdapter({
+    githubToken: "ghs_test",
+    getTask: () => makeTask({
+      ciProvider: "circleci",
+      projectSlug: "circleci/org-id/project-id",
+    }),
+    fetch: async (url, options) => {
+      if (String(url).includes("/pulls") && options?.method === "POST" && !String(url).includes("requested_reviewers")) {
+        return jsonResponse(pr);
+      }
+      if (String(url).includes("/requested_reviewers")) {
+        return jsonResponse({ requested_reviewers: [{ login: "reviewer1" }] });
+      }
+      if (String(url).includes("/comments") && options?.method === "POST") {
+        return jsonResponse({ id: 100 });
+      }
+      if (String(url).includes("/pulls?state=all")) {
+        return jsonResponse([]);
+      }
+      if (String(url).includes("/pulls?")) {
+        return jsonResponse([]);
+      }
+      return jsonResponse({});
+    },
+  });
+
+  const result = await adapter.submitTask(taskId, { summary: "Keep CircleCI wiring" }, "idem-circleci-submit");
+
+  assert.equal(result.data.ciProvider, "circleci");
+  assert.equal(result.data.headSha, "circleci-sha-1");
+});
+
 test("returns existing PR without creating a duplicate (idempotent replay)", async () => {
   const pr = makePR();
   let createCallCount = 0;

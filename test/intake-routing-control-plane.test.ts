@@ -443,7 +443,7 @@ test("RoutingControlPlane rejects malformed routing rules before activation", ()
   }
 });
 
-test("RoutingControlPlane skips agent rules when the target agent is at capacity", async () => {
+test("RoutingControlPlane still assigns deterministic rules when the target agent is already busy", async () => {
   const { routing, taskQueue } = createControlPlane();
   seedProfile(routing, "agt_cto", {
     maxConcurrentTasks: 1,
@@ -476,9 +476,9 @@ test("RoutingControlPlane skips agent rules when the target agent is at capacity
 
   const decision = await routing.ingestProviderIssue(makeSnapshot(), "route_capacity");
 
-  assert.equal(decision.outcome, "no_route");
-  assert.equal(decision.assignment.assigneeAgentId, null);
-  assert.equal(decision.assignment.triageQueueId, "triage_engineering");
+  assert.equal(decision.outcome, "assigned");
+  assert.equal(decision.assignment.assigneeAgentId, "agt_cto");
+  assert.equal(decision.assignment.assignmentSource, "deterministic_rule");
 });
 
 test("RoutingControlPlane ignores setup verification tasks when checking agent capacity", async () => {
@@ -524,7 +524,7 @@ test("RoutingControlPlane ignores setup verification tasks when checking agent c
   assert.ok(decision.taskId);
 });
 
-test("RoutingControlPlane counts active capacity even when recent assigned tasks are terminal", async () => {
+test("RoutingControlPlane still assigns when older active tasks exist and newer tasks are terminal", async () => {
   let tick = 0;
   const now = () => new Date(Date.parse("2026-05-05T12:00:00Z") + tick++ * 1000);
   const eventStore = new TaskEventStore({ now });
@@ -577,12 +577,12 @@ test("RoutingControlPlane counts active capacity even when recent assigned tasks
 
   const decision = await routing.ingestProviderIssue(makeSnapshot(), "route_capacity_many_terminal");
 
-  assert.equal(decision.outcome, "no_route");
-  assert.equal(decision.assignment.assigneeAgentId, null);
-  assert.equal(decision.assignment.triageQueueId, "triage_engineering");
+  assert.equal(decision.outcome, "assigned");
+  assert.equal(decision.assignment.assigneeAgentId, "agt_cto");
+  assert.equal(decision.assignment.assignmentSource, "deterministic_rule");
 });
 
-test("RoutingControlPlane counts capacity beyond the first page when re-routing existing tasks", async () => {
+test("RoutingControlPlane preserves deterministic assignment when re-routing existing tasks under load", async () => {
   const { routing, taskQueue } = createControlPlane();
   seedProfile(routing, "agt_cto", {
     maxConcurrentTasks: 1,
@@ -621,9 +621,9 @@ test("RoutingControlPlane counts capacity beyond the first page when re-routing 
     sourceVersion: "2026-05-05T12:05:00Z:delivery-02",
   }), "route_existing_capacity_second");
 
-  assert.equal(reroutedDecision.outcome, "no_route");
-  assert.equal(reroutedDecision.assignment.assigneeAgentId, null);
-  assert.equal(reroutedDecision.assignment.triageQueueId, "triage_engineering");
+  assert.equal(reroutedDecision.outcome, "assigned");
+  assert.equal(reroutedDecision.assignment.assigneeAgentId, "agt_cto");
+  assert.equal(reroutedDecision.assignment.assignmentSource, "deterministic_rule");
 });
 
 test("RoutingControlPlane sends ambiguous matches to triage", async () => {
@@ -725,6 +725,46 @@ test("RoutingControlPlane triages classifier-enabled fallback when no classifier
 
   const stored = taskQueue.getRawTask(decision.taskId!);
   assert.equal(stored?.assignmentSource, "manual_triage");
+});
+
+test("RoutingControlPlane assigns Linear tasks to the sole active agent when no route matches", async () => {
+  const { routing, taskQueue } = createControlPlane();
+  seedProfile(routing, "agt_linear");
+  seedRuleSet(routing, [
+    {
+      id: "rule_unrelated_github_only",
+      name: "Unrelated GitHub rule",
+      enabled: true,
+      priority: 5,
+      conditions: {
+        repositories: ["oxnw/agentrail"],
+        labelsAny: ["backend-only"],
+      },
+      target: { type: "agent", id: "agt_linear" },
+      confidence: 0.8,
+      explanation: "Unrelated GitHub-only rule.",
+    },
+  ]);
+
+  const decision = await routing.ingestProviderIssue(makeSnapshot({
+    provider: "linear",
+    providerIssueId: "linear:tsting:issues/TES-5",
+    repository: {
+      provider: "linear",
+      owner: "tsting",
+      name: "TES",
+      defaultBranch: "main",
+    },
+    links: { providerIssue: "https://linear.app/tsting/issue/TES-5" },
+  }), "route_linear_single_agent_fallback");
+
+  assert.equal(decision.outcome, "assigned");
+  assert.equal(decision.assignment.assigneeAgentId, "agt_linear");
+  assert.equal(decision.assignment.assignmentSource, "single_agent_fallback");
+  assert.match(decision.routingReason.summary, /only active agent/);
+  const stored = taskQueue.getRawTask(decision.taskId!);
+  assert.equal(stored?.assignmentSource, "single_agent_fallback");
+  assert.equal(stored?.assigneeAgentId, "agt_linear");
 });
 
 test("RoutingControlPlane assigns with classifier output when deterministic rules do not match", async () => {

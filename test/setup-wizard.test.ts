@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { Writable } from "node:stream";
 import test from "node:test";
 
@@ -171,14 +171,20 @@ test("runCli asks how AI routing should handle tasks without a suitable agent", 
 
 test("runCli can connect GitHub during init with a hidden token prompt and shows provider follow-up commands", async () => {
   const agentrailHome = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const repoPath = await mkdtemp(path.join(os.tmpdir(), "agentrail-init-repo-"));
+  await writeFile(path.join(repoPath, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }), "utf8");
+  const localRepo = {
+    ...detectedRepo,
+    repoPath,
+  };
   const previousHome = process.env.AGENTRAIL_HOME;
   process.env.AGENTRAIL_HOME = agentrailHome;
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
   const prompt = new ScriptedPromptSession([
-    { kind: "input", value: detectedRepo.repoPath },
-    { kind: "input", value: `https://github.com/${detectedRepo.remoteSlug}` },
-    { kind: "input", value: detectedRepo.defaultBranch },
+    { kind: "input", value: localRepo.repoPath },
+    { kind: "input", value: `https://github.com/${localRepo.remoteSlug}` },
+    { kind: "input", value: localRepo.defaultBranch },
     { kind: "input", value: "http://127.0.0.1:3000" },
     { kind: "select", value: "rules_only" },
     { kind: "select", value: "strict" },
@@ -196,25 +202,53 @@ test("runCli can connect GitHub during init with a hidden token prompt and shows
       status: 200,
       json: { login: "octocat" },
     },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: localRepo.remoteSlug },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [] },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { login: "octocat" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { full_name: localRepo.remoteSlug },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { workflows: [] },
+    },
   ]);
 
   const exitCode = await runCli(["init"], {
-    cwd: detectedRepo.repoPath,
+    cwd: localRepo.repoPath,
     stdinIsTTY: true,
     stdoutIsTTY: true,
     stdout,
     stderr,
-    detectRepoContext: async () => detectedRepo,
+    detectRepoContext: async () => localRepo,
     createPrompt: () => prompt,
     providerFetch: fetch as any,
   });
 
   assert.equal(exitCode, 0, stderr.toString());
   assert.equal(stderr.toString(), "");
-  assert.equal(stdout.toString(), "");
+  assert.match(stdout.toString(), /Applied: oxnw\/agentrail: created \.github\/workflows\/agentrail-ci\.yml/);
+  assert.match(stdout.toString(), /GitHub: ready, 1 warning/);
   assert.doesNotMatch(stdout.toString(), /Run `agentrail provider test github`/);
   const providerEnv = await readFile(path.join(agentrailHome, "provider.env"), "utf8");
   assert.match(providerEnv, /GITHUB_TOKEN="ghp_init_flow_token"/);
+  const starterWorkflow = await readFile(path.join(repoPath, ".github", "workflows", "agentrail-ci.yml"), "utf8");
+  assert.match(starterWorkflow, /name: AgentRail CI/);
   assert.ok(prompt.calls.includes("secret"));
   assert.deepEqual(prompt.spinnerEvents, [
     { kind: "start", message: "Testing GitHub connection" },
@@ -228,6 +262,7 @@ test("runCli can connect GitHub during init with a hidden token prompt and shows
 
   if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
   else process.env.AGENTRAIL_HOME = previousHome;
+  await rm(repoPath, { recursive: true, force: true });
   await rm(agentrailHome, { recursive: true, force: true });
 });
 

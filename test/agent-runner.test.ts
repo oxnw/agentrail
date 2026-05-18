@@ -1123,6 +1123,7 @@ test("agent report posts progress using runner environment", async (t) => {
     launch: {
       executable: "codex",
       args: ["exec"],
+      processId: process.pid,
     },
   });
   const stdout = createMemoryWriter();
@@ -1665,6 +1666,7 @@ test("agent run respects max concurrent task capacity from the agent env", async
     launch: {
       executable: "codex",
       args: ["exec"],
+      processId: process.pid,
     },
   });
   const task = harness.taskQueue.createTask({
@@ -1768,6 +1770,68 @@ test("agent run marks the run failed when worktree setup fails before launch", a
   assert.equal(storedTask?.status, "blocked");
   assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
   assert.equal(storedTask?.blocker?.kind, "awaiting_user");
+  assert.equal(storedTask?.blocker?.reason, "runner_execution_failed");
+});
+
+test("agent run restores protected instruction file modes when runner launch fails", async (t) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agentrail-agent-run-launch-mode-restore-"));
+  const homePath = await mkdtemp(path.join(os.tmpdir(), "agentrail-home-"));
+  const harness = await createHarness();
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const previousHome = process.env.AGENTRAIL_HOME;
+  process.env.AGENTRAIL_HOME = homePath;
+
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(homePath, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.AGENTRAIL_HOME;
+    else process.env.AGENTRAIL_HOME = previousHome;
+    await harness.close();
+  });
+
+  await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
+  const task = harness.taskQueue.createTask({
+    identifier: "AGEA-RUN-LAUNCH-MODE-RESTORE",
+    title: "Launch failure restores AGENTS mode",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    status: "todo",
+    availableActions: ["start"],
+  });
+  await writeAgentEnv(homePath, {
+    AGENTRAIL_BASE_URL: harness.baseUrl,
+    AGENTRAIL_API_KEY: harness.apiKey,
+    AGENTRAIL_AGENT_ID: "agt_runner",
+    AGENTRAIL_AGENT_RUNNER: "codex",
+    AGENTRAIL_MAX_CONCURRENT_TASKS: "1",
+    AGENTRAIL_REPO_ALLOWLIST: "oxnw/agentrail",
+  });
+
+  let hardenedPath = "";
+
+  const exitCode = await runCli(["agent", "run", "--once"], {
+    cwd: repoRoot,
+    stdout,
+    stderr,
+    agentRunner: {
+      prepareWorktree: async ({ worktreePath }) => {
+        await initGitWorktree(worktreePath);
+        hardenedPath = path.join(worktreePath, "AGENTS.md");
+        await writeFile(hardenedPath, "Protected instructions\n", { encoding: "utf8", mode: 0o644 });
+      },
+      launchRunner: async () => {
+        throw new Error("runner executable missing");
+      },
+    },
+  });
+
+  assert.equal(exitCode, 1);
+  assert.match(stderr.toString(), /runner executable missing/);
+  assert.equal((await lstat(hardenedPath)).mode & 0o777, 0o644);
+
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
   assert.equal(storedTask?.blocker?.reason, "runner_execution_failed");
 });
 
