@@ -828,6 +828,26 @@ async function executeSingleTaskRun({
     return completed;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const blocker = buildRunnerFailureBlocker(message, runId);
+    runStore.reportRun(runId, {
+      status: "blocked",
+      summary: message,
+      ...blocker,
+    });
+    try {
+      await blockTaskAwaitingUser({
+        baseUrl,
+        apiKey,
+        fetchImpl,
+        taskId: task.id,
+        runId,
+        agentId,
+        blocker,
+      });
+    } catch (blockError) {
+      const blockMessage = blockError instanceof Error ? blockError.message : String(blockError);
+      process.stderr.write(`Failed to block task ${task.identifier} after runner failure: ${blockMessage}\n`);
+    }
     const failed = runStore.updateRun(runId, {
       status: "failed",
       exitCode: 1,
@@ -839,6 +859,16 @@ async function executeSingleTaskRun({
     }
     throw error;
   }
+}
+
+function buildRunnerFailureBlocker(message: string, runId: string): BlockedReportMetadata {
+  const cleanMessage = message.replace(/\s+/gu, " ").trim();
+  const visibleMessage = cleanMessage.length > 300 ? `${cleanMessage.slice(0, 297)}...` : cleanMessage;
+  return {
+    reason: "runner_execution_failed",
+    actionRequired: `Review managed runner logs for ${runId} and fix the runner failure before retrying. Last error: ${visibleMessage}`,
+    resumeInstructions: "Fix the runner failure, then resolve the blocker so AgentRail can start a fresh managed run.",
+  };
 }
 
 async function blockManagedRunAwaitingUser({

@@ -76,6 +76,46 @@ test("resolveTaskSource falls back branch/baseBranch/headSha from latest submiss
   assert.equal(source?.prUrl, "https://github.com/acme/webapp/pull/42");
 });
 
+test("resolveTaskSource uses the last matching submission when GitHub PR submission ids repeat", () => {
+  const task = makeTask({
+    id: "tsk_duplicate_pr",
+    source: { provider: "github", owner: "acme", repo: "webapp" },
+    submissions: [
+      {
+        id: "ghpr_42",
+        summary: "Initial PR",
+        artifacts: [],
+        checks: [],
+        notes: null,
+        submittedAt: "2026-05-05T12:00:00Z",
+        prNumber: 42,
+        prUrl: "https://github.com/acme/webapp/pull/42",
+        branch: "feat/submit",
+        baseBranch: "main",
+        headSha: "old-sha",
+      },
+      {
+        id: "ghpr_42",
+        summary: "Fix push",
+        artifacts: [],
+        checks: [],
+        notes: null,
+        submittedAt: "2026-05-05T12:10:00Z",
+        prNumber: 42,
+        prUrl: "https://github.com/acme/webapp/pull/42",
+        branch: "feat/submit",
+        baseBranch: "main",
+        headSha: "new-sha",
+      },
+    ],
+    latestSubmissionId: "ghpr_42",
+  });
+
+  const source = resolveTaskSource("tsk_duplicate_pr", { getTask: () => task });
+
+  assert.equal(source?.headSha, "new-sha");
+});
+
 test("resolveTaskSource returns null for submission-only task metadata", () => {
   const task = makeTask({
     id: "tsk_1",

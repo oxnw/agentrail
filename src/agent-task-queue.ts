@@ -79,6 +79,17 @@ function firstString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+function stringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry.length > 0)) {
+    return null;
+  }
+  return [...value];
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 function toSafeNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -315,7 +326,7 @@ export class AgentTaskQueue {
         availableActions: ["list_my_tasks"],
       });
     }
-    if (existing.status !== "in_progress") {
+    if (!isAwaitingUserBlockableTask(existing)) {
       throw new TaskLifecycleError(409, "conflict", "Task is not in a blockable state.", {
         currentStatus: existing.status,
         availableActions: existing.availableActions,
@@ -550,7 +561,7 @@ export class AgentTaskQueue {
       const submissions = [...task.submissions, newSubmission];
       const latestSubmissionId = responseData.submissionId;
       const status: TaskRecord["status"] = "in_review";
-      const availableActions = ["ship", "view_ci_status", "view_review_feedback"];
+      const availableActions = ["view_ci_status", "view_review_feedback"];
       const source = task.source
         ? {
             ...task.source,
@@ -563,19 +574,26 @@ export class AgentTaskQueue {
           }
         : undefined;
 
-      const updated = this.store.updateTask(taskId, {
+      const taskPatch: Parameters<TaskStore["updateTask"]>[1] = {
         submissions,
         latestSubmissionId,
         status,
         availableActions,
         source,
+        ciStatus: null,
+        ci: null,
+        reviewOutcome: null,
         updatedAt: this.now().toISOString(),
+      };
+      const updated = this.store.updateTask(taskId, {
+        ...taskPatch,
       });
 
       if (updated) {
         await this.appendTaskUpdatedEvent(updated, {
           previousStatus,
           summary: `Submission accepted: ${responseData.submissionId}${responseData.prNumber ? ` (PR #${responseData.prNumber})` : ""}`,
+          changedFields: ["submissions", "latestSubmissionId", "status", "availableActions", "source", "ciStatus", "ci", "reviewOutcome", "updatedAt"],
         });
       }
     }
@@ -585,6 +603,26 @@ export class AgentTaskQueue {
   }
 
   async shipTask(taskId: string, payload: unknown, idempotencyKey: string | undefined) {
+    if (!idempotencyKey) {
+      throw new TaskLifecycleError(400, "validation_error", "Idempotency-Key header is required.", {
+        availableActions: ["retry"],
+      });
+    }
+    const key = `ship:${idempotencyKey}`;
+    const fingerprint = JSON.stringify(payload);
+    const existing = this.store.getIdempotencyEntry(key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new TaskLifecycleError(
+          409,
+          "conflict",
+          "Idempotency-Key has already been used with a different request payload.",
+          { idempotencyKey, availableActions: ["retry"] },
+        );
+      }
+      return structuredClone(existing.response);
+    }
+
     const task = this.store.getTask(taskId);
     if (!task) {
       throw new TaskLifecycleError(404, "not_found", "Task not found.", {
@@ -597,12 +635,51 @@ export class AgentTaskQueue {
         availableActions: task.availableActions,
       });
     }
-    if (this.delegate?.shipTask) {
-      return this.delegate.shipTask(taskId, payload, idempotencyKey);
+    if (!this.delegate?.shipTask) {
+      throw new TaskLifecycleError(501, "not_implemented", "Task ship is not supported by the current runtime configuration.", {
+        availableActions: ["list_my_tasks"],
+      });
     }
-    throw new TaskLifecycleError(501, "not_implemented", "Task ship is not supported by the current runtime configuration.", {
-      availableActions: ["list_my_tasks"],
+
+    const response = await this.delegate.shipTask(taskId, payload, idempotencyKey);
+    const responseObject = asObject(response) ?? {};
+    const responseData = asObject(responseObject.data) ?? {};
+    const payloadObject = asObject(payload) ?? {};
+    const availableActions = stringArray(responseObject.availableActions)
+      ?? stringArray(responseData.availableActions)
+      ?? ["rollback"];
+    const operationId = firstString(responseData.operationId) ?? `shp_${taskId}`;
+    const shipStatus = firstString(responseData.status) ?? "merged";
+    const targetEnvironment = firstString(payloadObject.targetEnvironment, responseData.targetEnvironment) ?? "github";
+    const mode = firstString(payloadObject.mode, payloadObject.mergeMethod, responseData.mode) ?? "merge";
+    const queuedAt = firstString(responseData.queuedAt, responseData.mergedAt) ?? this.now().toISOString();
+    const mergedSha = firstString(responseData.mergeCommitSha, responseData.mergedSha);
+    const source = task.source
+      ? {
+          ...task.source,
+          ...(mergedSha ? { mergedSha } : {}),
+        }
+      : undefined;
+    const previousStatus = task.status;
+    const updated = this.store.updateTask(taskId, {
+      status: "done",
+      availableActions,
+      shipOperation: {
+        id: operationId,
+        status: shipStatus,
+        targetEnvironment,
+        mode,
+        queuedAt,
+      },
+      source,
     });
+
+    if (updated) {
+      await this.appendTaskShippedEvent(updated, { previousStatus });
+    }
+
+    this.store.setIdempotencyEntry(key, { fingerprint, response: structuredClone(response) });
+    return response;
   }
 
   async rollbackTask(taskId: string, payload: unknown, idempotencyKey: string | undefined) {
@@ -786,6 +863,7 @@ export class AgentTaskQueue {
     summary?: Partial<TaskCiState["summary"]> | null;
     headline?: string | null;
     updatedAt?: string | null;
+    headSha?: string | null;
   }): Promise<{ task: TaskRecord; outcome: "failed_transition" | "recovered_transition" | "unchanged" } | null> {
     const existing = this.store.getTask(taskId);
     if (!existing) {
@@ -794,6 +872,9 @@ export class AgentTaskQueue {
     const previousTaskStatus = existing.status;
     const previousCiStatus = existing.ci?.overallStatus ?? existing.ciStatus ?? null;
     const nextStatus = observation.overallStatus;
+    if (isObservationStaleForLatestSubmission(existing, observation)) {
+      return { task: existing, outcome: "unchanged" };
+    }
     const blocking = nextStatus === "failed";
     const nowIso = this.now().toISOString();
     const ci: TaskCiState = {
@@ -880,6 +961,7 @@ export class AgentTaskQueue {
     summary?: string | null;
     reviewer?: string | null;
     updatedAt?: string | null;
+    headSha?: string | null;
     decisionScope?: "event" | "pull_request";
   }): Promise<{ task: TaskRecord; outcome: "changes_requested_transition" | "approved_transition" | "unchanged" } | null> {
     const existing = this.store.getTask(taskId);
@@ -895,6 +977,9 @@ export class AgentTaskQueue {
       && nextOutcome !== "changes_requested"
       && observation.decisionScope !== "pull_request"
     ) {
+      return { task: existing, outcome: "unchanged" };
+    }
+    if (isObservationStaleForLatestSubmission(existing, observation)) {
       return { task: existing, outcome: "unchanged" };
     }
     const previousOutcome = existing.reviewOutcome;
@@ -946,15 +1031,40 @@ export class AgentTaskQueue {
 
   private async appendTaskUpdatedEvent(
     task: TaskRecord,
-    { previousStatus, summary }: { previousStatus: string; summary: string }
+    {
+      previousStatus,
+      summary,
+      changedFields = ["submissions", "latestSubmissionId", "status", "availableActions", "source", "updatedAt"],
+    }: {
+      previousStatus: string;
+      summary: string;
+      changedFields?: string[];
+    }
   ) {
     await this.appendTaskEvent("task.updated", task, {
       status: task.status,
       previousStatus,
-      changedFields: ["submissions", "latestSubmissionId", "status", "availableActions", "source", "updatedAt"],
+      changedFields,
       actor: { id: task.assignee.id, role: "agent" },
       summary,
       availableActions: task.availableActions,
+    });
+  }
+
+  private async appendTaskShippedEvent(
+    task: TaskRecord,
+    { previousStatus }: { previousStatus: string },
+  ) {
+    await this.appendTaskEvent("task.shipped", task, {
+      status: task.status,
+      previousStatus,
+      changedFields: ["status", "availableActions", "shipOperation", "source", "updatedAt"],
+      actor: { id: task.assignee.id, role: "agent" },
+      summary: "Ship request accepted.",
+      availableActions: task.availableActions,
+      shipStatus: task.shipOperation?.status ?? null,
+      operationId: task.shipOperation?.id ?? null,
+      targetEnvironment: task.shipOperation?.targetEnvironment ?? null,
     });
   }
 
@@ -997,10 +1107,47 @@ function availableActionsForCiState(task: TaskRecord, nextStatus: CiOverallStatu
   if (nextStatus === "failed") {
     return ["fix", "view_ci_status", "view_review_feedback"];
   }
-  if (nextStatus === "passed" && isRetryWorkActionable(task)) {
+  if (nextStatus === "passed" && task.reviewOutcome !== "changes_requested") {
     return ["ship", "view_ci_status", "view_review_feedback"];
   }
   return task.availableActions;
+}
+
+function isAwaitingUserBlockableTask(task: TaskRecord): boolean {
+  if (task.status === "in_progress") {
+    return true;
+  }
+  return task.status === "in_review"
+    && (task.availableActions.includes("fix") || hasBlockingSubmissionState(task));
+}
+
+function hasBlockingSubmissionState(task: TaskRecord): boolean {
+  return task.ciStatus === "failed"
+    || task.ci?.overallStatus === "failed"
+    || task.reviewOutcome === "changes_requested";
+}
+
+function isObservationStaleForLatestSubmission(task: TaskRecord, observation: { updatedAt?: string | null; headSha?: string | null }): boolean {
+  const latestSubmission = getLatestTaskSubmission(task);
+  if (!latestSubmission) {
+    return false;
+  }
+
+  const observedHeadSha = normalizeOptionalString(observation.headSha);
+  const latestHeadSha = normalizeOptionalString(latestSubmission.headSha) ?? normalizeOptionalString(task.source?.headSha);
+  if (observedHeadSha && latestHeadSha) {
+    return observedHeadSha !== latestHeadSha;
+  }
+
+  if (!observation.updatedAt || !latestSubmission.submittedAt) {
+    return false;
+  }
+  const observedTime = Date.parse(observation.updatedAt);
+  const submittedTime = Date.parse(latestSubmission.submittedAt);
+  if (!Number.isFinite(observedTime) || !Number.isFinite(submittedTime)) {
+    return false;
+  }
+  return observedTime < submittedTime;
 }
 
 function normalizeReviewOutcome(outcome: string): "approved" | "changes_requested" | "not_required" | null {
@@ -1021,14 +1168,19 @@ function availableActionsForReviewState(task: TaskRecord, outcome: "approved" | 
   if (outcome === "changes_requested") {
     return ["fix", "view_ci_status", "view_review_feedback"];
   }
+  if (outcome === "approved" && isWaitingForLatestSubmissionCi(task)) {
+    return task.availableActions;
+  }
   if (outcome === "approved" && task.ciStatus !== "failed") {
     return ["ship", "view_ci_status", "view_review_feedback"];
   }
   return task.availableActions;
 }
 
-function isRetryWorkActionable(task: TaskRecord): boolean {
-  return task.availableActions.includes("fix") || task.availableActions.includes("submit");
+function isWaitingForLatestSubmissionCi(task: TaskRecord): boolean {
+  return task.status === "in_review"
+    && task.ciStatus !== "passed"
+    && Boolean(getLatestTaskSubmission(task));
 }
 
 function changedCiFields(previousActions: string[], nextActions: string[]): string[] {

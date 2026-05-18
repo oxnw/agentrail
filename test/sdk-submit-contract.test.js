@@ -80,6 +80,32 @@ test("OpenAPI task detail and submit response declare emitted routing and branch
   }
 });
 
+test("OpenAPI and SDK contracts expose CI and review freshness fields", () => {
+  const spec = readFileSync(new URL("../docs/api/task-lifecycle.openapi.yaml", import.meta.url), "utf8");
+  const typescript = readFileSync(new URL("../sdk/typescript/src/types.ts", import.meta.url), "utf8");
+  const python = readFileSync(new URL("../sdk/python/src/agentrail/models.py", import.meta.url), "utf8");
+
+  const ciStart = spec.indexOf("    TaskCiStatusResponse:");
+  const ciEnd = spec.indexOf("    CircleCiWebhookReceiptResponse:", ciStart);
+  assert.notEqual(ciStart, -1, "TaskCiStatusResponse schema should exist");
+  assert.notEqual(ciEnd, -1, "CircleCiWebhookReceiptResponse schema should follow TaskCiStatusResponse");
+  const ciSchema = spec.slice(ciStart, ciEnd);
+  assert.match(ciSchema, /\n\s+headSha:/, "TaskCiStatusResponse.data should declare headSha");
+
+  const reviewStart = spec.indexOf("    TaskReviewFeedbackResponse:");
+  const reviewEnd = spec.indexOf("    TaskShipRequest:", reviewStart);
+  assert.notEqual(reviewStart, -1, "TaskReviewFeedbackResponse schema should exist");
+  assert.notEqual(reviewEnd, -1, "TaskShipRequest schema should follow TaskReviewFeedbackResponse");
+  const reviewSchema = spec.slice(reviewStart, reviewEnd);
+  assert.match(reviewSchema, /\n\s+headSha:/, "TaskReviewFeedbackResponse latestDecision should declare headSha");
+  assert.match(reviewSchema, /enum:\s*\[approved,\s*changes_requested,\s*pending,\s*not_required\]/, "Review outcome enum should include not_required");
+
+  assert.match(typescript, /headSha\?: string \| null;/, "TypeScript SDK should expose optional headSha fields");
+  assert.match(typescript, /"not_required"/, "TypeScript ReviewOutcome should include not_required");
+  assert.match(python, /head_sha: str \| None = Field\(default=None, alias="headSha"\)/, "Python SDK should expose optional head_sha fields");
+  assert.match(python, /NOT_REQUIRED = "not_required"/, "Python ReviewOutcome should include not_required");
+});
+
 test("OpenAPI and SDK auth scope contracts expose routing scopes", () => {
   const spec = readFileSync(new URL("../docs/api/task-lifecycle.openapi.yaml", import.meta.url), "utf8");
   const typescript = readFileSync(new URL("../sdk/typescript/src/types.ts", import.meta.url), "utf8");

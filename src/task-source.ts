@@ -21,6 +21,7 @@ export interface TaskSourceFields {
   pullNumber?: number;
   prUrl?: string;
   submissionId?: string;
+  mergedSha?: string;
   labels?: string[];
   assignees?: string[];
   deliveryId?: string;
@@ -76,6 +77,7 @@ const REPO_FIELDS: ReadonlyArray<keyof TaskSourceFields | "provider"> = [
   "pullNumber",
   "prUrl",
   "submissionId",
+  "mergedSha",
   ...COMMON_FIELDS,
 ];
 

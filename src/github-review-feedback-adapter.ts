@@ -168,6 +168,7 @@ function deriveLatestDecision(reviews) {
         role: latest.author_association?.toLowerCase() ?? "contributor"
       },
       createdAt: latest.submitted_at,
+      headSha: typeof latest.commit_id === "string" && latest.commit_id.length > 0 ? latest.commit_id : null,
       summary: latest.body || summarizeDecision(latest.state)
     };
   }
@@ -189,6 +190,7 @@ function deriveLatestDecision(reviews) {
       role: latest.author_association?.toLowerCase() ?? "contributor"
     },
     createdAt: latest.submitted_at,
+    headSha: typeof latest.commit_id === "string" && latest.commit_id.length > 0 ? latest.commit_id : null,
     summary: latest.body || summarizeDecision(latest.state)
   };
 }

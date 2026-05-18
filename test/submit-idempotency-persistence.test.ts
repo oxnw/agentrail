@@ -79,7 +79,12 @@ test("AgentTaskQueue.persist - stores idempotency and PR metadata on task record
       }),
     });
 
-    const task = queue.createTask(makeTask({ identifier: "AGEA-101", title: "Persist PR metadata" }));
+    const task = queue.createTask(makeTask({
+      identifier: "AGEA-101",
+      title: "Persist PR metadata",
+      ciStatus: "failed",
+      reviewOutcome: "approved",
+    }));
 
     const result = await queue.submitTask(task.id, { summary: "Fix stuff" }, "idem-101-a");
 
@@ -98,6 +103,9 @@ test("AgentTaskQueue.persist - stores idempotency and PR metadata on task record
     assert.equal(updated!.submissions.length, 1);
     assert.equal(updated!.submissions[0].prNumber, 123);
     assert.equal(updated!.submissions[0].prUrl, "https://github.com/acme/webapp/pull/123");
+    assert.equal(updated!.ciStatus, null);
+    assert.equal(updated!.reviewOutcome, null);
+    assert.deepEqual(updated!.availableActions, ["view_ci_status", "view_review_feedback"]);
 
     // 3. Second store instance restores state
     const secondQueue = new AgentTaskQueue({
@@ -166,7 +174,7 @@ test("AgentTaskQueue.getTask exposes latest submit metadata in task detail", asy
   assert.equal((detail.data as any).branch, "feat/persist-submit");
   assert.equal((detail.data as any).baseBranch, "main");
   assert.equal((detail.data as any).headSha, "abc123");
-  assert.deepEqual(detail.data.availableActions, ["ship", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(detail.data.availableActions, ["view_ci_status", "view_review_feedback"]);
 });
 
 test("AgentTaskQueue.getTask reads branch fields from latest submission when source is absent", async () => {

@@ -89,6 +89,7 @@ test("CircleCiStatusAdapter summarizes workflows, failed tests, and flaky hints 
 
   assert.equal(body.data.taskId, circleCiTaskId);
   assert.equal(body.data.submissionId, "sub_circleci_01");
+  assert.equal(body.data.headSha, "abc123");
   assert.equal(body.data.overallStatus, "failed");
   assert.deepEqual(body.data.summary, {
     total: 3,
@@ -135,6 +136,49 @@ test("CircleCiStatusAdapter summarizes workflows, failed tests, and flaky hints 
   assert.deepEqual(body.availableActions, ["retry_failed_checks", "view_logs"]);
   assert.equal(body.meta.tokenBudgetHint, "standard");
   assert.equal(fetchCalls[0].options.headers["Circle-Token"], "circleci_test_token");
+});
+
+test("CircleCiStatusAdapter returns REST pipeline revision when task source lacks head SHA", async () => {
+  const { headSha, ...sourceWithoutHeadSha } = circleCiTaskSource;
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask(sourceWithoutHeadSha),
+    fetch: async (url) => {
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse(pipelineListResponse);
+      }
+
+      if (String(url).endsWith("/pipeline/pipeline-current/workflow")) {
+        return jsonResponse(currentWorkflowListResponse);
+      }
+
+      if (String(url).endsWith("/pipeline/pipeline-prior/workflow")) {
+        return jsonResponse(priorWorkflowListResponse);
+      }
+
+      if (String(url).endsWith("/workflow/workflow-build-current/job")) {
+        return jsonResponse(currentBuildJobsResponse);
+      }
+
+      if (String(url).endsWith("/workflow/workflow-lint-current/job")) {
+        return jsonResponse(currentLintJobsResponse);
+      }
+
+      if (String(url).endsWith("/workflow/workflow-build-prior/job")) {
+        return jsonResponse(priorBuildJobsResponse);
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/101/tests")) {
+        return jsonResponse(failedUnitTestsResponse);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  const body = await adapter.getTaskCiStatus(circleCiTaskId);
+
+  assert.equal(body.data.headSha, "abc123");
 });
 
 test("CircleCiStatusAdapter reuses webhook snapshots instead of polling pipelines again", async () => {

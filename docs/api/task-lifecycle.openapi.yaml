@@ -2789,6 +2789,9 @@ components:
             updatedAt:
               type: [string, 'null']
               format: date-time
+            headSha:
+              type: [string, 'null']
+              description: Commit SHA this CI observation applies to, when the provider exposes one.
             availableActions:
               $ref: '#/components/schemas/AvailableActions'
         availableActions:
@@ -2998,7 +3001,7 @@ components:
               properties:
                 outcome:
                   type: string
-                  enum: [approved, changes_requested, pending]
+                  enum: [approved, changes_requested, pending, not_required]
                 reviewer:
                   type: object
                   additionalProperties: false
@@ -3011,6 +3014,9 @@ components:
                 createdAt:
                   type: string
                   format: date-time
+                headSha:
+                  type: [string, 'null']
+                  description: Commit SHA this review decision applies to, when the provider exposes one.
                 summary:
                   type: string
             comments:

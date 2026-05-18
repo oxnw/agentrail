@@ -148,6 +148,8 @@ test("agent run --once starts assigned work, records the run, and writes markdow
         assert.equal(executable, "codex");
         assert.ok(args.includes("--ignore-user-config"));
         assert.ok(args.includes("--ignore-rules"));
+        assert.ok(args.includes("features.hooks=false"));
+        assert.equal(args.includes("hooks=false"), false);
         assert.ok(args.includes("--sandbox"));
         assert.ok(args.includes("workspace-write"));
         assert.equal(args.includes("shell_environment_policy.inherit=all"), false);
@@ -204,7 +206,7 @@ test("agent run --once starts assigned work, records the run, and writes markdow
 
   const storedTask = harness.taskQueue.getRawTask(task.id);
   assert.equal(storedTask?.status, "in_review");
-  assert.deepEqual(storedTask?.availableActions, ["ship", "view_ci_status", "view_review_feedback"]);
+  assert.deepEqual(storedTask?.availableActions, ["view_ci_status", "view_review_feedback"]);
 
   const runStore = new AgentRunStore({
     storagePath: path.join(homePath, "stores", "agent-runs.json"),
@@ -225,6 +227,8 @@ test("agent run --once starts assigned work, records the run, and writes markdow
   assert.ok(runs[0].launch.args.includes("workspace-write"));
   assert.ok(runs[0].launch.args.includes("--ignore-user-config"));
   assert.ok(runs[0].launch.args.includes("--ignore-rules"));
+  assert.ok(runs[0].launch.args.includes("features.hooks=false"));
+  assert.equal(runs[0].launch.args.includes("hooks=false"), false);
   assert.ok(runs[0].launch.args.includes("--cd"));
   assert.ok(runs[0].launch.args.includes(runs[0].worktreePath));
   assert.ok(runs[0].launch.args.includes("--add-dir"));
@@ -1717,7 +1721,7 @@ test("agent run marks the run failed when worktree setup fails before launch", a
   });
 
   await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
-  harness.taskQueue.createTask({
+  const task = harness.taskQueue.createTask({
     identifier: "AGEA-RUN-003",
     title: "Broken worktree task",
     assignee: { id: "agt_runner", name: "Runner" },
@@ -1758,6 +1762,13 @@ test("agent run marks the run failed when worktree setup fails before launch", a
   assert.ok(run);
   assert.equal(run.status, "failed");
   assert.match(run.summary ?? "", /worktree setup failed/);
+  assert.equal(run.userAction?.reason, "runner_execution_failed");
+
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
+  assert.equal(storedTask?.blocker?.kind, "awaiting_user");
+  assert.equal(storedTask?.blocker?.reason, "runner_execution_failed");
 });
 
 test("agent run marks a zero-exit runner as failed when it does not write a handoff", async (t) => {
@@ -1778,7 +1789,7 @@ test("agent run marks a zero-exit runner as failed when it does not write a hand
   });
 
   await writeSetupRepo(repoRoot, homePath, harness.baseUrl, false);
-  harness.taskQueue.createTask({
+  const task = harness.taskQueue.createTask({
     identifier: "AGEA-RUN-004",
     title: "No progress task",
     assignee: { id: "agt_runner", name: "Runner" },
@@ -1822,6 +1833,13 @@ test("agent run marks a zero-exit runner as failed when it does not write a hand
   assert.ok(run);
   assert.equal(run.status, "failed");
   assert.match(run.summary ?? "", /handoff file/i);
+  assert.equal(run.userAction?.reason, "runner_execution_failed");
+
+  const storedTask = harness.taskQueue.getRawTask(task.id);
+  assert.equal(storedTask?.status, "blocked");
+  assert.deepEqual(storedTask?.availableActions, ["resolve_blocker"]);
+  assert.equal(storedTask?.blocker?.kind, "awaiting_user");
+  assert.equal(storedTask?.blocker?.reason, "runner_execution_failed");
 });
 
 test("agent run records a user handoff without submitting the task", async (t) => {

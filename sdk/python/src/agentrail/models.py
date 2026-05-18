@@ -72,6 +72,7 @@ class ReviewOutcome(str, Enum):
     APPROVED = "approved"
     CHANGES_REQUESTED = "changes_requested"
     PENDING = "pending"
+    NOT_REQUIRED = "not_required"
 
 
 class CommentSeverity(str, Enum):
@@ -609,6 +610,7 @@ class TaskCiStatusData(BaseModel):
     failure_summaries: list[CiFailureSummary] = Field(alias="failureSummaries")
     flaky_hints: list[CiFlakyHint] = Field(alias="flakyHints")
     updated_at: datetime | None = Field(alias="updatedAt")
+    head_sha: str | None = Field(default=None, alias="headSha")
     available_actions: list[str] = Field(alias="availableActions")
 
     model_config = {"populate_by_name": True}
@@ -629,6 +631,7 @@ class ReviewDecision(BaseModel):
     outcome: ReviewOutcome
     reviewer: ReviewParticipant
     created_at: datetime = Field(alias="createdAt")
+    head_sha: str | None = Field(default=None, alias="headSha")
     summary: str
 
     model_config = {"populate_by_name": True}

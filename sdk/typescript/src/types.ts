@@ -45,7 +45,7 @@ export type CiCheckStatus =
   | "cancelled"
   | "skipped";
 
-export type ReviewOutcome = "approved" | "changes_requested" | "pending";
+export type ReviewOutcome = "approved" | "changes_requested" | "pending" | "not_required";
 
 export type CommentSeverity = "must_fix" | "should_fix" | "note";
 
@@ -456,6 +456,7 @@ export interface TaskCiStatusData {
   failureSummaries: CiFailureSummary[];
   flakyHints: CiFlakyHint[];
   updatedAt: string | null;
+  headSha?: string | null;
   availableActions: string[];
 }
 
@@ -471,6 +472,7 @@ export interface ReviewDecision {
   outcome: ReviewOutcome;
   reviewer: { id: string; role: string };
   createdAt: string;
+  headSha?: string | null;
   summary: string;
 }
 

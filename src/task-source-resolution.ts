@@ -12,7 +12,14 @@ export function getLatestTaskSubmission(task: TaskRecord | null): TaskSubmission
   }
 
   if (task.latestSubmissionId) {
-    const matching = task.submissions.find((submission) => submission.id === task.latestSubmissionId);
+    let matching: TaskSubmission | null = null;
+    for (let index = task.submissions.length - 1; index >= 0; index -= 1) {
+      const submission = task.submissions[index];
+      if (submission?.id === task.latestSubmissionId) {
+        matching = submission;
+        break;
+      }
+    }
     if (matching) {
       return matching;
     }
@@ -41,6 +48,14 @@ export function resolveTaskSource(
 
   if (source.pullNumber == null && latestSubmission?.prNumber != null) {
     source.pullNumber = latestSubmission.prNumber;
+  }
+
+  if (source.prNumber == null && source.pullNumber != null) {
+    source.prNumber = source.pullNumber;
+  }
+
+  if (source.pullNumber == null && source.prNumber != null) {
+    source.pullNumber = source.prNumber;
   }
 
   if (source.prUrl == null && latestSubmission?.prUrl) {

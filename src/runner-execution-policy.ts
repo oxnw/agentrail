@@ -200,6 +200,21 @@ const CODEX_ARG_ENV_DENY_PATTERNS = [
   "*KEY*",
 ];
 
+const DEFAULT_DENY_WRITE_GLOBS = [
+  ".env",
+  ".env.*",
+  "**/.env",
+  "**/.env.*",
+  "AGENTS.md",
+  "**/AGENTS.md",
+  "CLAUDE.md",
+  "**/CLAUDE.md",
+  ".agentrail/**",
+  ".codex/**",
+  ".claude/**",
+  ".cursor/rules/**",
+];
+
 export const DEFAULT_RUNNER_EXECUTION_POLICY: RunnerExecutionPolicy = {
   preset: "strict",
   enforcementMode: "strict",
@@ -209,7 +224,7 @@ export const DEFAULT_RUNNER_EXECUTION_POLICY: RunnerExecutionPolicy = {
     extraReadablePaths: [],
     extraWritablePaths: [],
     denyReadGlobs: [".env", ".env.*", "**/.env", "**/.env.*", "**/*secret*", "**/*credential*"],
-    denyWriteGlobs: [".env", ".env.*", "**/.env", "**/.env.*"],
+    denyWriteGlobs: DEFAULT_DENY_WRITE_GLOBS,
   },
   network: {
     mode: "agentrail_local_only",
@@ -452,6 +467,8 @@ function codexPlan(
     `shell_environment_policy.set=${shellSet}`,
     "-c",
     `sandbox_workspace_write.network_access=${networkAccess}`,
+    "-c",
+    "features.hooks=false",
     "exec",
     "--sandbox",
     policy.filesystem.worktree === "write" ? "workspace-write" : "read-only",
@@ -481,7 +498,7 @@ function codexPlan(
       { area: "network", strength: "enforced", detail: networkAccess === "true" ? "Codex workspace-write network access is explicitly enabled." : "Codex workspace-write network access is disabled; run context falls back to the local snapshot.", critical: true },
       { area: "credentials", strength: "enforced", detail: "Child environment is built from AgentRail's allowlist and run-scoped values.", critical: true },
       { area: "publish", strength: "enforced", detail: "AgentRail owns branch push and task submission after handoff validation.", critical: true },
-      { area: "config", strength: "enforced", detail: "Codex user config and execpolicy rules are ignored for the managed run.", critical: true },
+      { area: "config", strength: "enforced", detail: "Codex user config, hooks, and execpolicy rules are disabled for the managed run.", critical: true },
       { area: "commands", strength: "partial", detail: "Codex command blocking relies on sandbox, no provider credentials, and AgentRail-owned publish.", critical: false },
     ],
   };

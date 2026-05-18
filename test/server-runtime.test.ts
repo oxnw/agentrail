@@ -103,6 +103,103 @@ test("buildRuntime submit adapter calls GitHub API, not AgentRail public base UR
   }
 });
 
+test("buildRuntime ship adapter merges through GitHub and records shipped task state", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ href: string; method: string }> = [];
+  globalThis.fetch = (async (url: string | URL, options?: RequestInit) => {
+    const href = String(url);
+    const method = options?.method ?? "GET";
+    calls.push({ href, method });
+    assert.equal((options?.headers as Record<string, string> | undefined)?.authorization, "Bearer ghs_test");
+    if (href === "https://api.github.com/repos/oxnw/agentrail/pulls/19") {
+      return new Response(JSON.stringify({
+        number: 19,
+        html_url: "https://github.com/oxnw/agentrail/pull/19",
+        state: "open",
+        merged: false,
+        mergeable: true,
+        mergeable_state: "clean",
+        head: { ref: "agentrail/ship", sha: "head-sha-19" },
+        base: { ref: "main" },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href === "https://api.github.com/repos/oxnw/agentrail/commits/head-sha-19/status") {
+      return new Response(JSON.stringify({ state: "success" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href === "https://api.github.com/repos/oxnw/agentrail/pulls/19/merge") {
+      assert.equal(method, "PUT");
+      return new Response(JSON.stringify({ sha: "merge-sha-19", merged: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href === "https://api.github.com/repos/oxnw/agentrail/issues/18" && method === "PATCH") {
+      return new Response(JSON.stringify({ state: "closed", html_url: "https://github.com/oxnw/agentrail/issues/18" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href === "https://api.github.com/repos/oxnw/agentrail/issues/18") {
+      return new Response(JSON.stringify({ state: "closed", html_url: "https://github.com/oxnw/agentrail/issues/18" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`Unexpected fetch URL: ${href}`);
+  }) as typeof globalThis.fetch;
+
+  try {
+    const eventStore = new TaskEventStore({ now });
+    const runtime = buildRuntime({
+      githubToken: "ghs_test",
+      githubMode: "real",
+      circleciToken: null,
+      now,
+      eventStore,
+      publicBaseUrl: "http://127.0.0.1:3144",
+    });
+    const task = runtime.taskLifecycleStore.createTask({
+      identifier: "github:oxnw/agentrail:issues/18",
+      title: "Ship issue",
+      assignee: { id: "agt_test", name: "Test Agent" },
+      assigneeAgentId: "agt_test",
+      status: "in_review",
+      availableActions: ["ship", "view_ci_status", "view_review_feedback"],
+      ciStatus: "passed",
+      source: {
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 18,
+        pullNumber: 19,
+        branch: "agentrail/ship",
+        baseBranch: "main",
+        headSha: "head-sha-19",
+      },
+    });
+
+    const response = await runtime.taskLifecycleStore.shipTask(task.id, { mergeMethod: "squash" }, "runtime-ship-github-base");
+    const updated = runtime.taskLifecycleStore.getRawTask(task.id);
+
+    assert.equal((response as any).data.operationId, "ghship_19");
+    assert.equal(updated?.status, "done");
+    assert.deepEqual(updated?.availableActions, ["rollback"]);
+    assert.equal(updated?.shipOperation?.id, "ghship_19");
+    assert.equal(updated?.source?.mergedSha, "merge-sha-19");
+    assert.equal(eventStore.events.at(-1)?.type, "task.shipped");
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every(({ href }) => href.startsWith("https://api.github.com/")), calls.map(({ href }) => href).join("\n"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("fetchAllGitHubIssues follows Link header pagination", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];

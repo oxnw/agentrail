@@ -1,7 +1,14 @@
 import unittest
 
 
-from agentrail import TaskDetailResponse, TaskSubmissionResponse, TaskSubmitRequest
+from agentrail import (
+    ReviewOutcome,
+    TaskCiStatusResponse,
+    TaskDetailResponse,
+    TaskReviewFeedbackResponse,
+    TaskSubmissionResponse,
+    TaskSubmitRequest,
+)
 
 
 class TaskSubmitContractTest(unittest.TestCase):
@@ -99,6 +106,55 @@ class TaskSubmitContractTest(unittest.TestCase):
 
         self.assertIsNone(response.data.assignee_agent_id)
         self.assertEqual(response.data.triage_queue_id, "triage_engineering")
+
+    def test_ci_status_exposes_head_sha(self) -> None:
+        response = TaskCiStatusResponse(
+            data={
+                "taskId": "tsk_123",
+                "submissionId": "ghpr_42",
+                "overallStatus": "running",
+                "summary": {
+                    "total": 1,
+                    "passed": 0,
+                    "failed": 0,
+                    "running": 1,
+                    "queued": 0,
+                    "cancelled": 0,
+                    "skipped": 0,
+                },
+                "workflows": [],
+                "checks": [],
+                "failureSummaries": [],
+                "flakyHints": [],
+                "updatedAt": "2026-05-05T12:05:00Z",
+                "headSha": "abc123",
+                "availableActions": ["view_ci_status", "view_review_feedback"],
+            },
+            availableActions=["view_ci_status", "view_review_feedback"],
+            meta={"tokenBudgetHint": "standard", "truncatedFields": []},
+        )
+
+        self.assertEqual(response.data.head_sha, "abc123")
+
+    def test_review_feedback_exposes_head_sha_and_not_required(self) -> None:
+        response = TaskReviewFeedbackResponse(
+            data={
+                "taskId": "tsk_123",
+                "latestDecision": {
+                    "outcome": "not_required",
+                    "reviewer": {"id": "unknown", "role": "unknown"},
+                    "createdAt": "1970-01-01T00:00:00Z",
+                    "headSha": None,
+                    "summary": "No review decision required.",
+                },
+                "comments": [],
+                "availableActions": ["view_ci_status"],
+            },
+            availableActions=["view_ci_status"],
+        )
+
+        self.assertEqual(response.data.latest_decision.outcome, ReviewOutcome.NOT_REQUIRED)
+        self.assertIsNone(response.data.latest_decision.head_sha)
 
 
 if __name__ == "__main__":

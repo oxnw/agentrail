@@ -72,6 +72,8 @@ test("compileRunnerExecutionPlan maps strict Codex policy to sandboxed exec args
   assert.ok(plan.args.includes("workspace-write"));
   assert.ok(plan.args.includes("--ignore-user-config"));
   assert.ok(plan.args.includes("--ignore-rules"));
+  assert.ok(plan.args.includes("features.hooks=false"));
+  assert.equal(plan.args.includes("hooks=false"), false);
   assert.ok(plan.args.includes("--add-dir"));
   assert.ok(plan.args.includes("/tmp/run"));
   assert.equal(plan.args.includes("shell_environment_policy.inherit=all"), false);
@@ -164,6 +166,37 @@ test("Codex filesystem post-run validation blocks denied write path changes", as
   assert.equal(result.reason, "runner_policy_violation");
   assert.match(result.summary, /created \.env/);
   assert.deepEqual(result.matches, ["created .env"]);
+});
+
+test("Codex filesystem post-run validation blocks instruction file drift", async (t) => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agentrail-policy-instruction-drift-"));
+  const worktreePath = path.join(tempDir, "worktree");
+  const runDir = path.join(tempDir, "run");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  await mkdir(worktreePath, { recursive: true });
+  await mkdir(runDir, { recursive: true });
+  await writeFile(path.join(worktreePath, "AGENTS.md"), "Original project instructions\n", "utf8");
+
+  const plan = compileRunnerExecutionPlan({
+    ...basePlanInput,
+    runner: "codex",
+    worktreePath,
+    runDir,
+    recipePath: path.join(runDir, "agent-recipes.md"),
+  });
+
+  const preflight = await validateRunnerPolicyFilesystemPreflight(plan);
+  assert.equal(preflight.ok, true);
+
+  await writeFile(path.join(worktreePath, "AGENTS.md"), "Injected external memory context\n", "utf8");
+  const result = await validateRunnerPolicyFilesystemPostRun(plan, preflight.snapshot);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "runner_policy_violation");
+  assert.match(result.summary, /modified AGENTS\.md/);
+  assert.deepEqual(result.matches, ["modified AGENTS.md"]);
 });
 
 test("compileRunnerExecutionPlan rejects Cursor in strict mode without an external sandbox", () => {
