@@ -181,10 +181,23 @@ test("provider connect circleci interactively asks for pasted token and webhook 
   const { repoRoot, homePath } = await setupProviderTest(t, {}, { baseUrl: "https://agentrail.example.com" });
   const stdout = createMemoryWriter();
   const stderr = createMemoryWriter();
+  const fetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { items: [] },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { items: [] },
+    },
+  ]);
   const prompt = new ScriptedPromptSession([
     { kind: "select", value: "webhook" },
     { kind: "secret", value: "circleci_interactive_token" },
     { kind: "secret", value: "circleci_interactive_webhook_secret" },
+    { kind: "input", value: "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1" },
   ]);
 
   const exitCode = await runCli(["provider", "connect", "circleci"], {
@@ -194,19 +207,27 @@ test("provider connect circleci interactively asks for pasted token and webhook 
     stdout,
     stderr,
     createPrompt: () => prompt as any,
+    providerFetch: fetch as any,
   });
 
   assert.equal(exitCode, 0, stderr.toString());
-  assert.match(stdout.toString(), /^\u2713 Connected CircleCI using CIRCLECI_TOKEN and CIRCLECI_WEBHOOK_SECRET in webhook mode\.\n$/);
+  assert.equal(stdout.toString(), "");
   assert.doesNotMatch(stdout.toString(), /Run `agentrail provider test circleci`/);
   assert.equal(stderr.toString(), "");
-  assert.deepEqual(prompt.calls, ["select", "note", "secret", "secret", "close"]);
+  assert.deepEqual(prompt.calls, ["select", "note", "secret", "secret", "input", "spinner", "close"]);
   assert.deepEqual(prompt.selectMessages, ["How do you want to receive CircleCI events?"]);
-  assert.match(prompt.notes[0]?.body ?? "", /Paste your CircleCI token and webhook secret when prompted\./);
+  assert.match(prompt.notes[0]?.body ?? "", /project slug/i);
   assert.deepEqual(prompt.secretMessages, [
     "Paste your CircleCI token (CIRCLECI_TOKEN)",
     "Paste your CircleCI webhook secret (CIRCLECI_WEBHOOK_SECRET)",
   ]);
+  assert.deepEqual(prompt.spinnerEvents, [
+    { kind: "start", message: "Testing CircleCI connection" },
+    { kind: "stop", message: "\u2713 Connected CircleCI using CIRCLECI_TOKEN, CIRCLECI_WEBHOOK_SECRET, and project slug in webhook mode." },
+  ]);
+  assert.equal(fetch.calls.length, 2);
+  assert.equal(fetch.calls[0]?.url, "https://circleci.com/api/v2/project/circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1/pipeline?branch=main");
+  assert.equal(fetch.calls[0]?.headers["Circle-Token"], "circleci_interactive_token");
 
   const providerEnv = await readFile(path.join(homePath, "provider.env"), "utf8");
   assert.match(providerEnv, /CIRCLECI_TOKEN="circleci_interactive_token"/);
@@ -216,6 +237,74 @@ test("provider connect circleci interactively asks for pasted token and webhook 
   assert.equal(nextConfig.providers.circleci.mode, "real");
   assert.equal(nextConfig.providers.circleci.tokenEnv, "CIRCLECI_TOKEN");
   assert.equal(nextConfig.providers.circleci.webhookSecretEnv, "CIRCLECI_WEBHOOK_SECRET");
+  assert.equal(nextConfig.repos[0].circleciProjectSlug, "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1");
+});
+
+test("provider test circleci fails clearly when no project slug is stored", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    CIRCLECI_TOKEN: "circleci_test_token",
+  });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.circleci = {
+    mode: "real",
+    tokenEnv: "CIRCLECI_TOKEN",
+    deliveryMode: "polling",
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "test", "circleci"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout.toString(), "");
+  assert.match(stderr.toString(), /no CircleCI project slug is stored/i);
+});
+
+test("provider test circleci validates the configured project slug", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    CIRCLECI_TOKEN: "circleci_test_token",
+  });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.circleci = {
+    mode: "real",
+    tokenEnv: "CIRCLECI_TOKEN",
+    deliveryMode: "polling",
+  };
+  config.repos[0].circleciProjectSlug = "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1";
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const fetch = createFetchStub([
+    {
+      ok: true,
+      status: 200,
+      json: { items: [] },
+    },
+  ]);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "test", "circleci"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /CircleCI connection test passed/i);
+  assert.equal(fetch.calls.length, 1);
+  assert.equal(fetch.calls[0]?.url, "https://circleci.com/api/v2/project/circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1/pipeline?branch=main");
+  assert.equal(fetch.calls[0]?.headers["Circle-Token"], "circleci_test_token");
 });
 
 test("provider connect linear validates the API key, writes provider.env, and updates config", async (t) => {

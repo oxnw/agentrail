@@ -34,7 +34,7 @@ export interface GitHubIssueIntakeAdapterConfig {
   taskQueue: AgentTaskQueue;
   routingControlPlane?: RoutingControlPlane | null;
   routingMode?: "optional" | "required";
-  repos?: Array<{ slug: string; defaultBranch: string }>;
+  repos?: Array<{ slug: string; defaultBranch: string; circleciProjectSlug?: string }>;
   now?: () => Date;
 }
 
@@ -120,7 +120,7 @@ export class GitHubIssueIntakeAdapter {
   private taskQueue: AgentTaskQueue;
   private routingControlPlane: RoutingControlPlane | null;
   private routingMode: "optional" | "required";
-  private repos: Array<{ slug: string; defaultBranch: string }>;
+  private repos: Array<{ slug: string; defaultBranch: string; circleciProjectSlug?: string }>;
   private now: () => Date;
 
   constructor({ taskQueue, routingControlPlane = null, routingMode = "optional", repos = [], now = () => new Date() }: GitHubIssueIntakeAdapterConfig) {
@@ -139,6 +139,7 @@ export class GitHubIssueIntakeAdapter {
     }
 
     const repository = this.resolveRepository(payload);
+    const repoConfig = this.findRepoConfig(repository);
     const identifier = this.buildIdentifier(repository, payload.issueNumber);
     const fingerprint = sha256(payload);
     const idempotencyStoreKey = idempotencyKey ? `github-issue-intake:${idempotencyKey}` : null;
@@ -192,6 +193,7 @@ export class GitHubIssueIntakeAdapter {
           owner: repository.owner,
           repo: repository.repo,
           issueNumber: payload.issueNumber,
+          ...this.buildCiSourceMetadata(repoConfig),
           labels,
           assignees: payload.assignees?.map((assignee) => assignee.login) ?? existing.source?.assignees ?? [],
         },
@@ -216,11 +218,11 @@ export class GitHubIssueIntakeAdapter {
           goal: `GitHub issue intake: #${payload.issueNumber}`,
         },
         source: {
-          ...existing.source,
           provider: "github",
           owner: repository.owner,
           repo: repository.repo,
           issueNumber: payload.issueNumber,
+          ...this.buildCiSourceMetadata(repoConfig),
           labels,
           assignees: payload.assignees?.map((assignee) => assignee.login) ?? existing.source?.assignees ?? [],
           deliveryId: idempotencyKey ?? existing.source?.deliveryId,
@@ -280,6 +282,7 @@ export class GitHubIssueIntakeAdapter {
             owner: repository.owner,
             repo: repository.repo,
             issueNumber: payload.issueNumber,
+            ...this.buildCiSourceMetadata(repoConfig),
             labels: payload.labels ?? [],
             assignees: payload.assignees?.map((assignee) => assignee.login) ?? [],
             deliveryId: idempotencyKey,
@@ -305,11 +308,11 @@ export class GitHubIssueIntakeAdapter {
       acceptanceCriteria: this.extractAcceptanceCriteria(payload.body ?? ""),
       availableActions: baseTask.assigneeAgentId ? ["start"] : baseTask.availableActions,
       source: {
-        ...baseTask.source,
         provider: "github",
         owner: repository.owner,
         repo: repository.repo,
         issueNumber: payload.issueNumber,
+        ...this.buildCiSourceMetadata(repoConfig),
         labels: payload.labels ?? [],
         assignees: payload.assignees?.map((assignee) => assignee.login) ?? [],
         deliveryId: idempotencyKey,
@@ -329,6 +332,25 @@ export class GitHubIssueIntakeAdapter {
   /** Build a deterministic identifier from the issue URL, e.g. "github:oxnw/agentrail:issues/10". */
   private buildIdentifier(repository: GitHubRepositoryRef, issueNumber: number): string {
     return `github:${repository.owner}/${repository.repo}:issues/${issueNumber}`;
+  }
+
+  private findRepoConfig(repository: GitHubRepositoryRef): { slug: string; defaultBranch: string; circleciProjectSlug?: string } | null {
+    const repoSlug = `${repository.owner}/${repository.repo}`;
+    return this.repos.find((candidate) => candidate.slug === repoSlug) ?? null;
+  }
+
+  private buildCiSourceMetadata(repoConfig: { circleciProjectSlug?: string } | null): {
+    ciProvider?: "circleci";
+    projectSlug?: string;
+  } {
+    const projectSlug = repoConfig?.circleciProjectSlug?.trim();
+    if (!projectSlug) {
+      return {};
+    }
+    return {
+      ciProvider: "circleci",
+      projectSlug,
+    };
   }
 
   private resolveRepository(payload: GitHubIssueIntakePayload): GitHubRepositoryRef {
@@ -377,7 +399,7 @@ export class GitHubIssueIntakeAdapter {
       return null;
     }
     const repoSlug = `${repository.owner}/${repository.repo}`;
-    const repo = this.repos.find((candidate) => candidate.slug === repoSlug);
+    const repo = this.findRepoConfig(repository);
     try {
       const decision = await this.routingControlPlane.ingestProviderIssue({
         provider: "github",

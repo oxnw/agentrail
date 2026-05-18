@@ -127,6 +127,9 @@ review, or outbound mutation behavior.
 ```bash
 agentrail provider connect github
 agentrail provider connect circleci
+
+# Paste the full CircleCI project slug when prompted:
+# circleci/<org-id>/<project-id>
 agentrail provider connect linear
 ```
 

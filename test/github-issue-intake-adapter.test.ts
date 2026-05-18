@@ -112,6 +112,63 @@ describe("GitHubIssueIntakeAdapter", () => {
     assert.strictEqual(snapshots[0].bodyPreview, "Detailed login failure report");
   });
 
+  it("persists CircleCI project metadata from connected repo config onto new GitHub tasks", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({
+      taskQueue: queue,
+      repos: [{
+        slug: "oxnw/agentrail",
+        defaultBranch: "main",
+        circleciProjectSlug: "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1",
+      }],
+    });
+
+    const result = await adapter.ingest({
+      issueNumber: 14,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/14",
+      issueTitle: "CircleCI-backed task",
+      repository: { owner: "oxnw", repo: "agentrail" },
+    });
+
+    const stored = queue.getRawTask(result.taskId);
+    assert.ok(stored, "Task should exist");
+    assert.strictEqual(stored!.source?.ciProvider, "circleci");
+    assert.strictEqual(stored!.source?.projectSlug, "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1");
+  });
+
+  it("updates existing GitHub tasks when repo CircleCI metadata is added", async () => {
+    const queue = makeQueue();
+    const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });
+
+    const first = await adapter.ingest({
+      issueNumber: 15,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/15",
+      issueTitle: "Later gains CircleCI config",
+      repository: { owner: "oxnw", repo: "agentrail" },
+    }, "circleci-metadata-first");
+
+    const withCircleCi = new GitHubIssueIntakeAdapter({
+      taskQueue: queue,
+      repos: [{
+        slug: "oxnw/agentrail",
+        defaultBranch: "main",
+        circleciProjectSlug: "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1",
+      }],
+    });
+
+    await withCircleCi.ingest({
+      issueNumber: 15,
+      issueUrl: "https://github.com/oxnw/agentrail/issues/15",
+      issueTitle: "Later gains CircleCI config",
+      repository: { owner: "oxnw", repo: "agentrail" },
+    }, "circleci-metadata-second");
+
+    const stored = queue.getRawTask(first.taskId);
+    assert.ok(stored, "Task should exist");
+    assert.strictEqual(stored!.source?.ciProvider, "circleci");
+    assert.strictEqual(stored!.source?.projectSlug, "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1");
+  });
+
   it("returns validation error when issueNumber is missing", async () => {
     const queue = makeQueue();
     const adapter = new GitHubIssueIntakeAdapter({ taskQueue: queue });

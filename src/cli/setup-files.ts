@@ -123,7 +123,7 @@ function renderSetupReadme(config: SetupConfig): string {
     "",
     "- Interactive `agentrail init` can optionally connect GitHub immediately by asking you to paste the token into a hidden prompt.",
     "- Use `agentrail provider connect github` to connect GitHub and choose polling or webhook delivery.",
-    "- Use `agentrail provider connect circleci` to connect CircleCI and choose polling or webhook delivery.",
+    "- Use `agentrail provider connect circleci` to connect CircleCI, choose polling or webhook delivery, and paste the full CircleCI project slug for each connected repo.",
     "- Use `agentrail provider connect linear` to connect Linear and choose polling or webhook delivery.",
     "- Use `agentrail linear import ENG-123` to import a Linear issue locally.",
     "- Use `agentrail provider list` to review which providers are configured locally.",

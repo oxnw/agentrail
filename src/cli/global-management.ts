@@ -64,6 +64,9 @@ export async function runRepoCommand(argv: string[], {
       stdout.write(`${index + 1}. ${repo.slug} — ${toGitHubUrl(repo.slug)}\n`);
       stdout.write(`   path: ${repo.path}\n`);
       stdout.write(`   default branch: ${repo.defaultBranch}\n`);
+      if (repo.circleciProjectSlug) {
+        stdout.write(`   CircleCI project: ${repo.circleciProjectSlug}\n`);
+      }
     });
     return 0;
   }
