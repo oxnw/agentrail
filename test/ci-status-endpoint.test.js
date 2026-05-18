@@ -337,6 +337,7 @@ test("POST /providers/github/webhooks only matches workflow_run tasks with expli
   const eventStore = new TaskEventStore();
   const projectedTaskIds = [];
   const projectedProviders = [];
+  const projectedHeadShas = [];
   const tasks = [
     {
       ...makeTask({
@@ -392,6 +393,7 @@ test("POST /providers/github/webhooks only matches workflow_run tasks with expli
       async projectCiState(taskId, observation) {
         projectedTaskIds.push(taskId);
         projectedProviders.push(observation.provider);
+        projectedHeadShas.push(observation.headSha);
       },
     },
     ciStatusAdapter: {
@@ -436,6 +438,75 @@ test("POST /providers/github/webhooks only matches workflow_run tasks with expli
   assert.deepEqual(body.data.matchedTasks, [githubTaskId, "tsk_sha_match"]);
   assert.deepEqual(projectedTaskIds, [githubTaskId, "tsk_sha_match"]);
   assert.deepEqual(projectedProviders, ["github_actions", "github_actions"]);
+  assert.deepEqual(projectedHeadShas, ["sha-abc123", "sha-abc123"]);
+});
+
+test("POST /providers/github/webhooks preserves explicit null CI head SHA projections", async (t) => {
+  const eventStore = new TaskEventStore();
+  const projectedHeadShas = [];
+  const tasks = [
+    {
+      ...makeTask({
+        provider: "github",
+        owner: "oxnw",
+        repo: "agentrail",
+        issueNumber: 21,
+        branch: "feature/ambiguous-ci",
+      }),
+      id: githubTaskId,
+      identifier: "github:oxnw/agentrail:issues/21",
+    },
+  ];
+  const server = createServer({
+    store: eventStore,
+    githubWebhookSecret: "github-secret",
+    taskLifecycleStore: {
+      listRawTasks: () => tasks,
+      getRawTask: (taskId) => tasks.find((task) => task.id === taskId) ?? null,
+      async projectCiState(_taskId, observation) {
+        projectedHeadShas.push(observation.headSha);
+      },
+    },
+    ciStatusAdapter: {
+      async getTaskCiStatus() {
+        return {
+          data: {
+            overallStatus: "passed",
+            summary: { total: 1, passed: 1, failed: 0, running: 0, queued: 0, cancelled: 0, skipped: 0 },
+            failureSummaries: [],
+            updatedAt: "2026-05-08T00:00:00Z",
+            headSha: null,
+          },
+        };
+      },
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const payload = {
+    repository: { owner: { login: "oxnw" }, name: "agentrail" },
+    workflow_run: {
+      head_branch: "feature/ambiguous-ci",
+      head_sha: "sha-ambiguous-event",
+    },
+  };
+  const rawBody = JSON.stringify(payload);
+  const baseUrl = await listen(server);
+  const response = await fetch(`${baseUrl}/providers/github/webhooks`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "workflow_run",
+      "x-hub-signature-256": `sha256=${createHmac("sha256", "github-secret").update(rawBody).digest("hex")}`,
+    },
+    body: rawBody,
+  });
+
+  assert.equal(response.status, 202);
+  assert.deepEqual(projectedHeadShas, [null]);
 });
 
 test("POST /providers/github/webhooks projects pull request review decisions to matching tasks", async (t) => {
@@ -471,12 +542,13 @@ test("POST /providers/github/webhooks projects pull request review decisions to 
 
   const payload = {
     repository: { owner: { login: "oxnw" }, name: "agentrail" },
-    pull_request: { number: 42 },
+    pull_request: { number: 42, head: { sha: "current-pr-head-sha" } },
     review: {
       state: "changes_requested",
       body: "Please fix the failing test.",
       submitted_at: "2026-05-12T09:30:00Z",
       user: { login: "reviewer" },
+      commit_id: "reviewed-commit-sha",
     },
   };
   const rawBody = JSON.stringify(payload);
@@ -502,6 +574,7 @@ test("POST /providers/github/webhooks projects pull request review decisions to 
         summary: "Please fix the failing test.",
         reviewer: "reviewer",
         updatedAt: "2026-05-12T09:30:00Z",
+        headSha: "reviewed-commit-sha",
       },
     },
   ]);
@@ -536,6 +609,7 @@ test("POST /providers/github/webhooks projects PR-wide review decision when avai
               summary: "Alice still has requested changes.",
               reviewer: { id: "alice", role: "member" },
               createdAt: "2026-05-12T09:25:00Z",
+              headSha: "review-feedback-sha",
             },
           },
         };
@@ -584,6 +658,7 @@ test("POST /providers/github/webhooks projects PR-wide review decision when avai
         summary: "Alice still has requested changes.",
         reviewer: "alice",
         updatedAt: "2026-05-12T09:25:00Z",
+        headSha: "review-feedback-sha",
         decisionScope: "pull_request",
       },
     },

@@ -113,6 +113,8 @@ export function buildRuntime({
       ? {
           submitTask: (taskId, payload, idempotencyKey) =>
             submitAdapter.submitTask(taskId, payload, idempotencyKey),
+          shipTask: (taskId, payload, idempotencyKey) =>
+            submitAdapter.shipTask(taskId, payload, idempotencyKey),
         }
       : null,
   });
@@ -753,6 +755,7 @@ async function projectCiStates({
         },
         headline,
         updatedAt: body.data.updatedAt ?? null,
+        headSha: body.data.headSha ?? null,
       });
       if (!projection) {
         return;

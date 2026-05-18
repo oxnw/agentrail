@@ -153,7 +153,8 @@ test("getTaskReviewFeedback keeps changes requested when another reviewer later 
           user: { login: "alice" },
           author_association: "MEMBER",
           body: "Parser still accepts invalid input.",
-          submitted_at: "2026-05-01T10:00:00Z"
+          submitted_at: "2026-05-01T10:00:00Z",
+          commit_id: "alice-reviewed-sha"
         },
         {
           id: 11,
@@ -173,6 +174,7 @@ test("getTaskReviewFeedback keeps changes requested when another reviewer later 
 
   assert.equal(result.data.latestDecision.outcome, "changes_requested");
   assert.equal(result.data.latestDecision.reviewer.id, "alice");
+  assert.equal(result.data.latestDecision.headSha, "alice-reviewed-sha");
   assert.deepEqual(result.availableActions, ["fix"]);
 });
 

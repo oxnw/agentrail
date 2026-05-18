@@ -112,6 +112,7 @@ export class CircleCiStatusAdapter {
         failureSummaries,
         flakyHints,
         updatedAt: currentSnapshot.updatedAt ?? null,
+        headSha: currentSnapshot.headSha ?? source.headSha ?? null,
         availableActions
       },
       availableActions,
@@ -190,7 +191,8 @@ export class CircleCiStatusAdapter {
         workflows: [],
         jobsByWorkflowId: new Map(),
         historicalSnapshots: [],
-        updatedAt: null
+        updatedAt: null,
+        headSha: null
       };
     }
 
@@ -216,6 +218,7 @@ export class CircleCiStatusAdapter {
 
     return {
       pipeline,
+      headSha: pipeline.vcs?.revision ?? null,
       workflows,
       jobsByWorkflowId,
       updatedAt: latestUpdatedAt([

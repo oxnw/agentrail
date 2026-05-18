@@ -67,7 +67,7 @@ export class GitHubActionsCiAdapter {
 
     const workflowGroups = [];
     for (const run of currentRuns) {
-      const jobs = await this.listJobs(source, run.id);
+      const jobs = await this.listJobs(source, run);
       workflowGroups.push({ run, jobs });
     }
 
@@ -116,6 +116,7 @@ export class GitHubActionsCiAdapter {
         failureSummaries,
         flakyHints,
         updatedAt: latestUpdatedAt(currentRuns),
+        headSha: sharedHeadSha(currentRuns),
         availableActions
       },
       availableActions,
@@ -140,16 +141,18 @@ export class GitHubActionsCiAdapter {
     return Array.isArray(body.workflow_runs) ? body.workflow_runs : [];
   }
 
-  async listJobs(source, runId) {
-    if (this.jobsByRunId.has(runId)) {
-      return this.jobsByRunId.get(runId);
+  async listJobs(source, run) {
+    const runId = run.id;
+    const cacheKey = workflowRunCacheKey(run);
+    if (this.jobsByRunId.has(cacheKey)) {
+      return this.jobsByRunId.get(cacheKey);
     }
 
     const body = await this.fetchJson(
       `${this.apiBaseUrl}/repos/${source.owner}/${source.repo}/actions/runs/${runId}/jobs?per_page=100`
     );
     const jobs = Array.isArray(body.jobs) ? body.jobs : [];
-    this.jobsByRunId.set(runId, jobs);
+    this.jobsByRunId.set(cacheKey, jobs);
     return jobs;
   }
 
@@ -202,7 +205,7 @@ export class GitHubActionsCiAdapter {
         .slice(0, 5);
 
       for (const historicalRun of priorRuns) {
-        const jobs = await this.listJobs(source, historicalRun.id);
+        const jobs = await this.listJobs(source, historicalRun);
         const matchingJob = jobs.find((candidate) => candidate.name === job.name);
         if (matchingJob && normalizeStatus(matchingJob.status, matchingJob.conclusion) === "passed") {
           hints.push({
@@ -327,8 +330,27 @@ function latestRunPerWorkflow(runs) {
   return [...runsByWorkflow.values()];
 }
 
+function sharedHeadSha(runs) {
+  const headShas = runs.map((run) => run.head_sha).filter((headSha) => typeof headSha === "string" && headSha.length > 0);
+  if (headShas.length !== runs.length) {
+    return null;
+  }
+  const uniqueHeadShas = new Set(headShas);
+  return uniqueHeadShas.size === 1 ? headShas[0] : null;
+}
+
 function workflowKey(run) {
   return run.path ?? run.name ?? String(run.id);
+}
+
+function workflowRunCacheKey(run) {
+  return [
+    run.id,
+    run.run_attempt ?? "",
+    run.status ?? "",
+    run.conclusion ?? "",
+    run.updated_at ?? "",
+  ].join(":");
 }
 
 function toWorkflowSummary(run, jobs) {

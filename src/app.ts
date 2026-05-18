@@ -53,12 +53,14 @@ type TaskLifecycleStoreLike = {
     summary?: Record<string, number>;
     headline?: string | null;
     updatedAt?: string | null;
+    headSha?: string | null;
   }): Promise<unknown> | unknown;
   projectReviewState?(taskId: string, observation: {
     outcome: string;
     summary?: string | null;
     reviewer?: string | null;
     updatedAt?: string | null;
+    headSha?: string | null;
     decisionScope?: "event" | "pull_request";
   }): Promise<unknown> | unknown;
 };
@@ -2475,6 +2477,7 @@ async function handleGitHubWebhook({
       taskLifecycleStore,
       ciStatusAdapter,
       matchedTaskIds,
+      observedHeadSha: payload.workflow_run?.head_sha ?? null,
     });
     writeJson(response, 202, {
       data: {
@@ -3761,10 +3764,12 @@ async function projectMatchedCiTasks({
   taskLifecycleStore,
   ciStatusAdapter,
   matchedTaskIds,
+  observedHeadSha = null,
 }: {
   taskLifecycleStore: TaskLifecycleStoreLike | null | unknown;
   ciStatusAdapter: { getTaskCiStatus?(taskId: string): Promise<unknown> | unknown } | null;
   matchedTaskIds: string[];
+  observedHeadSha?: string | null;
 }) {
   const lifecycle = taskLifecycleStore as TaskLifecycleStoreLike | null;
   if (!lifecycle?.projectCiState || !ciStatusAdapter?.getTaskCiStatus) {
@@ -3775,6 +3780,9 @@ async function projectMatchedCiTasks({
       const body = await ciStatusAdapter.getTaskCiStatus(taskId) as any;
       if (!body?.data?.overallStatus) continue;
       const summary = body.data.summary ?? {};
+      const projectedHeadSha = Object.prototype.hasOwnProperty.call(body.data, "headSha")
+        ? body.data.headSha ?? null
+        : observedHeadSha;
       await lifecycle.projectCiState(taskId, {
         provider: inferCiProviderFromBody(body.data, lifecycle.getRawTask?.(taskId)),
         overallStatus: body.data.overallStatus,
@@ -3790,6 +3798,7 @@ async function projectMatchedCiTasks({
         },
         headline: firstCiHeadline(body.data.failureSummaries),
         updatedAt: body.data.updatedAt ?? null,
+        headSha: projectedHeadSha,
       });
     } catch (error) {
       logNarrative({
@@ -3828,6 +3837,11 @@ async function projectMatchedReviewTasks({
       : null,
     reviewer: payload.review?.user?.login ?? null,
     updatedAt: payload.review?.submitted_at ?? null,
+    ...(typeof payload.review?.commit_id === "string"
+      ? { headSha: payload.review.commit_id }
+      : typeof payload.pull_request?.head?.sha === "string"
+        ? { headSha: payload.pull_request.head.sha }
+        : {}),
   };
   for (const taskId of matchedTaskIds) {
     const observation = await resolveProjectedReviewObservation({
@@ -3862,6 +3876,7 @@ async function resolveProjectedReviewObservation({
     summary: string | null;
     reviewer: string | null;
     updatedAt: string | null;
+    headSha?: string | null;
   };
   reviewFeedbackAdapter: { getTaskReviewFeedback?(taskId: string): Promise<unknown> | unknown } | null;
 }): Promise<{
@@ -3869,6 +3884,7 @@ async function resolveProjectedReviewObservation({
   summary: string | null;
   reviewer: string | null;
   updatedAt: string | null;
+  headSha?: string | null;
   decisionScope?: "pull_request";
 } | null> {
   if (!reviewFeedbackAdapter?.getTaskReviewFeedback) {
@@ -3899,6 +3915,7 @@ function extractReviewFeedbackDecision(feedback: unknown): {
   summary: string | null;
   reviewer: string | null;
   updatedAt: string | null;
+  headSha?: string | null;
   decisionScope: "pull_request";
 } | null {
   const data = isRecord(feedback) && isRecord(feedback.data) ? feedback.data : null;
@@ -3916,6 +3933,7 @@ function extractReviewFeedbackDecision(feedback: unknown): {
     summary: typeof decision.summary === "string" && decision.summary.trim().length > 0 ? decision.summary : null,
     reviewer: typeof reviewer?.id === "string" ? reviewer.id : null,
     updatedAt: typeof decision.createdAt === "string" ? decision.createdAt : null,
+    ...(typeof decision.headSha === "string" ? { headSha: decision.headSha } : {}),
     decisionScope: "pull_request",
   };
 }

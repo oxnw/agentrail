@@ -4,7 +4,9 @@ import type {
   LinearTaskCommentResponse,
   LinearTaskWorkflowStateRequest,
   LinearTaskWorkflowStateResponse,
+  TaskCiStatusResponse,
   TaskDetailResponse,
+  TaskReviewFeedbackResponse,
   TaskSubmissionResponse,
   TaskSubmitRequest
 } from "../../sdk/typescript/src/index.ts";
@@ -85,6 +87,43 @@ const taskDetailResponse: TaskDetailResponse = {
   },
 };
 
+const ciStatusResponse: TaskCiStatusResponse = {
+  data: {
+    taskId: "tsk_123",
+    submissionId: "ghpr_42",
+    overallStatus: "running",
+    summary: { total: 1, passed: 0, failed: 0, running: 1, queued: 0, cancelled: 0, skipped: 0 },
+    workflows: [],
+    checks: [],
+    failureSummaries: [],
+    flakyHints: [],
+    updatedAt: "2026-05-05T12:05:00Z",
+    headSha: "abc123",
+    availableActions: ["view_ci_status", "view_review_feedback"],
+  },
+  availableActions: ["view_ci_status", "view_review_feedback"],
+  meta: {
+    tokenBudgetHint: "standard",
+    truncatedFields: [],
+  },
+};
+
+const reviewFeedbackResponse: TaskReviewFeedbackResponse = {
+  data: {
+    taskId: "tsk_123",
+    latestDecision: {
+      outcome: "not_required",
+      reviewer: { id: "unknown", role: "unknown" },
+      createdAt: "1970-01-01T00:00:00.000Z",
+      headSha: null,
+      summary: "No review decision required.",
+    },
+    comments: [],
+    availableActions: ["view_ci_status"],
+  },
+  availableActions: ["view_ci_status"],
+};
+
 const linearCommentRequest: LinearTaskCommentRequest = {
   body: "Implemented the SDK contract and documented the outbound sync endpoints.",
 };
@@ -139,6 +178,8 @@ void adapterManagedSubmit;
 void artifactDemoSubmit;
 void submitResponse;
 void taskDetailResponse;
+void ciStatusResponse;
+void reviewFeedbackResponse;
 void linearCommentRequest;
 void linearCommentResponse;
 void linearWorkflowStateRequest;

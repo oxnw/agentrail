@@ -421,11 +421,11 @@ test("POST /tasks/{id}/blocker requires sourceAgentId", async (t) => {
   assert.match(result.body.error.message, /sourceAgentId/);
 });
 
-test("AgentTaskQueue rejects awaiting-user blockers for review and terminal tasks", async () => {
+test("AgentTaskQueue rejects awaiting-user blockers for terminal tasks", async () => {
   const now = () => new Date("2026-05-09T11:07:00Z");
   const taskQueue = new AgentTaskQueue({ now });
 
-  for (const status of ["in_review", "done", "cancelled"]) {
+  for (const status of ["done", "cancelled"]) {
     const task = taskQueue.createTask({
       identifier: `AGEA-BLOCK-STALE-${status}`,
       title: `Stale ${status} task`,

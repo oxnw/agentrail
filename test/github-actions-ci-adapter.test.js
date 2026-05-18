@@ -165,6 +165,7 @@ test("GitHubActionsCiAdapter summarizes multiple workflow files and failed test 
 
   assert.equal(body.data.taskId, taskId);
   assert.equal(body.data.submissionId, "sub_01JY4Y4A9P10G6EM7Q3JJ2M1A2");
+  assert.equal(body.data.headSha, "abc123");
   assert.equal(body.data.overallStatus, "failed");
   assert.deepEqual(body.data.summary, {
     total: 3,
@@ -270,6 +271,153 @@ test("GitHubActionsCiAdapter keeps green responses compact", async () => {
   assert.deepEqual(body.availableActions, ["view_review_feedback"]);
   assert.equal(body.meta.tokenBudgetHint, "compact");
   assert.ok(JSON.stringify(body).length < 1200);
+});
+
+test("GitHubActionsCiAdapter returns null head SHA for mixed current workflow run SHAs", async () => {
+  const adapter = new GitHubActionsCiAdapter({
+    getTask: () => makeTask({
+      owner: "oxnw",
+      repo: "agentrail",
+      branch: "feature/mixed-shas",
+      submissionId: "sub_mixed",
+    }),
+    fetch: async (url) => {
+      const urlText = String(url);
+      if (urlText.includes("/actions/runs?")) {
+        return jsonResponse({
+          workflow_runs: [
+            {
+              id: 3201,
+              name: "CI",
+              path: ".github/workflows/ci.yml",
+              status: "completed",
+              conclusion: "success",
+              html_url: "https://github.com/oxnw/agentrail/actions/runs/3201",
+              head_sha: "commit-one",
+              updated_at: "2026-05-01T05:00:00Z",
+              run_attempt: 1,
+            },
+            {
+              id: 3202,
+              name: "Lint",
+              path: ".github/workflows/lint.yml",
+              status: "completed",
+              conclusion: "success",
+              html_url: "https://github.com/oxnw/agentrail/actions/runs/3202",
+              head_sha: "commit-two",
+              updated_at: "2026-05-01T04:59:00Z",
+              run_attempt: 1,
+            },
+          ],
+        });
+      }
+
+      if (urlText.endsWith("/actions/runs/3201/jobs?per_page=100")) {
+        return jsonResponse({
+          jobs: [
+            {
+              id: 51,
+              name: "unit-tests",
+              status: "completed",
+              conclusion: "success",
+              html_url: "https://github.com/oxnw/agentrail/actions/runs/3201/job/51",
+              started_at: "2026-05-01T04:58:00Z",
+              completed_at: "2026-05-01T04:59:00Z",
+            },
+          ],
+        });
+      }
+
+      if (urlText.endsWith("/actions/runs/3202/jobs?per_page=100")) {
+        return jsonResponse({
+          jobs: [
+            {
+              id: 52,
+              name: "eslint",
+              status: "completed",
+              conclusion: "success",
+              html_url: "https://github.com/oxnw/agentrail/actions/runs/3202/job/52",
+              started_at: "2026-05-01T04:57:00Z",
+              completed_at: "2026-05-01T04:58:00Z",
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  const body = await adapter.getTaskCiStatus(taskId);
+
+  assert.equal(body.data.overallStatus, "passed");
+  assert.equal(body.data.headSha, null);
+});
+
+test("GitHubActionsCiAdapter refreshes cached jobs when a workflow run changes state", async () => {
+  let poll = 0;
+  let jobFetches = 0;
+  const adapter = new GitHubActionsCiAdapter({
+    getTask: () => makeTask({
+      owner: "oxnw",
+      repo: "agentrail",
+      branch: "feature/stale-ci-cache",
+      headSha: "fresh123",
+      submissionId: "sub_fresh_ci",
+    }),
+    fetch: async (url) => {
+      const urlText = String(url);
+      if (urlText.includes("/actions/runs?")) {
+        poll += 1;
+        return jsonResponse({
+          workflow_runs: [
+            {
+              id: 3301,
+              name: "Lint",
+              path: ".github/workflows/lint.yml",
+              status: poll === 1 ? "in_progress" : "completed",
+              conclusion: poll === 1 ? null : "failure",
+              html_url: "https://github.com/oxnw/agentrail/actions/runs/3301",
+              head_sha: "fresh123",
+              updated_at: poll === 1 ? "2026-05-01T05:00:00Z" : "2026-05-01T05:01:00Z",
+              run_attempt: 1,
+            },
+          ],
+        });
+      }
+
+      if (urlText.endsWith("/actions/runs/3301/jobs?per_page=100")) {
+        jobFetches += 1;
+        return jsonResponse({
+          jobs: [
+            {
+              id: 41,
+              name: "lint",
+              status: jobFetches === 1 ? "in_progress" : "completed",
+              conclusion: jobFetches === 1 ? null : "failure",
+              html_url: "https://github.com/oxnw/agentrail/actions/runs/3301/job/41",
+              started_at: "2026-05-01T05:00:00Z",
+              completed_at: jobFetches === 1 ? null : "2026-05-01T05:00:30Z",
+            },
+          ],
+        });
+      }
+
+      if (urlText.endsWith("/actions/jobs/41/logs")) {
+        return textResponse("lint failed\n");
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  const running = await adapter.getTaskCiStatus(taskId);
+  const failed = await adapter.getTaskCiStatus(taskId);
+
+  assert.equal(running.data.overallStatus, "running");
+  assert.equal(failed.data.overallStatus, "failed");
+  assert.deepEqual(failed.data.checks.map((check) => [check.name, check.status]), [["lint", "failed"]]);
+  assert.equal(jobFetches, 2);
 });
 
 test("GitHubActionsCiAdapter resolves CI source from persisted task state", async () => {
