@@ -55,6 +55,8 @@ export class CircleCiStatusAdapter {
     }
 
     validateTaskSource(source);
+    this.jobsByWorkflowId.clear();
+    this.testResultsByJobKey.clear();
 
     const cachedSnapshot = this.webhookSnapshots.get(taskId);
     const currentSnapshot =
@@ -218,7 +220,7 @@ export class CircleCiStatusAdapter {
 
     return {
       pipeline,
-      headSha: pipeline.vcs?.revision ?? null,
+      headSha: pipelineHeadSha(pipeline),
       workflows,
       jobsByWorkflowId,
       updatedAt: latestUpdatedAt([
@@ -315,11 +317,11 @@ function validateTaskSource(source) {
 function filterPipelinesForSource(pipelines, source) {
   return pipelines
     .filter((pipeline) => {
-      if (source.headSha && pipeline.vcs?.revision !== source.headSha) {
+      if (source.headSha && pipelineHeadSha(pipeline) !== source.headSha) {
         return false;
       }
 
-      if (source.branch && pipeline.vcs?.branch !== source.branch) {
+      if (source.branch && pipelineBranch(pipeline) !== source.branch) {
         return false;
       }
 
@@ -692,6 +694,24 @@ function upsertById(items, nextItem) {
 
 function normalizeProjectSlug(value) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function pipelineBranch(pipeline) {
+  return (
+    pipeline?.vcs?.branch
+    ?? pipeline?.trigger_parameters?.github_app?.branch
+    ?? pipeline?.trigger_parameters?.git?.branch
+    ?? null
+  );
+}
+
+function pipelineHeadSha(pipeline) {
+  return (
+    pipeline?.vcs?.revision
+    ?? pipeline?.trigger_parameters?.github_app?.commit_sha
+    ?? pipeline?.trigger_parameters?.git?.checkout_sha
+    ?? null
+  );
 }
 
 async function toSourceError(response) {

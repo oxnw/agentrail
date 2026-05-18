@@ -3872,7 +3872,7 @@ async function resolveProjectedReviewObservation({
 }: {
   taskId: string;
   eventObservation: {
-    outcome: "approved" | "changes_requested" | "not_required";
+    outcome: "approved" | "changes_requested" | "not_required" | "review_required";
     summary: string | null;
     reviewer: string | null;
     updatedAt: string | null;
@@ -3954,7 +3954,7 @@ function matchGitHubWorkflowTasks(taskLifecycleStore: TaskLifecycleStoreLike | n
   for (const task of candidates) {
     const source = task.source;
     if (!source) continue;
-    if (source.provider !== "github") continue;
+    if (typeof source.owner !== "string" || typeof source.repo !== "string") continue;
     if (owner && source.owner !== owner) continue;
     if (repo && source.repo !== repo) continue;
     const matchesHeadSha = Boolean(headSha && source.headSha && source.headSha === headSha);
@@ -3983,7 +3983,7 @@ function matchGitHubPullRequestTasks(taskLifecycleStore: TaskLifecycleStoreLike 
   for (const task of candidates) {
     const source = task.source as any;
     if (!source) continue;
-    if (source.provider !== "github") continue;
+    if (typeof source.owner !== "string" || typeof source.repo !== "string") continue;
     if (source.owner !== owner || source.repo !== repo) continue;
     const sourcePullNumber = typeof source.pullNumber === "number" ? source.pullNumber : null;
     const submissionMatches = Array.isArray(task.submissions)
@@ -3994,12 +3994,15 @@ function matchGitHubPullRequestTasks(taskLifecycleStore: TaskLifecycleStoreLike 
   return matched;
 }
 
-function normalizeGitHubReviewOutcome(state: unknown): "approved" | "changes_requested" | "not_required" | null {
+function normalizeGitHubReviewOutcome(state: unknown): "approved" | "changes_requested" | "not_required" | "review_required" | null {
   if (state === "approved" || state === "APPROVED") {
     return "approved";
   }
   if (state === "changes_requested" || state === "CHANGES_REQUESTED") {
     return "changes_requested";
+  }
+  if (state === "review_required") {
+    return "review_required";
   }
   if (state === "not_required") {
     return "not_required";

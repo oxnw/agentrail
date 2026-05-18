@@ -15,6 +15,13 @@ import {
   verifyGitHubWebhookMetadata,
   type GitHubWebhookMetadata,
 } from "../github-webhook-registration.ts";
+import {
+  applyProviderReadinessFixes,
+  evaluateProviderReadiness,
+  renderReadinessReport,
+  renderReadinessSummary,
+  type ProviderReadinessReport,
+} from "./provider-readiness.ts";
 
 interface Writer {
   write(chunk: string | Uint8Array): boolean;
@@ -91,6 +98,29 @@ export async function runProviderCommand(argv: string[], {
     return 0;
   }
 
+  if (subcommand === "status") {
+    const env = await readSimpleEnv(providerEnvPathForHome(homePath));
+    for (const provider of ["github", "circleci", "linear"] as const) {
+      const report = await evaluateProviderReadiness(provider, config, env, fetchImpl ?? globalThis.fetch);
+      stdout.write(`${renderReadinessSummary(report)}\n`);
+    }
+    return 0;
+  }
+
+  if (subcommand === "doctor") {
+    const env = await readSimpleEnv(providerEnvPathForHome(homePath));
+    const providers = maybeProvider ? [parseProviderName(maybeProvider)] : ["github", "circleci", "linear"] as ProviderName[];
+    let ok = true;
+    for (const provider of providers) {
+      const report = await evaluateProviderReadiness(provider, config, env, fetchImpl ?? globalThis.fetch);
+      stdout.write(renderReadinessReport(report));
+      if (report.status !== "ready") {
+        ok = false;
+      }
+    }
+    return ok ? 0 : 1;
+  }
+
   if (subcommand === "test") {
     const provider = parseProviderName(maybeProvider);
     const env = await readSimpleEnv(providerEnvPathForHome(homePath));
@@ -127,7 +157,7 @@ export async function runProviderCommand(argv: string[], {
     }
   }
 
-  stderr.write("Usage: agentrail provider connect <github|circleci|linear> | list | test <provider>\n");
+  stderr.write("Usage: agentrail provider connect <github|circleci|linear> | list | status | doctor [provider] | test <provider>\n");
   return 1;
 }
 
@@ -280,6 +310,23 @@ async function connectGitHub({
     registeredWebhooks,
   };
   await writeConfig(homePath, nextConfig);
+  const readiness = await applyReadinessDuringConnect({
+    provider: "github",
+    homePath,
+    config: nextConfig,
+    prompt,
+    stdout,
+    stderr,
+    fetch,
+  });
+  if (!readiness.ok) {
+    if (spinner) {
+      spinner.error(readiness.message);
+    } else {
+      stderr.write(`${readiness.message}\n`);
+    }
+    return 1;
+  }
   const message = deliveryMode === "webhook"
     ? `\u2713 Connected GitHub using ${tokenEnvName} in webhook mode.`
     : `\u2713 Connected GitHub using ${tokenEnvName} in polling mode.`;
@@ -287,6 +334,9 @@ async function connectGitHub({
     spinner.stop(message);
   } else {
     stdout.write(`${message}\n`);
+  }
+  for (const line of readiness.lines) {
+    stdout.write(`${line}\n`);
   }
   return 0;
 }
@@ -428,13 +478,21 @@ async function connectCircleCI({
       : {}),
   }));
   await writeConfig(homePath, nextConfig);
-  const env = await readSimpleEnv(providerEnvPathForHome(homePath));
-  const result = await testProvider("circleci", nextConfig.providers ?? {}, env, {
+  const readiness = await applyReadinessDuringConnect({
+    provider: "circleci",
+    homePath,
+    config: nextConfig,
+    prompt,
+    stdout,
+    stderr,
     fetch,
-    repos: nextConfig.repos ?? [],
   });
-  if (!result.ok) {
-    stderr.write(`${result.message}\n`);
+  if (!readiness.ok) {
+    if (spinner) {
+      spinner.error(readiness.message);
+    } else {
+      stderr.write(`${readiness.message}\n`);
+    }
     return 1;
   }
   const successMessage = deliveryMode === "webhook"
@@ -444,6 +502,9 @@ async function connectCircleCI({
     spinner.stop(successMessage);
   } else {
     stdout.write(`${successMessage}\n`);
+  }
+  for (const line of readiness.lines) {
+    stdout.write(`${line}\n`);
   }
   return 0;
 }
@@ -567,6 +628,23 @@ async function connectLinear({
     webhookSecretEnv: deliveryMode === "webhook" ? webhookSecretEnvName : undefined,
   };
   await writeConfig(homePath, nextConfig);
+  const readiness = await applyReadinessDuringConnect({
+    provider: "linear",
+    homePath,
+    config: nextConfig,
+    prompt,
+    stdout,
+    stderr,
+    fetch,
+  });
+  if (!readiness.ok) {
+    if (spinner) {
+      spinner.error(readiness.message);
+    } else {
+      stderr.write(`${readiness.message}\n`);
+    }
+    return 1;
+  }
 
   const message = deliveryMode === "polling"
     ? `\u2713 Connected Linear using ${tokenEnvName} in polling mode. Start AgentRail to discover and refresh issues automatically, or run \`agentrail linear import ENG-123\` to import one now.`
@@ -576,7 +654,104 @@ async function connectLinear({
   } else {
     stdout.write(`${message}\n`);
   }
+  for (const line of readiness.lines) {
+    stdout.write(`${line}\n`);
+  }
   return 0;
+}
+
+async function applyReadinessDuringConnect({
+  provider,
+  homePath,
+  config,
+  prompt,
+  stdout,
+  stderr,
+  fetch,
+}: {
+  provider: ProviderName;
+  homePath: string;
+  config: SetupConfigLike;
+  prompt: PromptSession | null;
+  stdout: Writer;
+  stderr: Writer;
+  fetch: typeof globalThis.fetch;
+}): Promise<{ ok: boolean; message: string; lines: string[] }> {
+  const env = await readSimpleEnv(providerEnvPathForHome(homePath));
+  const initialReport = await evaluateProviderReadiness(provider, config, env, fetch);
+  const lines: string[] = [];
+  const { changed, applied } = await applyProviderReadinessFixes(provider, config, initialReport);
+  if (changed) {
+    for (const item of applied) {
+      lines.push(`Applied: ${item}`);
+    }
+  }
+  const rawFinalReport = changed ? await evaluateProviderReadiness(provider, config, env, fetch) : initialReport;
+  const finalReport = relaxReadinessAfterAutofix(provider, initialReport, rawFinalReport);
+  lines.push(renderReadinessSummary(finalReport));
+  if (finalReport.status !== "ready") {
+    const reportBody = renderReadinessReport(finalReport).trimEnd();
+    return {
+      ok: false,
+      message: reportBody,
+      lines: changed ? lines : [],
+    };
+  }
+  return {
+    ok: true,
+    message: reportBodyForReady(finalReport),
+    lines: changed ? lines : [],
+  };
+}
+
+function reportBodyForReady(report: { provider: ProviderName }): string {
+  return `${report.provider} readiness is ready.`;
+}
+
+function relaxReadinessAfterAutofix(
+  provider: ProviderName,
+  initialReport: ProviderReadinessReport,
+  finalReport: ProviderReadinessReport,
+): ProviderReadinessReport {
+  if (provider !== "github") {
+    return finalReport;
+  }
+  const autofixedRepoSlugs = new Set(
+    initialReport.checks
+      .filter((check) => check.status === "fail" && check.fixKind === "github_actions_workflow" && check.repoSlug)
+      .map((check) => check.repoSlug as string)
+  );
+  if (autofixedRepoSlugs.size === 0) {
+    return finalReport;
+  }
+  let changed = false;
+  const checks = finalReport.checks.map((check) => {
+    if (
+      check.status === "fail"
+      && check.id.startsWith("github_actions_remote:")
+      && check.repoSlug
+      && autofixedRepoSlugs.has(check.repoSlug)
+    ) {
+      changed = true;
+      return {
+        ...check,
+        status: "warn" as const,
+        details: "A starter workflow was created locally, but GitHub will not report it as active until that file is committed and present on the repository default branch."
+      };
+    }
+    return check;
+  });
+  if (!changed) {
+    return finalReport;
+  }
+  return {
+    ...finalReport,
+    status: checks.some((check) => check.status === "fail") ? "blocked" : "ready",
+    summary: checks.some((check) => check.status === "fail")
+      ? finalReport.summary
+      : "Local readiness is complete. Commit the new workflow to the default branch so GitHub can report it as active remotely.",
+    checks,
+  };
 }
 
 interface ProviderConnectFlags {

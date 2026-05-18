@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type RunnerPolicyPreset = "strict" | "balanced" | "advisory" | "external_sandbox";
@@ -78,6 +78,8 @@ export interface RunnerPolicyFilesystemSnapshotEntry {
   relativePath: string;
   type: string;
   digest: string;
+  mode?: number;
+  fileContentBase64?: string;
 }
 
 export interface RunnerPolicyFilesystemSnapshot {
@@ -215,6 +217,13 @@ const DEFAULT_DENY_WRITE_GLOBS = [
   ".cursor/rules/**",
 ];
 
+const RECOVERABLE_INSTRUCTION_FILE_GLOBS = [
+  "AGENTS.md",
+  "**/AGENTS.md",
+  "CLAUDE.md",
+  "**/CLAUDE.md",
+];
+
 export const DEFAULT_RUNNER_EXECUTION_POLICY: RunnerExecutionPolicy = {
   preset: "strict",
   enforcementMode: "strict",
@@ -336,6 +345,22 @@ export async function validateRunnerPolicyFilesystemPreflight(plan: RunnerPolicy
   };
 }
 
+export async function hardenProtectedInstructionFiles(plan: RunnerPolicyPlan): Promise<void> {
+  if (!plan.filesystemPolicy.enforceDeniedPaths || plan.enforcementMode === "advisory") {
+    return;
+  }
+  const snapshot = await snapshotMatchingPaths(
+    plan.filesystemPolicy.writableRoots,
+    RECOVERABLE_INSTRUCTION_FILE_GLOBS,
+  );
+  for (const entry of Object.values(snapshot.entries)) {
+    if (entry.type !== "file" || typeof entry.mode !== "number") {
+      continue;
+    }
+    await chmod(entry.path, entry.mode & ~0o222);
+  }
+}
+
 export async function validateRunnerPolicyFilesystemPostRun(
   plan: RunnerPolicyPlan,
   before: RunnerPolicyFilesystemSnapshot | null | undefined,
@@ -351,10 +376,17 @@ export async function validateRunnerPolicyFilesystemPostRun(
     };
   }
 
-  const after = await snapshotMatchingPaths(
+  let after = await snapshotMatchingPaths(
     plan.filesystemPolicy.writableRoots,
     plan.filesystemPolicy.denyWriteGlobs,
   );
+  const restoredModes = await restoreRecoverableInstructionModes(baseline, after);
+  if (restoredModes) {
+    after = await snapshotMatchingPaths(
+      plan.filesystemPolicy.writableRoots,
+      plan.filesystemPolicy.denyWriteGlobs,
+    );
+  }
   const changes = compareFilesystemSnapshots(baseline, after);
   if (changes.length === 0) {
     return {
@@ -366,6 +398,31 @@ export async function validateRunnerPolicyFilesystemPostRun(
     };
   }
 
+  const repaired = await repairRecoverableInstructionDrift(baseline, after, changes);
+  if (repaired) {
+    const restored = await snapshotMatchingPaths(
+      plan.filesystemPolicy.writableRoots,
+      plan.filesystemPolicy.denyWriteGlobs,
+    );
+    const residualChanges = compareFilesystemSnapshots(baseline, restored);
+    if (residualChanges.length === 0) {
+      return {
+        ok: true,
+        reason: null,
+        summary: `Runner modified protected instruction files, and AgentRail restored them: ${formatPathList(changes)}.`,
+        matches: changes,
+        snapshot: restored,
+      };
+    }
+    return {
+      ok: false,
+      reason: "runner_policy_violation",
+      summary: `Runner modified deny-write paths and AgentRail could not fully restore them: ${formatPathList(residualChanges)}.`,
+      matches: residualChanges,
+      snapshot: restored,
+    };
+  }
+
   return {
     ok: false,
     reason: "runner_policy_violation",
@@ -373,6 +430,21 @@ export async function validateRunnerPolicyFilesystemPostRun(
     matches: changes,
     snapshot: after,
   };
+}
+
+export async function restoreProtectedInstructionFileModes(
+  plan: RunnerPolicyPlan,
+  before: RunnerPolicyFilesystemSnapshot | null | undefined,
+): Promise<void> {
+  if (!plan.filesystemPolicy.enforceDeniedPaths || plan.enforcementMode === "advisory") {
+    return;
+  }
+  const baseline = before ?? emptyFilesystemSnapshot();
+  const after = await snapshotMatchingPaths(
+    plan.filesystemPolicy.writableRoots,
+    plan.filesystemPolicy.denyWriteGlobs,
+  );
+  await restoreRecoverableInstructionModes(baseline, after);
 }
 
 export function compileRunnerExecutionPlan(params: CompileRunnerExecutionPlanParams): RunnerPolicyPlan {
@@ -472,6 +544,7 @@ function codexPlan(
     "exec",
     "--sandbox",
     policy.filesystem.worktree === "write" ? "workspace-write" : "read-only",
+    "--ephemeral",
     "--ignore-user-config",
     "--ignore-rules",
     "--cd",
@@ -725,8 +798,9 @@ async function snapshotFilesystemEntry(
       : stats.isSymbolicLink()
         ? "symlink"
         : "other";
-  const digest = stats.isFile()
-    ? createHash("sha256").update(await readFile(absolutePath)).digest("hex")
+  const fileContent = stats.isFile() ? await readFile(absolutePath) : null;
+  const digest = fileContent
+    ? createHash("sha256").update(fileContent).digest("hex")
     : createHash("sha256")
       .update(`${type}:${stats.size}:${stats.mode}:${stats.mtimeMs}`)
       .digest("hex");
@@ -736,6 +810,8 @@ async function snapshotFilesystemEntry(
     relativePath,
     type,
     digest,
+    mode: stats.mode,
+    fileContentBase64: fileContent ? fileContent.toString("base64") : undefined,
   };
 }
 
@@ -817,6 +893,102 @@ function formatPathList(paths: string[]): string {
   return hiddenCount > 0
     ? `${visible.join(", ")} and ${hiddenCount} more`
     : visible.join(", ");
+}
+
+async function repairRecoverableInstructionDrift(
+  before: RunnerPolicyFilesystemSnapshot,
+  after: RunnerPolicyFilesystemSnapshot,
+  changes: string[],
+): Promise<boolean> {
+  const changedEntries = collectChangedEntries(before, after);
+  if (changedEntries.length === 0) {
+    return false;
+  }
+  if (changedEntries.some((entry) => !isRecoverableInstructionPath(entry.relativePath))) {
+    return false;
+  }
+
+  for (const entry of changedEntries) {
+    if (!entry.before) {
+      await rm(entry.absolutePath, { recursive: true, force: true });
+      continue;
+    }
+    if (entry.before.type !== "file" || !entry.before.fileContentBase64) {
+      return false;
+    }
+    await mkdir(path.dirname(entry.absolutePath), { recursive: true });
+    await writeFile(entry.absolutePath, Buffer.from(entry.before.fileContentBase64, "base64"), {
+      mode: entry.before.mode,
+    });
+  }
+  return changes.length > 0;
+}
+
+async function restoreRecoverableInstructionModes(
+  before: RunnerPolicyFilesystemSnapshot,
+  after: RunnerPolicyFilesystemSnapshot,
+): Promise<boolean> {
+  let restoredAny = false;
+  for (const [entryPath, previous] of Object.entries(before.entries)) {
+    if (!isRecoverableInstructionPath(previous.relativePath)) {
+      continue;
+    }
+    const current = after.entries[entryPath];
+    if (!current || previous.type !== "file" || current.type !== "file") {
+      continue;
+    }
+    if (previous.digest !== current.digest) {
+      continue;
+    }
+    if (typeof previous.mode !== "number" || typeof current.mode !== "number") {
+      continue;
+    }
+    if ((previous.mode & 0o777) === (current.mode & 0o777)) {
+      continue;
+    }
+    await chmod(current.path, previous.mode & 0o777);
+    restoredAny = true;
+  }
+  return restoredAny;
+}
+
+function collectChangedEntries(
+  before: RunnerPolicyFilesystemSnapshot,
+  after: RunnerPolicyFilesystemSnapshot,
+): Array<{
+  absolutePath: string;
+  relativePath: string;
+  before: RunnerPolicyFilesystemSnapshotEntry | null;
+  after: RunnerPolicyFilesystemSnapshotEntry | null;
+}> {
+  const entryPaths = new Set([
+    ...Object.keys(before.entries),
+    ...Object.keys(after.entries),
+  ]);
+  const changed: Array<{
+    absolutePath: string;
+    relativePath: string;
+    before: RunnerPolicyFilesystemSnapshotEntry | null;
+    after: RunnerPolicyFilesystemSnapshotEntry | null;
+  }> = [];
+  for (const entryPath of entryPaths) {
+    const previous = before.entries[entryPath] ?? null;
+    const next = after.entries[entryPath] ?? null;
+    if (previous && next && previous.type === next.type && previous.digest === next.digest) {
+      continue;
+    }
+    changed.push({
+      absolutePath: next?.path ?? previous?.path ?? entryPath,
+      relativePath: next?.relativePath ?? previous?.relativePath ?? path.basename(entryPath),
+      before: previous,
+      after: next,
+    });
+  }
+  return changed;
+}
+
+function isRecoverableInstructionPath(relativePath: string): boolean {
+  return RECOVERABLE_INSTRUCTION_FILE_GLOBS.some((pattern) => matchesPathGlob(relativePath, pattern));
 }
 
 function uniquePaths(values: string[]): string[] {

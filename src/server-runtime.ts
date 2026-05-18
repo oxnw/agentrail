@@ -101,6 +101,7 @@ export function buildRuntime({
     ? new GitHubSubmitAdapter({
         githubToken: githubToken!,
         getTask: (taskId: string) => agentQueue.getRawTask(taskId),
+        repos,
       })
     : null;
 
@@ -351,7 +352,8 @@ function buildDeliveryController({
         summaries.push(await projectCiStates({
           taskQueue,
           ciStatusAdapter,
-          filter: (task) => task.source?.provider === "github" || task.source?.ciProvider === "github_actions",
+          filter: (task) => Boolean(task.source?.owner && task.source?.repo)
+            && (task.source?.provider === "github" || task.source?.provider === "linear" || task.source?.ciProvider === "github_actions"),
           provider: "GitHub Actions",
           scope: "active GitHub-backed tasks",
         }));

@@ -87,6 +87,41 @@ test("AgentRunStore filters and counts active runs", () => {
   );
 });
 
+test("AgentRunStore reclaims orphaned active runs from dead processes", () => {
+  const store = new AgentRunStore({
+    now: () => new Date("2026-05-18T15:10:00.000Z"),
+  });
+  store.createRun({
+    ...makeRun("run_orphaned", "running"),
+    updatedAt: "2026-05-18T15:07:00.000Z",
+    launch: {
+      executable: "codex",
+      args: ["exec"],
+      processId: 999999,
+    },
+  });
+  store.createRun({
+    ...makeRun("run_live", "running"),
+    taskId: "tsk_456",
+    updatedAt: "2026-05-18T15:09:45.000Z",
+    launch: {
+      executable: "codex",
+      args: ["exec"],
+      processId: process.pid,
+    },
+  });
+
+  const reclaimed = store.reconcileOrphanedActiveRuns("agt_claudia", {
+    currentProcessId: process.pid,
+    staleAfterMs: 60_000,
+  });
+
+  assert.deepEqual(reclaimed.map((run) => run.runId), ["run_orphaned"]);
+  assert.equal(store.getRun("run_orphaned")?.status, "failed");
+  assert.equal(store.getRun("run_live")?.status, "running");
+  assert.equal(store.countActiveRuns("agt_claudia"), 1);
+});
+
 test("AgentRunStore honors zero limit", () => {
   const store = new AgentRunStore();
   store.createRun(makeRun("run_first", "running"));

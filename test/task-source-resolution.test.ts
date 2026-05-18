@@ -279,12 +279,12 @@ test("GitHubReviewFeedbackAdapter resolves pullNumber from persisted task submis
   const result = await adapter.getTaskReviewFeedback("tsk_review");
 
   assert.ok(result);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   
-  // all calls should reference the resolved pullNumber (13) for reviews, comments, or issue comments
+  // all calls should reference the resolved pullNumber (13) for PR metadata, reviews, comments, or issue comments
   for (const call of calls) {
     assert.ok(
-      /\/pulls\/13\//.test(call.url) || /\/issues\/13\/comments/.test(call.url),
+      /\/pulls\/13(?:[/?]|$)/.test(call.url) || /\/issues\/13\/comments/.test(call.url),
       `Expected URL to reference PR/issue 13, got: ${call.url}`
     );
   }

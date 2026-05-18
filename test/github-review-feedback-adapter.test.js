@@ -36,7 +36,7 @@ function makeTask(source = {}, submissions = []) {
 
 function mockFetch(routes) {
   return async (url) => {
-    for (const [pattern, handler] of Object.entries(routes)) {
+    for (const [pattern, handler] of Object.entries(routes).sort((left, right) => right[0].length - left[0].length)) {
       if (url.includes(pattern)) {
         return handler();
       }
@@ -64,6 +64,12 @@ test("getTaskReviewFeedback unifies reviews, review comments, and issue comments
   const adapter = new GitHubReviewFeedbackAdapter({
     getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 42 }),
     fetch: mockFetch({
+      "pulls/42": jsonResponse({
+        number: 42,
+        mergeable_state: "clean",
+        requested_reviewers: [],
+        requested_teams: [],
+      }),
       "pulls/42/reviews": jsonResponse([
         {
           id: 1,
@@ -129,6 +135,12 @@ test("getTaskReviewFeedback treats zero reviews as not required instead of polla
   const adapter = new GitHubReviewFeedbackAdapter({
     getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 42 }),
     fetch: mockFetch({
+      "pulls/42": jsonResponse({
+        number: 42,
+        mergeable_state: "clean",
+        requested_reviewers: [],
+        requested_teams: [],
+      }),
       "pulls/42/reviews": jsonResponse([]),
       "pulls/42/comments": jsonResponse([]),
       "issues/42/comments": jsonResponse([])
@@ -142,10 +154,42 @@ test("getTaskReviewFeedback treats zero reviews as not required instead of polla
   assert.deepEqual(result.data.availableActions, ["view_ci_status"]);
 });
 
+test("getTaskReviewFeedback does not infer review_required from generic blocked mergeability", async () => {
+  const adapter = new GitHubReviewFeedbackAdapter({
+    getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 45, headSha: "commit-blocked" }),
+    fetch: mockFetch({
+      "pulls/45": jsonResponse({
+        number: 45,
+        mergeable_state: "blocked",
+        requested_reviewers: [],
+        requested_teams: [],
+      }),
+      "pulls/45/reviews": jsonResponse([]),
+      "pulls/45/comments": jsonResponse([]),
+      "issues/45/comments": jsonResponse([]),
+      "commits/commit-blocked/status": jsonResponse({
+        state: "success",
+        statuses: [],
+      }),
+    }),
+  });
+
+  const result = await adapter.getTaskReviewFeedback("tsk_abc");
+
+  assert.equal(result.data.latestDecision.outcome, "not_required");
+  assert.deepEqual(result.data.availableActions, ["view_ci_status"]);
+});
+
 test("getTaskReviewFeedback keeps changes requested when another reviewer later approves", async () => {
   const adapter = new GitHubReviewFeedbackAdapter({
     getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 43 }),
     fetch: mockFetch({
+      "pulls/43": jsonResponse({
+        number: 43,
+        mergeable_state: "clean",
+        requested_reviewers: [],
+        requested_teams: [],
+      }),
       "pulls/43/reviews": jsonResponse([
         {
           id: 10,
@@ -182,6 +226,12 @@ test("getTaskReviewFeedback approves only after the blocking reviewer approves o
   const adapter = new GitHubReviewFeedbackAdapter({
     getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 44 }),
     fetch: mockFetch({
+      "pulls/44": jsonResponse({
+        number: 44,
+        mergeable_state: "clean",
+        requested_reviewers: [],
+        requested_teams: [],
+      }),
       "pulls/44/reviews": jsonResponse([
         {
           id: 20,
@@ -302,6 +352,12 @@ test("getTaskReviewFeedback resolves pullNumber from persisted task submissions"
       },
     }),
     fetch: mockFetch({
+      "pulls/42": jsonResponse({
+        number: 42,
+        mergeable_state: "clean",
+        requested_reviewers: [],
+        requested_teams: [],
+      }),
       "pulls/42/reviews": jsonResponse([]),
       "pulls/42/comments": jsonResponse([]),
       "issues/42/comments": jsonResponse([]),
@@ -319,6 +375,12 @@ test("getTaskReviewFeedback extracts suggestion blocks from review comments", as
   const adapter = new GitHubReviewFeedbackAdapter({
     getTask: () => makeTask({ owner: "acme", repo: "web", pullNumber: 7 }),
     fetch: mockFetch({
+      "pulls/7": jsonResponse({
+        number: 7,
+        mergeable_state: "clean",
+        requested_reviewers: [],
+        requested_teams: [],
+      }),
       "pulls/7/reviews": jsonResponse([]),
       "pulls/7/comments": jsonResponse([
         {
@@ -340,4 +402,36 @@ test("getTaskReviewFeedback extracts suggestion blocks from review comments", as
   assert.equal(comment.suggestedAction, "const lookup = new Map();");
   assert.equal(comment.file, "src/index.js");
   assert.equal(comment.line, 22);
+});
+
+test("getTaskReviewFeedback reports review_required when GitHub still blocks merge pending approval", async () => {
+  const adapter = new GitHubReviewFeedbackAdapter({
+    getTask: () => makeTask({
+      owner: "acme",
+      repo: "web",
+      pullNumber: 55,
+      headSha: "abc123",
+    }),
+    fetch: mockFetch({
+      "pulls/55": jsonResponse({
+        number: 55,
+        mergeable_state: "blocked",
+        updated_at: "2026-05-01T12:00:00Z",
+        head: { sha: "pr-head-sha" },
+        requested_reviewers: [{ login: "alice" }],
+        requested_teams: [],
+      }),
+      "pulls/55/reviews": jsonResponse([]),
+      "pulls/55/comments": jsonResponse([]),
+      "issues/55/comments": jsonResponse([]),
+      "commits/abc123/status": jsonResponse({ state: "success" }),
+    }),
+  });
+
+  const result = await adapter.getTaskReviewFeedback("tsk_abc");
+
+  assert.equal(result.data.latestDecision.outcome, "review_required");
+  assert.equal(result.data.latestDecision.headSha, "pr-head-sha");
+  assert.equal(result.data.latestDecision.createdAt, "2026-05-01T12:00:00Z");
+  assert.deepEqual(result.data.availableActions, ["view_ci_status", "view_review_feedback"]);
 });

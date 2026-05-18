@@ -214,6 +214,36 @@ test("blockTaskAwaitingUser does not block ready-to-ship in-review tasks", async
   assert.equal(eventStore.events.length, 0);
 });
 
+test("blockTaskAwaitingUser can block an assigned todo task before a valid submission exists", async () => {
+  const eventStore = new TaskEventStore({ now });
+  const queue = new AgentTaskQueue({ now, eventStore });
+  const task = queue.createTask({
+    identifier: "RUNNER-BLOCK-TODO-1",
+    title: "Todo task blocker",
+    description: "Exercise awaiting-user blockers before a task produces a valid submission.",
+    status: "todo",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    availableActions: ["start"],
+  });
+
+  await queue.blockTaskAwaitingUser(task.id, {
+    sourceRunId: "run_todo_block",
+    sourceAgentId: "agt_runner",
+    reason: "validation_blocked",
+    actionRequired: "Fix the pre-existing lint failure outside the allowed task scope.",
+    resumeInstructions: "Resolve the lint failure, then retry the managed run.",
+  }, "todo-block", "agt_runner");
+
+  const updated = queue.getRawTask(task.id);
+  assert.equal(updated?.status, "blocked");
+  assert.deepEqual(updated?.availableActions, ["resolve_blocker"]);
+  assert.equal(updated?.blocker?.kind, "awaiting_user");
+  assert.equal(updated?.blocker?.reason, "validation_blocked");
+  assert.equal(eventStore.events.at(-1)?.type, "task.awaiting_user");
+  assert.equal(eventStore.events.at(-1)?.data.previousStatus, "todo");
+});
+
 test("submitTask clears stale blockers after a fix submission", async () => {
   const eventStore = new TaskEventStore({ now });
   const queue = new AgentTaskQueue({
@@ -534,6 +564,45 @@ test("projectReviewState re-enables fix for fresh requested changes", async () =
   assert.equal(freshReview?.task.reviewOutcome, "changes_requested");
   assert.deepEqual(freshReview?.task.availableActions, ["fix", "view_ci_status", "view_review_feedback"]);
   assert.equal(eventStore.events.at(-1)?.type, "task.review_changes_requested");
+});
+
+test("projectReviewState accepts synthetic review_required when it carries latest submission freshness data", async () => {
+  const eventStore = new TaskEventStore({ now });
+  const queue = new AgentTaskQueue({ now, eventStore });
+  const task = queue.createTask({
+    identifier: "REVIEW-REQUIRED-FRESH-1",
+    title: "Approval requested on latest commit",
+    description: "Exercise synthetic review-required freshness.",
+    status: "in_review",
+    assignee: { id: "agt_runner", name: "Runner" },
+    assigneeAgentId: "agt_runner",
+    availableActions: ["view_ci_status", "view_review_feedback"],
+    submissions: [
+      {
+        id: "ghpr_42",
+        summary: "Latest PR submission",
+        artifacts: [],
+        checks: [],
+        notes: null,
+        submittedAt: "2026-05-12T09:10:00.000Z",
+        headSha: "commit-b",
+      },
+    ],
+    latestSubmissionId: "ghpr_42",
+  });
+
+  const review = await queue.projectReviewState(task.id, {
+    outcome: "review_required",
+    summary: "Pull request still requires approval before it can be merged.",
+    reviewer: "unknown",
+    updatedAt: "2026-05-12T09:15:00.000Z",
+    headSha: "commit-b",
+    decisionScope: "pull_request",
+  });
+
+  assert.equal(review?.outcome, "unchanged");
+  assert.equal(review?.task.reviewOutcome, "review_required");
+  assert.deepEqual(review?.task.availableActions, ["view_ci_status", "view_review_feedback"]);
 });
 
 test("projectReviewState does not enable ship when a fix approval arrives before CI passes", async () => {

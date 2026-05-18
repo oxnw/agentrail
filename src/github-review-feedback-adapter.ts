@@ -50,13 +50,15 @@ export class GitHubReviewFeedbackAdapter {
 
     validateTaskSource(source);
 
-    const [reviews, reviewComments, issueComments] = await Promise.all([
+    const [pullRequest, reviews, reviewComments, issueComments, combinedStatus] = await Promise.all([
+      this.getPullRequest(source),
       this.listPullReviews(source),
       this.listReviewComments(source),
-      this.listIssueComments(source)
+      this.listIssueComments(source),
+      this.getCombinedStatus(source),
     ]);
 
-    const latestDecision = deriveLatestDecision(reviews);
+    const latestDecision = deriveLatestDecision(reviews, pullRequest, combinedStatus);
     const feedbackItems = unifyFeedback({ reviews, reviewComments, issueComments });
     const availableActions = actionsForDecision(latestDecision.outcome);
 
@@ -78,6 +80,12 @@ export class GitHubReviewFeedbackAdapter {
     return Array.isArray(body) ? body : [];
   }
 
+  async getPullRequest(source) {
+    return this.fetchJson(
+      `${this.apiBaseUrl}/repos/${source.owner}/${source.repo}/pulls/${source.pullNumber}`
+    );
+  }
+
   async listReviewComments(source) {
     const body = await this.fetchJson(
       `${this.apiBaseUrl}/repos/${source.owner}/${source.repo}/pulls/${source.pullNumber}/comments?per_page=100`
@@ -90,6 +98,19 @@ export class GitHubReviewFeedbackAdapter {
       `${this.apiBaseUrl}/repos/${source.owner}/${source.repo}/issues/${source.pullNumber}/comments?per_page=100`
     );
     return Array.isArray(body) ? body : [];
+  }
+
+  async getCombinedStatus(source) {
+    if (!source.headSha) {
+      return null;
+    }
+    try {
+      return await this.fetchJson(
+        `${this.apiBaseUrl}/repos/${source.owner}/${source.repo}/commits/${source.headSha}/status`
+      );
+    } catch {
+      return null;
+    }
   }
 
   async fetchJson(url) {
@@ -136,7 +157,7 @@ function validateTaskSource(source) {
   }
 }
 
-function deriveLatestDecision(reviews) {
+function deriveLatestDecision(reviews, pullRequest, combinedStatus) {
   const latestByReviewer = new Map();
   const reviewTimeline = reviews
     .filter((review) => review.state === "APPROVED" || review.state === "CHANGES_REQUESTED" || review.state === "DISMISSED")
@@ -174,6 +195,15 @@ function deriveLatestDecision(reviews) {
   }
 
   if (approvedReviews.length === 0) {
+    if (requiresApprovalBeforeMerge(pullRequest, combinedStatus)) {
+      return {
+        outcome: "review_required",
+        reviewer: { id: "unknown", role: "unknown" },
+        createdAt: reviewDecisionTimestamp(pullRequest),
+        headSha: reviewDecisionHeadSha(pullRequest),
+        summary: "Pull request still requires approval before it can be merged."
+      };
+    }
     return {
       outcome: "not_required",
       reviewer: { id: "unknown", role: "unknown" },
@@ -195,8 +225,26 @@ function deriveLatestDecision(reviews) {
   };
 }
 
+function reviewDecisionTimestamp(pullRequest) {
+  return pullRequest?.updated_at
+    ?? pullRequest?.created_at
+    ?? new Date().toISOString();
+}
+
+function reviewDecisionHeadSha(pullRequest) {
+  return typeof pullRequest?.head?.sha === "string" && pullRequest.head.sha.length > 0
+    ? pullRequest.head.sha
+    : null;
+}
+
 function summarizeDecision(state) {
   return state === "APPROVED" ? "Changes approved." : "Changes requested.";
+}
+
+function requiresApprovalBeforeMerge(pullRequest, combinedStatus) {
+  const requestedReviewers = Array.isArray(pullRequest?.requested_reviewers) ? pullRequest.requested_reviewers.length : 0;
+  const requestedTeams = Array.isArray(pullRequest?.requested_teams) ? pullRequest.requested_teams.length : 0;
+  return requestedReviewers > 0 || requestedTeams > 0;
 }
 
 function unifyFeedback({ reviews, reviewComments, issueComments }) {
@@ -281,6 +329,10 @@ function actionsForDecision(outcome) {
 
   if (outcome === "changes_requested") {
     return ["fix"];
+  }
+
+  if (outcome === "review_required") {
+    return ["view_ci_status", "view_review_feedback"];
   }
 
   if (outcome === "not_required") {

@@ -65,6 +65,7 @@ export interface AgentRunRecord {
   launch: {
     executable: string;
     args: string[];
+    processId?: number | null;
   };
 }
 
@@ -223,6 +224,7 @@ function normalizeRunRecord(value: unknown): AgentRunRecord | null {
     || !isString(value.launch.executable)
     || !Array.isArray(value.launch.args)
     || !value.launch.args.every(isString)
+    || (value.launch.processId !== undefined && !isNullableNumber(value.launch.processId))
   ) {
     return null;
   }
@@ -255,8 +257,19 @@ function normalizeRunRecord(value: unknown): AgentRunRecord | null {
     launch: {
       executable: value.launch.executable,
       args: [...value.launch.args],
+      processId: value.launch.processId === undefined ? null : value.launch.processId as number | null,
     },
   };
+}
+
+function processExists(processId: number): boolean {
+  if (!Number.isInteger(processId) || processId <= 0) return false;
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return isNodeErrorWithCode(error, "EPERM");
+  }
 }
 
 function loadState(storagePath: string | undefined): PersistedState {
@@ -438,6 +451,60 @@ export class AgentRunStore {
     const run = [...this.runs.values()].find((entry) =>
       entry.agentId === agentId && entry.taskId === taskId && ACTIVE_RUN_STATUSES.has(entry.status));
     return run ? clone(run) : null;
+  }
+
+  reconcileOrphanedActiveRuns(
+    agentId: string,
+    {
+      currentProcessId,
+      staleAfterMs = 60_000,
+    }: {
+      currentProcessId?: number | null;
+      staleAfterMs?: number;
+    } = {},
+  ): AgentRunRecord[] {
+    return this.withStorageLock(() => {
+      const reclaimed: AgentRunRecord[] = [];
+      const nowIso = this.now().toISOString();
+      const nowMs = Date.parse(nowIso);
+      for (const existing of this.runs.values()) {
+        if (existing.agentId !== agentId || !ACTIVE_RUN_STATUSES.has(existing.status)) {
+          continue;
+        }
+        if (
+          currentProcessId !== undefined
+          && currentProcessId !== null
+          && existing.launch.processId === currentProcessId
+        ) {
+          continue;
+        }
+        if (typeof existing.launch.processId === "number" && processExists(existing.launch.processId)) {
+          continue;
+        }
+        const updatedAtMs = Date.parse(existing.updatedAt);
+        const ageMs = Number.isFinite(updatedAtMs) ? Math.max(0, nowMs - updatedAtMs) : Number.POSITIVE_INFINITY;
+        if (ageMs < staleAfterMs) {
+          continue;
+        }
+        const updated = normalizeRunRecord({
+          ...existing,
+          status: "failed",
+          exitCode: existing.exitCode ?? 1,
+          summary: "AgentRail reclaimed an orphaned active run after the local runner restarted.",
+          finishedAt: nowIso,
+          updatedAt: nowIso,
+        });
+        if (!updated) {
+          throw new Error(`Invalid reclaimed agent run record for ${existing.runId}.`);
+        }
+        this.runs.set(updated.runId, updated);
+        reclaimed.push(clone(updated));
+      }
+      if (reclaimed.length > 0) {
+        this.persist();
+      }
+      return reclaimed;
+    });
   }
 
   verifyRunContextToken(runId: string, token: string): AgentRunRecord | null {

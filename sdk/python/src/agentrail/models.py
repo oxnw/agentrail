@@ -73,6 +73,7 @@ class ReviewOutcome(str, Enum):
     CHANGES_REQUESTED = "changes_requested"
     PENDING = "pending"
     NOT_REQUIRED = "not_required"
+    REVIEW_REQUIRED = "review_required"
 
 
 class CommentSeverity(str, Enum):

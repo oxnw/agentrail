@@ -45,7 +45,7 @@ export type CiCheckStatus =
   | "cancelled"
   | "skipped";
 
-export type ReviewOutcome = "approved" | "changes_requested" | "pending" | "not_required";
+export type ReviewOutcome = "approved" | "changes_requested" | "pending" | "not_required" | "review_required";
 
 export type CommentSeverity = "must_fix" | "should_fix" | "note";
 

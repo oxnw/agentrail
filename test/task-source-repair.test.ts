@@ -21,37 +21,22 @@ test("validateTaskSourceRepairRequest rejects unknown fields", () => {
   );
 });
 
-test("validateTaskSourceRepairRequest rejects mixed provider-specific source fields", () => {
-  assert.throws(
-    () =>
-      validateTaskSourceRepairRequest({
-        sourceRef: "operator-test",
-        changeReason: "backfill",
-        source: {
-          provider: "linear",
-          linearIssueId: "lin_issue_123",
-          owner: "acme",
-          repo: "web",
-        },
-      }),
-    /Linear task sources cannot include repo field `owner`/,
-  );
-});
+test("validateTaskSourceRepairRequest allows linked repo fields on Linear task sources", () => {
+  const repaired = validateTaskSourceRepairRequest({
+    sourceRef: "operator-test",
+    changeReason: "link Linear task to GitHub repo",
+    source: {
+      provider: "linear",
+      linearIssueId: "lin_issue_123",
+      owner: "acme",
+      repo: "web",
+      baseBranch: "main",
+    },
+  });
 
-test("validateTaskSourceRepairRequest rejects Linear with repo field", () => {
-  assert.throws(
-    () =>
-      validateTaskSourceRepairRequest({
-        sourceRef: "operator-test",
-        changeReason: "backfill",
-        source: {
-          provider: "linear",
-          linearIssueId: "lin_issue_123",
-          repo: "web",
-        },
-      }),
-    /Linear task sources cannot include repo field `repo`/,
-  );
+  assert.equal(repaired.source.provider, "linear");
+  assert.equal(repaired.source.owner, "acme");
+  assert.equal(repaired.source.repo, "web");
 });
 
 test("validateTaskSourceRepairRequest rejects unsupported providers", () => {
@@ -95,22 +80,24 @@ test("mergeTaskSource applies patch semantics and preserves provider", () => {
   });
 });
 
-test("mergeTaskSource rejects mixed Linear and repo-backed fields after provider changes", () => {
-  assert.throws(
-    () =>
-      mergeTaskSource({
-        currentSource: {
-          provider: "github",
-          owner: "acme",
-          repo: "web",
-        },
-        patch: {
-          provider: "linear",
-          linearIssueId: "lin_issue_999",
-        },
-      }),
-    /Linear task sources cannot include repo field `owner`/,
-  );
+test("mergeTaskSource preserves linked repo fields when switching a task source to Linear", () => {
+  const merged = mergeTaskSource({
+    currentSource: {
+      provider: "github",
+      owner: "acme",
+      repo: "web",
+      baseBranch: "main",
+    },
+    patch: {
+      provider: "linear",
+      linearIssueId: "lin_issue_999",
+    },
+  });
+
+  assert.equal(merged.provider, "linear");
+  assert.equal(merged.linearIssueId, "lin_issue_999");
+  assert.equal(merged.owner, "acme");
+  assert.equal(merged.repo, "web");
 });
 
 test("AgentTaskQueue.repairTaskSource updates persisted task source and replays idempotently", () => {

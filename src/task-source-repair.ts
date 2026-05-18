@@ -46,18 +46,7 @@ const LINEAR_ONLY_FIELDS = [
   "workflowStateType",
 ] as const;
 const REPO_ONLY_FIELDS = [
-  "owner",
-  "repo",
   "issueNumber",
-  "branch",
-  "baseBranch",
-  "headSha",
-  "projectSlug",
-  "ciProvider",
-  "reviewers",
-  "pullNumber",
-  "prUrl",
-  "submissionId",
 ] as const;
 
 const TASK_SOURCE_FIELD_SET = new Set<string>([

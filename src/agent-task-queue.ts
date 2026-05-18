@@ -545,6 +545,9 @@ export class AgentTaskQueue {
       const branch = firstString(pullRequest.head, payloadObject.head, responseData.head, task.source?.branch);
       const baseBranch = firstString(pullRequest.base, payloadObject.base, responseData.base, task.source?.baseBranch);
       const headSha = firstString(pullRequest.headSha, payloadObject.headSha, responseData.headSha, task.source?.headSha);
+      const owner = firstString(responseData.owner, task.source?.owner);
+      const repo = firstString(responseData.repo, task.source?.repo);
+      const ciProvider = firstString(responseData.ciProvider, task.source?.ciProvider);
       const newSubmission = {
         id: responseData.submissionId,
         summary: typeof payloadObject.summary === "string" ? payloadObject.summary : "",
@@ -565,6 +568,9 @@ export class AgentTaskQueue {
       const source = task.source
         ? {
             ...task.source,
+            owner: owner ?? task.source.owner,
+            repo: repo ?? task.source.repo,
+            ciProvider: ciProvider ?? task.source.ciProvider,
             submissionId: responseData.submissionId,
             pullNumber: responseData.prNumber ?? task.source.pullNumber,
             prUrl: responseData.prUrl ?? task.source.prUrl,
@@ -979,6 +985,13 @@ export class AgentTaskQueue {
     ) {
       return { task: existing, outcome: "unchanged" };
     }
+    if (
+      existing.reviewOutcome === "review_required"
+      && nextOutcome === "not_required"
+      && observation.decisionScope !== "pull_request"
+    ) {
+      return { task: existing, outcome: "unchanged" };
+    }
     if (isObservationStaleForLatestSubmission(existing, observation)) {
       return { task: existing, outcome: "unchanged" };
     }
@@ -1104,16 +1117,24 @@ function availableActionsForCiState(task: TaskRecord, nextStatus: CiOverallStatu
   if (task.reviewOutcome === "changes_requested") {
     return ["fix", "view_ci_status", "view_review_feedback"];
   }
+  if (task.reviewOutcome === "review_required") {
+    return nextStatus === "failed"
+      ? ["fix", "view_ci_status", "view_review_feedback"]
+      : ["view_ci_status", "view_review_feedback"];
+  }
   if (nextStatus === "failed") {
     return ["fix", "view_ci_status", "view_review_feedback"];
   }
-  if (nextStatus === "passed" && task.reviewOutcome !== "changes_requested") {
+  if (nextStatus === "passed" && task.reviewOutcome !== "changes_requested" && task.reviewOutcome !== "review_required") {
     return ["ship", "view_ci_status", "view_review_feedback"];
   }
   return task.availableActions;
 }
 
 function isAwaitingUserBlockableTask(task: TaskRecord): boolean {
+  if (task.status === "todo" && Boolean(task.assigneeAgentId)) {
+    return true;
+  }
   if (task.status === "in_progress") {
     return true;
   }
@@ -1124,7 +1145,8 @@ function isAwaitingUserBlockableTask(task: TaskRecord): boolean {
 function hasBlockingSubmissionState(task: TaskRecord): boolean {
   return task.ciStatus === "failed"
     || task.ci?.overallStatus === "failed"
-    || task.reviewOutcome === "changes_requested";
+    || task.reviewOutcome === "changes_requested"
+    || task.reviewOutcome === "review_required";
 }
 
 function isObservationStaleForLatestSubmission(task: TaskRecord, observation: { updatedAt?: string | null; headSha?: string | null }): boolean {
@@ -1150,28 +1172,37 @@ function isObservationStaleForLatestSubmission(task: TaskRecord, observation: { 
   return observedTime < submittedTime;
 }
 
-function normalizeReviewOutcome(outcome: string): "approved" | "changes_requested" | "not_required" | null {
+function normalizeReviewOutcome(outcome: string): "approved" | "changes_requested" | "not_required" | "review_required" | null {
   switch (outcome) {
     case "approved":
     case "changes_requested":
     case "not_required":
+    case "review_required":
       return outcome;
     default:
       return null;
   }
 }
 
-function availableActionsForReviewState(task: TaskRecord, outcome: "approved" | "changes_requested" | "not_required"): string[] {
+function availableActionsForReviewState(task: TaskRecord, outcome: "approved" | "changes_requested" | "not_required" | "review_required"): string[] {
   if (task.status !== "in_review") {
     return task.availableActions;
   }
   if (outcome === "changes_requested") {
     return ["fix", "view_ci_status", "view_review_feedback"];
   }
+  if (outcome === "review_required") {
+    return task.ciStatus === "failed"
+      ? ["fix", "view_ci_status", "view_review_feedback"]
+      : ["view_ci_status", "view_review_feedback"];
+  }
   if (outcome === "approved" && isWaitingForLatestSubmissionCi(task)) {
     return task.availableActions;
   }
   if (outcome === "approved" && task.ciStatus !== "failed") {
+    return ["ship", "view_ci_status", "view_review_feedback"];
+  }
+  if (outcome === "not_required" && task.ciStatus === "passed") {
     return ["ship", "view_ci_status", "view_review_feedback"];
   }
   return task.availableActions;
