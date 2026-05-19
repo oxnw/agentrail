@@ -238,6 +238,31 @@ test("provider connect circleci interactively asks for pasted token and webhook 
       status: 200,
       json: { items: [] },
     },
+    {
+      ok: true,
+      status: 200,
+      json: { id: "project-01", slug: "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { items: [{ id: "definition-01", name: "build-and-test" }] },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { items: [] },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { id: "project-01", slug: "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1" },
+    },
+    {
+      ok: true,
+      status: 200,
+      json: { items: [{ id: "definition-01", name: "build-and-test" }] },
+    },
   ]);
   const prompt = new ScriptedPromptSession([
     { kind: "select", value: "webhook" },
@@ -257,8 +282,9 @@ test("provider connect circleci interactively asks for pasted token and webhook 
   });
 
   assert.equal(exitCode, 0, stderr.toString());
-  assert.equal(stdout.toString(), "");
   assert.doesNotMatch(stdout.toString(), /Run `agentrail provider test circleci`/);
+  assert.match(stdout.toString(), /Applied: oxnw\/agentrail: configured CircleCI API trigger \(definition-01\)/u);
+  assert.match(stdout.toString(), /CircleCI: ready/u);
   assert.equal(stderr.toString(), "");
   assert.deepEqual(prompt.calls, ["select", "note", "secret", "secret", "input", "spinner", "close"]);
   assert.deepEqual(prompt.selectMessages, ["How do you want to receive CircleCI events?"]);
@@ -271,7 +297,7 @@ test("provider connect circleci interactively asks for pasted token and webhook 
     { kind: "start", message: "Testing CircleCI connection" },
     { kind: "stop", message: "\u2713 Connected CircleCI using CIRCLECI_TOKEN, CIRCLECI_WEBHOOK_SECRET, and project slug in webhook mode." },
   ]);
-  assert.equal(fetch.calls.length, 2);
+  assert.equal(fetch.calls.length, 7);
   assert.equal(fetch.calls[0]?.url, "https://circleci.com/api/v2/project/circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1/pipeline?branch=main");
   assert.equal(fetch.calls[0]?.headers["Circle-Token"], "circleci_interactive_token");
 
@@ -284,6 +310,163 @@ test("provider connect circleci interactively asks for pasted token and webhook 
   assert.equal(nextConfig.providers.circleci.tokenEnv, "CIRCLECI_TOKEN");
   assert.equal(nextConfig.providers.circleci.webhookSecretEnv, "CIRCLECI_WEBHOOK_SECRET");
   assert.equal(nextConfig.repos[0].circleciProjectSlug, "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1");
+  assert.equal(nextConfig.repos[0].circleciTriggerMode, "api");
+  assert.equal(nextConfig.repos[0].circleciPipelineDefinitionId, "definition-01");
+});
+
+test("provider connect circleci asks which pipeline definition to trigger when multiple are available", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const fetch = createFetchStub([
+    { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { id: "project-01" } },
+    {
+      ok: true,
+      status: 200,
+      json: {
+        items: [
+          { id: "definition-build", name: "build" },
+          { id: "definition-release", name: "release" },
+        ],
+      },
+    },
+    { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { id: "project-01" } },
+    {
+      ok: true,
+      status: 200,
+      json: {
+        items: [
+          { id: "definition-build", name: "build" },
+          { id: "definition-release", name: "release" },
+        ],
+      },
+    },
+  ]);
+  const prompt = new ScriptedPromptSession([
+    { kind: "select", value: "polling" },
+    { kind: "secret", value: "circleci_interactive_token" },
+    { kind: "input", value: "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1" },
+    { kind: "select", value: "60000" },
+    { kind: "select", value: "definition-release" },
+  ]);
+
+  const exitCode = await runCli(["provider", "connect", "circleci"], {
+    cwd: repoRoot,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stdout,
+    stderr,
+    createPrompt: () => prompt as any,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.deepEqual(prompt.selectMessages, [
+    "How do you want to receive CircleCI events?",
+    "How often should AgentRail poll CircleCI for CI updates?",
+    "Which CircleCI pipeline should AgentRail trigger for oxnw/agentrail?",
+  ]);
+
+  const nextConfig = JSON.parse(await readFile(path.join(homePath, "config.json"), "utf8"));
+  assert.equal(nextConfig.repos[0].circleciTriggerMode, "api");
+  assert.equal(nextConfig.repos[0].circleciPipelineDefinitionId, "definition-release");
+});
+
+test("provider connect circleci blocks when no pipeline definitions are available", async (t) => {
+  const { repoRoot } = await setupProviderTest(t, {
+    CIRCLECI_TOKEN: "circleci_test_token",
+  });
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const fetch = createFetchStub([
+    { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { id: "project-01" } },
+    { ok: true, status: 200, json: { items: [] } },
+  ]);
+
+  const exitCode = await runCli(["provider", "connect", "circleci", "--project-slug", "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout.toString(), "");
+  assert.match(stderr.toString(), /did not return any pipeline definitions/u);
+});
+
+test("provider list shows CircleCI trigger configuration", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    CIRCLECI_TOKEN: "circleci_test_token",
+  });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.circleci = {
+    mode: "real",
+    tokenEnv: "CIRCLECI_TOKEN",
+    deliveryMode: "polling",
+  };
+  config.repos[0].circleciProjectSlug = "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1";
+  config.repos[0].circleciTriggerMode = "api";
+  config.repos[0].circleciPipelineDefinitionId = "definition-01";
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "list"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /oxnw\/agentrail -> circleci\/PquHykoWvRFZ8YUqRFv8Ae\/NMPTTkVpcJUhKtTusWTrj1/u);
+  assert.match(stdout.toString(), /CircleCI trigger: AgentRail API trigger \(definition-01\)/u);
+});
+
+test("provider doctor circleci does not require pipeline definitions for automatic trigger mode", async (t) => {
+  const { repoRoot, homePath } = await setupProviderTest(t, {
+    CIRCLECI_TOKEN: "circleci_test_token",
+  });
+  const configPath = path.join(homePath, "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.providers.circleci = {
+    mode: "real",
+    tokenEnv: "CIRCLECI_TOKEN",
+    deliveryMode: "polling",
+  };
+  config.repos[0].circleciProjectSlug = "circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1";
+  config.repos[0].circleciTriggerMode = "auto";
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const fetch = createFetchStub([
+    { ok: true, status: 200, json: { items: [] } },
+  ]);
+  const stdout = createMemoryWriter();
+  const stderr = createMemoryWriter();
+  const exitCode = await runCli(["provider", "doctor", "circleci"], {
+    cwd: repoRoot,
+    stdinIsTTY: false,
+    stdoutIsTTY: false,
+    stdout,
+    stderr,
+    providerFetch: fetch as any,
+  });
+
+  assert.equal(exitCode, 0, stderr.toString());
+  assert.match(stdout.toString(), /CircleCI readiness: ready/u);
+  assert.match(stdout.toString(), /CircleCI automatic branch\/PR triggers/u);
+  assert.equal(fetch.calls.length, 1);
+  assert.equal(fetch.calls[0]?.url, "https://circleci.com/api/v2/project/circleci/PquHykoWvRFZ8YUqRFv8Ae/NMPTTkVpcJUhKtTusWTrj1/pipeline?branch=main");
 });
 
 test("provider test circleci fails clearly when no project slug is stored", async (t) => {
@@ -467,7 +650,11 @@ test("provider connect circleci creates a starter config for a Node repo when re
   const fetch = createFetchStub([
     { ok: true, status: 200, json: { items: [] } },
     { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { id: "project-01" } },
+    { ok: true, status: 200, json: { items: [{ id: "definition-01", name: "build-and-test" }] } },
     { ok: true, status: 200, json: { items: [] } },
+    { ok: true, status: 200, json: { id: "project-01" } },
+    { ok: true, status: 200, json: { items: [{ id: "definition-01", name: "build-and-test" }] } },
   ]);
 
   const stdout = createMemoryWriter();
@@ -486,7 +673,11 @@ test("provider connect circleci creates a starter config for a Node repo when re
   assert.match(configFile, /version: 2\.1/u);
   assert.match(configFile, /npm test/u);
   assert.match(stdout.toString(), /Applied: oxnw\/agentrail: created \.circleci\/config\.yml/u);
+  assert.match(stdout.toString(), /Applied: oxnw\/agentrail: configured CircleCI API trigger \(definition-01\)/u);
   assert.match(stdout.toString(), /CircleCI: ready/u);
+  const nextConfig = JSON.parse(await readFile(path.join(homePath, "config.json"), "utf8"));
+  assert.equal(nextConfig.repos[0].circleciTriggerMode, "api");
+  assert.equal(nextConfig.repos[0].circleciPipelineDefinitionId, "definition-01");
 });
 
 test("provider connect linear validates the API key, writes provider.env, and updates config", async (t) => {

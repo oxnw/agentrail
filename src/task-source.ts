@@ -17,6 +17,8 @@ export interface TaskSourceFields {
   headSha?: string;
   projectSlug?: string;
   ciProvider?: string;
+  circleciTriggerMode?: "auto" | "api";
+  circleciPipelineDefinitionId?: string;
   reviewers?: string[];
   pullNumber?: number;
   prUrl?: string;
@@ -58,6 +60,8 @@ const LINEAR_FIELDS: ReadonlyArray<keyof TaskSourceFields | "provider"> = [
   "headSha",
   "projectSlug",
   "ciProvider",
+  "circleciTriggerMode",
+  "circleciPipelineDefinitionId",
   "reviewers",
   "pullNumber",
   "prUrl",
@@ -85,6 +89,8 @@ const REPO_FIELDS: ReadonlyArray<keyof TaskSourceFields | "provider"> = [
   "headSha",
   "projectSlug",
   "ciProvider",
+  "circleciTriggerMode",
+  "circleciPipelineDefinitionId",
   "reviewers",
   "pullNumber",
   "prUrl",

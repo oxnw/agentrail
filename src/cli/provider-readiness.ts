@@ -14,7 +14,8 @@ export interface ReadinessCheck {
   details: string;
   repoSlug?: string;
   autofixable?: boolean;
-  fixKind?: "github_actions_workflow" | "circleci_config";
+  fixKind?: "github_actions_workflow" | "circleci_config" | "circleci_trigger_strategy";
+  circleciPipelineDefinitions?: CircleCiPipelineDefinition[];
 }
 
 export interface ProviderReadinessReport {
@@ -22,6 +23,19 @@ export interface ProviderReadinessReport {
   status: "ready" | "blocked";
   summary: string;
   checks: ReadinessCheck[];
+}
+
+export interface CircleCiPipelineDefinition {
+  id: string;
+  name?: string;
+}
+
+interface ReadinessFixPrompt {
+  select(options: {
+    message: string;
+    choices: Array<{ label: string; value: string; hint?: string }>;
+    defaultValue?: string;
+  }): Promise<string>;
 }
 
 export async function evaluateProviderReadiness(
@@ -43,12 +57,13 @@ export async function applyProviderReadinessFixes(
   provider: ProviderName,
   config: SetupConfigLike,
   report: ProviderReadinessReport,
+  options: { prompt?: ReadinessFixPrompt | null } = {},
 ): Promise<{ changed: boolean; applied: string[] }> {
   if (provider === "github") {
     return applyGitHubFixes(config, report);
   }
   if (provider === "circleci") {
-    return applyCircleCiFixes(config, report);
+    return applyCircleCiFixes(config, report, options);
   }
   return { changed: false, applied: [] };
 }
@@ -243,6 +258,92 @@ async function evaluateCircleCiReadiness(
       continue;
     }
 
+    const usesAutomaticTriggers = repo.circleciTriggerMode === "auto";
+    let pipelineDefinitions: CircleCiPipelineDefinition[] = [];
+    if (!usesAutomaticTriggers) {
+      try {
+        pipelineDefinitions = await discoverCircleCiPipelineDefinitions(token, repo.circleciProjectSlug!, fetchImpl);
+        if (pipelineDefinitions.length === 0) {
+          checks.push(fail(
+            `circleci_pipeline_definitions:${repo.slug}`,
+            "CircleCI pipeline definitions",
+            "CircleCI did not return any pipeline definitions for this project. AgentRail cannot trigger CI through CircleCI until the project has a runnable pipeline definition.",
+            "remote",
+            repo.slug,
+          ));
+        } else {
+          checks.push(pass(
+            `circleci_pipeline_definitions:${repo.slug}`,
+            "CircleCI pipeline definitions",
+            `CircleCI returned ${pipelineDefinitions.length} pipeline definition${pipelineDefinitions.length === 1 ? "" : "s"}.`,
+            "remote",
+            repo.slug,
+          ));
+        }
+      } catch (error) {
+        checks.push(fail(
+          `circleci_pipeline_definitions:${repo.slug}`,
+          "CircleCI pipeline definitions",
+          errorMessage(error),
+          "remote",
+          repo.slug,
+        ));
+      }
+    }
+
+    if (repo.circleciTriggerMode === "api") {
+      if (!repo.circleciPipelineDefinitionId) {
+        checks.push(fail(
+          `circleci_trigger_strategy:${repo.slug}`,
+          "CircleCI trigger strategy",
+          "Repo is configured for AgentRail API triggers, but no CircleCI pipeline definition id is stored.",
+          "runtime",
+          repo.slug,
+          pipelineDefinitions.length > 0,
+          "circleci_trigger_strategy",
+          pipelineDefinitions,
+        ));
+      } else if (pipelineDefinitions.length > 0 && !pipelineDefinitions.some((definition) => definition.id === repo.circleciPipelineDefinitionId)) {
+        checks.push(fail(
+          `circleci_trigger_strategy:${repo.slug}`,
+          "CircleCI trigger strategy",
+          `Stored CircleCI pipeline definition ${repo.circleciPipelineDefinitionId} was not returned by CircleCI.`,
+          "runtime",
+          repo.slug,
+          true,
+          "circleci_trigger_strategy",
+          pipelineDefinitions,
+        ));
+      } else {
+        checks.push(pass(
+          `circleci_trigger_strategy:${repo.slug}`,
+          "CircleCI trigger strategy",
+          `AgentRail will trigger CircleCI pipeline definition ${repo.circleciPipelineDefinitionId}.`,
+          "runtime",
+          repo.slug,
+        ));
+      }
+    } else if (repo.circleciTriggerMode === "auto") {
+      checks.push(warn(
+        `circleci_trigger_strategy:${repo.slug}`,
+        "CircleCI trigger strategy",
+        "AgentRail will rely on CircleCI automatic branch/PR triggers. If CircleCI does not start branch pipelines, reconnect CircleCI so AgentRail can configure an API trigger.",
+        "runtime",
+        repo.slug,
+      ));
+    } else if (pipelineDefinitions.length > 0) {
+      checks.push(fail(
+        `circleci_trigger_strategy:${repo.slug}`,
+        "CircleCI trigger strategy",
+        "AgentRail has not configured how CircleCI pipelines will start for AgentRail branches.",
+        "runtime",
+        repo.slug,
+        true,
+        "circleci_trigger_strategy",
+        pipelineDefinitions,
+      ));
+    }
+
     const configPath = path.join(repo.path, ".circleci", "config.yml");
     if (await fileExists(configPath)) {
       checks.push(pass(
@@ -327,8 +428,9 @@ async function applyGitHubFixes(
 async function applyCircleCiFixes(
   config: SetupConfigLike,
   report: ProviderReadinessReport,
+  options: { prompt?: ReadinessFixPrompt | null } = {},
 ): Promise<{ changed: boolean; applied: string[] }> {
-  const fixes = report.checks.filter((check) => check.status === "fail" && check.autofixable && check.fixKind === "circleci_config");
+  const fixes = report.checks.filter((check) => check.status === "fail" && check.autofixable);
   if (fixes.length === 0) {
     return { changed: false, applied: [] };
   }
@@ -336,13 +438,48 @@ async function applyCircleCiFixes(
   for (const check of fixes) {
     const repo = (config.repos ?? []).find((candidate) => candidate.slug === check.repoSlug);
     if (!repo) continue;
-    const packageScripts = await readPackageScripts(repo.path);
-    const configPath = path.join(repo.path, ".circleci", "config.yml");
-    await mkdir(path.dirname(configPath), { recursive: true });
-    await writeFile(configPath, buildCircleCiConfig(packageScripts), "utf8");
-    applied.push(`${repo.slug}: created .circleci/config.yml`);
+    if (check.fixKind === "circleci_config") {
+      const packageScripts = await readPackageScripts(repo.path);
+      const configPath = path.join(repo.path, ".circleci", "config.yml");
+      await mkdir(path.dirname(configPath), { recursive: true });
+      await writeFile(configPath, buildCircleCiConfig(packageScripts), "utf8");
+      applied.push(`${repo.slug}: created .circleci/config.yml`);
+    }
+    if (check.fixKind === "circleci_trigger_strategy") {
+      const definitions = check.circleciPipelineDefinitions ?? [];
+      if (definitions.length === 0) {
+        continue;
+      }
+      const selectedDefinitionId = definitions.length === 1
+        ? definitions[0]!.id
+        : await selectCircleCiPipelineDefinition(repo.slug, definitions, options.prompt ?? null);
+      if (!selectedDefinitionId) {
+        continue;
+      }
+      repo.circleciTriggerMode = "api";
+      repo.circleciPipelineDefinitionId = selectedDefinitionId;
+      applied.push(`${repo.slug}: configured CircleCI API trigger (${selectedDefinitionId})`);
+    }
   }
   return { changed: applied.length > 0, applied };
+}
+
+async function selectCircleCiPipelineDefinition(
+  repoSlug: string,
+  definitions: CircleCiPipelineDefinition[],
+  prompt: ReadinessFixPrompt | null,
+): Promise<string | null> {
+  if (!prompt) {
+    return null;
+  }
+  return await prompt.select({
+    message: `Which CircleCI pipeline should AgentRail trigger for ${repoSlug}?`,
+    defaultValue: definitions[0]?.id,
+    choices: definitions.map((definition) => ({
+      label: definition.name ? `${definition.name} (${definition.id})` : definition.id,
+      value: definition.id,
+    })),
+  });
 }
 
 function configuredGitHubRepos(repos: SetupConfigLike["repos"]): ConnectedRepo[] {
@@ -536,6 +673,64 @@ async function verifyCircleCiProject(token: string, projectSlug: string, branch:
   }
 }
 
+export async function discoverCircleCiPipelineDefinitions(
+  token: string,
+  projectSlug: string,
+  fetchImpl: typeof globalThis.fetch,
+): Promise<CircleCiPipelineDefinition[]> {
+  const projectResponse = await fetchImpl(`https://circleci.com/api/v2/project/${encodeCircleCiProjectSlug(projectSlug)}`, {
+    headers: {
+      "Circle-Token": token,
+    },
+  });
+  if (!projectResponse.ok) {
+    const text = await projectResponse.text().catch(() => "");
+    throw new Error(
+      projectResponse.status === 401 || projectResponse.status === 403
+        ? `CircleCI rejected the token while reading project metadata for ${projectSlug}.`
+        : projectResponse.status === 404
+          ? `CircleCI project ${projectSlug} was not found while reading project metadata.`
+          : `CircleCI project metadata lookup failed for ${projectSlug}: ${projectResponse.status} ${text.slice(0, 200)}`.trim(),
+    );
+  }
+  const projectBody = await projectResponse.json().catch(() => ({})) as { id?: unknown };
+  const projectId = typeof projectBody.id === "string" ? projectBody.id.trim() : "";
+  if (!projectId) {
+    throw new Error(`CircleCI project metadata for ${projectSlug} did not include a project id.`);
+  }
+
+  const definitionsResponse = await fetchImpl(`https://circleci.com/api/v2/projects/${encodeURIComponent(projectId)}/pipeline-definitions`, {
+    headers: {
+      "Circle-Token": token,
+    },
+  });
+  if (!definitionsResponse.ok) {
+    const text = await definitionsResponse.text().catch(() => "");
+    throw new Error(
+      definitionsResponse.status === 401 || definitionsResponse.status === 403
+        ? `CircleCI rejected the token while reading pipeline definitions for ${projectSlug}.`
+        : definitionsResponse.status === 404
+          ? `CircleCI pipeline definitions were not found for ${projectSlug}.`
+          : `CircleCI pipeline definition lookup failed for ${projectSlug}: ${definitionsResponse.status} ${text.slice(0, 200)}`.trim(),
+    );
+  }
+  const definitionsBody = await definitionsResponse.json().catch(() => ({})) as { items?: unknown };
+  if (!Array.isArray(definitionsBody.items)) {
+    return [];
+  }
+  return definitionsBody.items
+    .flatMap((item): CircleCiPipelineDefinition[] => {
+      if (!item || typeof item !== "object") return [];
+      const record = item as Record<string, unknown>;
+      const id = typeof record.id === "string" ? record.id.trim() : "";
+      if (!id) return [];
+      const name = typeof record.name === "string" && record.name.trim().length > 0
+        ? record.name.trim()
+        : undefined;
+      return [{ id, ...(name ? { name } : {}) }];
+    });
+}
+
 async function queryLinearTeams(token: string, fetchImpl: typeof globalThis.fetch): Promise<string[]> {
   const response = await fetchImpl("https://api.linear.app/graphql", {
     method: "POST",
@@ -625,8 +820,9 @@ function fail(
   repoSlug?: string,
   autofixable = false,
   fixKind?: ReadinessCheck["fixKind"],
+  circleciPipelineDefinitions?: CircleCiPipelineDefinition[],
 ): ReadinessCheck {
-  return { id, label, details, category, repoSlug, status: "fail", autofixable, fixKind };
+  return { id, label, details, category, repoSlug, status: "fail", autofixable, fixKind, circleciPipelineDefinitions };
 }
 
 function errorMessage(error: unknown): string {

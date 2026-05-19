@@ -34,8 +34,16 @@ export interface GitHubIssueIntakeAdapterConfig {
   taskQueue: AgentTaskQueue;
   routingControlPlane?: RoutingControlPlane | null;
   routingMode?: "optional" | "required";
-  repos?: Array<{ slug: string; defaultBranch: string; circleciProjectSlug?: string }>;
+  repos?: Array<GitHubIssueIntakeRepoConfig>;
   now?: () => Date;
+}
+
+interface GitHubIssueIntakeRepoConfig {
+  slug: string;
+  defaultBranch: string;
+  circleciProjectSlug?: string;
+  circleciTriggerMode?: "auto" | "api";
+  circleciPipelineDefinitionId?: string;
 }
 
 interface GitHubRepositoryRef {
@@ -120,7 +128,7 @@ export class GitHubIssueIntakeAdapter {
   private taskQueue: AgentTaskQueue;
   private routingControlPlane: RoutingControlPlane | null;
   private routingMode: "optional" | "required";
-  private repos: Array<{ slug: string; defaultBranch: string; circleciProjectSlug?: string }>;
+  private repos: GitHubIssueIntakeRepoConfig[];
   private now: () => Date;
 
   constructor({ taskQueue, routingControlPlane = null, routingMode = "optional", repos = [], now = () => new Date() }: GitHubIssueIntakeAdapterConfig) {
@@ -334,14 +342,16 @@ export class GitHubIssueIntakeAdapter {
     return `github:${repository.owner}/${repository.repo}:issues/${issueNumber}`;
   }
 
-  private findRepoConfig(repository: GitHubRepositoryRef): { slug: string; defaultBranch: string; circleciProjectSlug?: string } | null {
+  private findRepoConfig(repository: GitHubRepositoryRef): GitHubIssueIntakeRepoConfig | null {
     const repoSlug = `${repository.owner}/${repository.repo}`;
     return this.repos.find((candidate) => candidate.slug === repoSlug) ?? null;
   }
 
-  private buildCiSourceMetadata(repoConfig: { circleciProjectSlug?: string } | null): {
+  private buildCiSourceMetadata(repoConfig: GitHubIssueIntakeRepoConfig | null): {
     ciProvider?: "circleci";
     projectSlug?: string;
+    circleciTriggerMode?: "auto" | "api";
+    circleciPipelineDefinitionId?: string;
   } {
     const projectSlug = repoConfig?.circleciProjectSlug?.trim();
     if (!projectSlug) {
@@ -350,6 +360,12 @@ export class GitHubIssueIntakeAdapter {
     return {
       ciProvider: "circleci",
       projectSlug,
+      ...(repoConfig?.circleciTriggerMode === "auto" || repoConfig?.circleciTriggerMode === "api"
+        ? { circleciTriggerMode: repoConfig.circleciTriggerMode }
+        : {}),
+      ...(typeof repoConfig?.circleciPipelineDefinitionId === "string" && repoConfig.circleciPipelineDefinitionId.trim().length > 0
+        ? { circleciPipelineDefinitionId: repoConfig.circleciPipelineDefinitionId.trim() }
+        : {}),
     };
   }
 

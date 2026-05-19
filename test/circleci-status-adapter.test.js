@@ -218,6 +218,229 @@ test("CircleCiStatusAdapter matches pipeline-run API metadata when CircleCI omit
   assert.equal(body.data.workflows.length, 2);
 });
 
+test("CircleCiStatusAdapter triggers an API pipeline when no branch pipeline exists", async () => {
+  const fetchCalls = [];
+  const source = {
+    ...circleCiTaskSource,
+    circleciTriggerMode: "api",
+    circleciPipelineDefinitionId: "definition-01",
+  };
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask(source),
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), method: options.method ?? "GET", body: options.body });
+
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse({ items: [] });
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/pipeline/run")) {
+        return jsonResponse({
+          id: "pipeline-triggered",
+          number: 89,
+          state: "pending",
+          created_at: "2026-05-02T10:05:00Z",
+        }, 201);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  const body = await adapter.getTaskCiStatus(circleCiTaskId);
+
+  assert.deepEqual(fetchCalls.map((call) => [call.method, call.url]), [
+    ["GET", "https://circleci.com/api/v2/project/gh/oxnw/agentrail/pipeline?branch=feature%2Fcircleci-status"],
+    ["POST", "https://circleci.com/api/v2/project/gh/oxnw/agentrail/pipeline/run"],
+  ]);
+  assert.deepEqual(JSON.parse(fetchCalls[1].body), {
+    definition_id: "definition-01",
+    config: { branch: "feature/circleci-status" },
+    checkout: { branch: "feature/circleci-status" },
+  });
+  assert.equal(body.data.overallStatus, "queued");
+  assert.equal(body.data.headSha, "abc123");
+  assert.deepEqual(body.availableActions, ["refresh"]);
+});
+
+test("CircleCiStatusAdapter retries API pipeline triggers after a failed trigger attempt", async () => {
+  const fetchCalls = [];
+  const source = {
+    ...circleCiTaskSource,
+    circleciTriggerMode: "api",
+    circleciPipelineDefinitionId: "definition-01",
+  };
+  let triggerAttempts = 0;
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask(source),
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), method: options.method ?? "GET" });
+
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse({ items: [] });
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/pipeline/run")) {
+        triggerAttempts += 1;
+        if (triggerAttempts === 1) {
+          return jsonResponse({ message: "temporary CircleCI failure" }, 502);
+        }
+        return jsonResponse({ id: "pipeline-triggered" }, 201);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  await assert.rejects(
+    () => adapter.getTaskCiStatus(circleCiTaskId),
+    /CircleCI source rejected the request/,
+  );
+
+  const retry = await adapter.getTaskCiStatus(circleCiTaskId);
+
+  assert.equal(retry.data.overallStatus, "queued");
+  assert.equal(fetchCalls.filter((call) => call.method === "POST").length, 2);
+});
+
+test("CircleCiStatusAdapter does not repeatedly trigger the same API pipeline", async () => {
+  const fetchCalls = [];
+  const source = {
+    ...circleCiTaskSource,
+    circleciTriggerMode: "api",
+    circleciPipelineDefinitionId: "definition-01",
+  };
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask(source),
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), method: options.method ?? "GET" });
+
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse({ items: [] });
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/pipeline/run")) {
+        return jsonResponse({ id: "pipeline-triggered" }, 201);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  await adapter.getTaskCiStatus(circleCiTaskId);
+  await adapter.getTaskCiStatus(circleCiTaskId);
+
+  assert.equal(fetchCalls.filter((call) => call.method === "POST").length, 1);
+});
+
+test("CircleCiStatusAdapter allows an API pipeline trigger again after the dedupe TTL expires", async () => {
+  const fetchCalls = [];
+  let now = 1_000;
+  const source = {
+    ...circleCiTaskSource,
+    circleciTriggerMode: "api",
+    circleciPipelineDefinitionId: "definition-01",
+  };
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask(source),
+    triggeredPipelineKeyTtlMs: 100,
+    now: () => now,
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), method: options.method ?? "GET" });
+
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse({ items: [] });
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/pipeline/run")) {
+        return jsonResponse({ id: "pipeline-triggered" }, 201);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  await adapter.getTaskCiStatus(circleCiTaskId);
+  now += 50;
+  await adapter.getTaskCiStatus(circleCiTaskId);
+  now += 51;
+  await adapter.getTaskCiStatus(circleCiTaskId);
+
+  assert.equal(fetchCalls.filter((call) => call.method === "POST").length, 2);
+});
+
+test("CircleCiStatusAdapter evicts old successful API trigger keys when the cache reaches its size limit", async () => {
+  const fetchCalls = [];
+  let headSha = "sha-a";
+  const source = {
+    ...circleCiTaskSource,
+    circleciTriggerMode: "api",
+    circleciPipelineDefinitionId: "definition-01",
+  };
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask({ ...source, headSha }),
+    triggeredPipelineKeyMaxEntries: 2,
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), method: options.method ?? "GET" });
+
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse({ items: [] });
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/pipeline/run")) {
+        return jsonResponse({ id: `pipeline-triggered-${headSha}` }, 201);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  await adapter.getTaskCiStatus(circleCiTaskId);
+  headSha = "sha-b";
+  await adapter.getTaskCiStatus(circleCiTaskId);
+  headSha = "sha-c";
+  await adapter.getTaskCiStatus(circleCiTaskId);
+  headSha = "sha-a";
+  await adapter.getTaskCiStatus(circleCiTaskId);
+
+  assert.equal(fetchCalls.filter((call) => call.method === "POST").length, 4);
+});
+
+test("CircleCiStatusAdapter records a clear trigger key sentinel when task source lacks head SHA", async () => {
+  const fetchCalls = [];
+  const { headSha, ...sourceWithoutHeadSha } = {
+    ...circleCiTaskSource,
+    circleciTriggerMode: "api",
+    circleciPipelineDefinitionId: "definition-01",
+  };
+  const adapter = new CircleCiStatusAdapter({
+    circleciToken: "circleci_test_token",
+    getTask: () => makeTask(sourceWithoutHeadSha),
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), method: options.method ?? "GET" });
+
+      if (String(url).includes("/project/gh/oxnw/agentrail/pipeline?")) {
+        return jsonResponse({ items: [] });
+      }
+
+      if (String(url).endsWith("/project/gh/oxnw/agentrail/pipeline/run")) {
+        return jsonResponse({ id: "pipeline-triggered" }, 201);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+
+  await adapter.getTaskCiStatus(circleCiTaskId);
+
+  assert.equal(adapter.triggeredPipelineKeys.has("gh/oxnw/agentrail:feature/circleci-status:<no-head-sha>:definition-01"), true);
+});
+
 test("CircleCiStatusAdapter refreshes workflow job state across repeated polls", async () => {
   let buildJobsResponse = currentBuildJobsResponse;
   let lintJobsResponse = currentLintJobsResponse;

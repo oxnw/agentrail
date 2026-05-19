@@ -6,6 +6,9 @@ import type { TaskRecord } from "./task-store.ts";
 
 const DEFAULT_CIRCLECI_API_BASE_URL = "https://circleci.com/api/v2";
 const DEFAULT_PIPELINE_LIMIT = 20;
+const DEFAULT_TRIGGERED_PIPELINE_KEY_TTL_MS = 60 * 60 * 1000;
+const DEFAULT_TRIGGERED_PIPELINE_KEY_MAX_ENTRIES = 1000;
+const CIRCLECI_TRIGGER_KEY_NO_HEAD_SHA = "<no-head-sha>";
 const MAX_FAILURE_SUMMARIES = 5;
 
 export class CircleCiStatusAdapter {
@@ -18,6 +21,11 @@ export class CircleCiStatusAdapter {
   declare testResultsByJobKey: Map<string, any>;
   declare webhookSnapshots: Map<string, any>;
   declare processedWebhookIds: Set<string>;
+  declare triggeredPipelineKeys: Map<string, number>;
+  declare triggeringPipelineKeys: Set<string>;
+  declare triggeredPipelineKeyTtlMs: number;
+  declare triggeredPipelineKeyMaxEntries: number;
+  declare now: () => number;
   declare getTask: ((taskId: string) => TaskRecord | null) | null;
   declare listTasks: (() => TaskRecord[]) | null;
   constructor({
@@ -27,7 +35,10 @@ export class CircleCiStatusAdapter {
     webhookSecret = process.env.CIRCLECI_WEBHOOK_SECRET || null,
     fetch = globalThis.fetch,
     apiBaseUrl = DEFAULT_CIRCLECI_API_BASE_URL,
-    pipelineLimit = DEFAULT_PIPELINE_LIMIT
+    pipelineLimit = DEFAULT_PIPELINE_LIMIT,
+    triggeredPipelineKeyTtlMs = DEFAULT_TRIGGERED_PIPELINE_KEY_TTL_MS,
+    triggeredPipelineKeyMaxEntries = DEFAULT_TRIGGERED_PIPELINE_KEY_MAX_ENTRIES,
+    now = () => Date.now()
   } = {}) {
     if (typeof fetch !== "function") {
       throw new TypeError("CircleCiStatusAdapter requires a fetch implementation.");
@@ -40,10 +51,24 @@ export class CircleCiStatusAdapter {
     this.fetch = fetch;
     this.apiBaseUrl = apiBaseUrl.replace(/\/$/, "");
     this.pipelineLimit = pipelineLimit;
+    this.triggeredPipelineKeyTtlMs = normalizePositiveNumber(
+      triggeredPipelineKeyTtlMs,
+      DEFAULT_TRIGGERED_PIPELINE_KEY_TTL_MS
+    );
+    this.triggeredPipelineKeyMaxEntries = Math.max(
+      1,
+      Math.floor(normalizePositiveNumber(
+        triggeredPipelineKeyMaxEntries,
+        DEFAULT_TRIGGERED_PIPELINE_KEY_MAX_ENTRIES
+      ))
+    );
+    this.now = typeof now === "function" ? now : () => Date.now();
     this.jobsByWorkflowId = new Map();
     this.testResultsByJobKey = new Map();
     this.webhookSnapshots = new Map();
     this.processedWebhookIds = new Set();
+    this.triggeredPipelineKeys = new Map();
+    this.triggeringPipelineKeys = new Set();
   }
 
   async getTaskCiStatus(taskId) {
@@ -188,13 +213,14 @@ export class CircleCiStatusAdapter {
     const [currentPipeline, ...historicalPipelines] = matchingPipelines;
 
     if (!currentPipeline) {
+      const triggeredPipeline = await this.triggerPipelineIfConfigured(source);
       return {
-        pipeline: null,
+        pipeline: triggeredPipeline,
         workflows: [],
         jobsByWorkflowId: new Map(),
         historicalSnapshots: [],
-        updatedAt: null,
-        headSha: null
+        updatedAt: triggeredPipeline?.created_at ?? null,
+        headSha: source.headSha ?? pipelineHeadSha(triggeredPipeline) ?? null
       };
     }
 
@@ -245,6 +271,68 @@ export class CircleCiStatusAdapter {
     return items.slice(0, this.pipelineLimit);
   }
 
+  async triggerPipelineIfConfigured(source) {
+    if (
+      source.circleciTriggerMode !== "api"
+      || typeof source.circleciPipelineDefinitionId !== "string"
+      || source.circleciPipelineDefinitionId.length === 0
+      || typeof source.branch !== "string"
+      || source.branch.length === 0
+    ) {
+      return null;
+    }
+
+    const key = circleCiPipelineTriggerKey(source);
+    if (this.hasTriggeredPipelineKey(key) || this.triggeringPipelineKeys.has(key)) {
+      return null;
+    }
+
+    this.triggeringPipelineKeys.add(key);
+    try {
+      const pipeline = await this.postJson(
+        `${this.apiBaseUrl}/project/${source.projectSlug}/pipeline/run`,
+        {
+          definition_id: source.circleciPipelineDefinitionId,
+          config: { branch: source.branch },
+          checkout: { branch: source.branch },
+        },
+      );
+      this.rememberTriggeredPipelineKey(key);
+      return pipeline;
+    } finally {
+      this.triggeringPipelineKeys.delete(key);
+    }
+  }
+
+  hasTriggeredPipelineKey(key) {
+    this.pruneTriggeredPipelineKeys();
+    return this.triggeredPipelineKeys.has(key);
+  }
+
+  rememberTriggeredPipelineKey(key) {
+    const now = this.now();
+    this.pruneTriggeredPipelineKeys(now);
+    this.triggeredPipelineKeys.set(key, now);
+    this.pruneTriggeredPipelineKeys(now);
+  }
+
+  pruneTriggeredPipelineKeys(now = this.now()) {
+    const expiresBefore = now - this.triggeredPipelineKeyTtlMs;
+    for (const [key, timestamp] of this.triggeredPipelineKeys) {
+      if (timestamp <= expiresBefore) {
+        this.triggeredPipelineKeys.delete(key);
+      }
+    }
+
+    while (this.triggeredPipelineKeys.size > this.triggeredPipelineKeyMaxEntries) {
+      const oldestKey = this.triggeredPipelineKeys.keys().next().value;
+      if (typeof oldestKey !== "string") {
+        break;
+      }
+      this.triggeredPipelineKeys.delete(oldestKey);
+    }
+  }
+
   async listWorkflows(pipelineId) {
     const body = await this.fetchJson(`${this.apiBaseUrl}/pipeline/${pipelineId}/workflow`);
     return Array.isArray(body.items) ? body.items : [];
@@ -284,6 +372,22 @@ export class CircleCiStatusAdapter {
     return response.json();
   }
 
+  async postJson(url, body) {
+    const response = await this.fetch(url, {
+      method: "POST",
+      headers: {
+        ...this.headers(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw await toSourceError(response);
+    }
+
+    return response.json();
+  }
+
   headers() {
     const headers = {
       accept: "application/json"
@@ -295,6 +399,19 @@ export class CircleCiStatusAdapter {
 
     return headers;
   }
+}
+
+function normalizePositiveNumber(value, fallback) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function circleCiPipelineTriggerKey(source) {
+  return [
+    source.projectSlug,
+    source.branch,
+    source.headSha ?? CIRCLECI_TRIGGER_KEY_NO_HEAD_SHA,
+    source.circleciPipelineDefinitionId,
+  ].join(":");
 }
 
 function isCircleCiSource(source) {

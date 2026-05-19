@@ -16,6 +16,8 @@ export const TASK_SOURCE_STRING_FIELDS = [
   "headSha",
   "projectSlug",
   "ciProvider",
+  "circleciTriggerMode",
+  "circleciPipelineDefinitionId",
   "prUrl",
   "submissionId",
   "deliveryId",

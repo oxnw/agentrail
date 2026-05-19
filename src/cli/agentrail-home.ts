@@ -10,6 +10,8 @@ export interface ConnectedRepo {
   slug: string;
   defaultBranch: string;
   circleciProjectSlug?: string;
+  circleciTriggerMode?: "auto" | "api";
+  circleciPipelineDefinitionId?: string;
 }
 
 export interface GitHubProviderWebhookRegistrationLike {
@@ -172,6 +174,12 @@ export function normalizeSetupConfigLike(config: SetupConfigLike | null): SetupC
           defaultBranch: repo.defaultBranch,
           ...(typeof repo.circleciProjectSlug === "string" && repo.circleciProjectSlug.trim().length > 0
             ? { circleciProjectSlug: repo.circleciProjectSlug.trim() }
+            : {}),
+          ...(repo.circleciTriggerMode === "auto" || repo.circleciTriggerMode === "api"
+            ? { circleciTriggerMode: repo.circleciTriggerMode }
+            : {}),
+          ...(typeof repo.circleciPipelineDefinitionId === "string" && repo.circleciPipelineDefinitionId.trim().length > 0
+            ? { circleciPipelineDefinitionId: repo.circleciPipelineDefinitionId.trim() }
             : {}),
         })),
     };

@@ -84,6 +84,11 @@ agentrail provider connect linear
 Interactive provider setup asks for secrets in hidden prompts and writes them to
 local env files. Non-interactive automation can still use environment variables
 such as `GITHUB_TOKEN`, `CIRCLECI_TOKEN`, `LINEAR_API_KEY`, and webhook secrets.
+CircleCI setup verifies project access, creates `.circleci/config.yml` when a
+starter config is safe, and configures how AgentRail will obtain pipelines for
+AgentRail branches. If automatic CircleCI branch builds are not available,
+AgentRail uses the CircleCI pipeline-run API when the token can access a
+pipeline definition.
 
 Import a Linear issue into AgentRail after connecting Linear:
 
