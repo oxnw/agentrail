@@ -104,14 +104,14 @@ test("npm package content guard rejects sensitive file paths", () => {
     ".env.local",
     ".env.example",
     "secrets/prod.pem",
-    "agentrail-core-cli-0.1.3.tgz",
+    "agentrail-core-cli-0.1.4.tgz",
     ".idea/vcs.xml",
     "browser-artifacts/desktop.png",
   ]), [
     ".env",
     ".env.local",
     ".idea/vcs.xml",
-    "agentrail-core-cli-0.1.3.tgz",
+    "agentrail-core-cli-0.1.4.tgz",
     "browser-artifacts/desktop.png",
     "secrets/prod.pem",
   ]);

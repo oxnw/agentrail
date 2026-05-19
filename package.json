@@ -1,11 +1,11 @@
 {
   "name": "@agentrail-core/cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Local source-available release candidate for the AgentRail task lifecycle API",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "bin": {
-    "agentrail": "./bin/agentrail.js"
+    "agentrail": "bin/agentrail.js"
   },
   "files": [
     "bin",
