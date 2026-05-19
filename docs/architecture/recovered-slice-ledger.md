@@ -6,6 +6,10 @@ GitHub issue/PR history on 2026-05-18.
 Purpose: recover the slice sequence, deferred items, and remaining work after
 session-memory loss and context compaction.
 
+Current use: historical recovery record plus dated status notes. Do not treat
+the 2026-05-18 failures or planned slices below as current until checking the
+2026-05-19 update.
+
 ## Evidence Sources
 
 - local recovery note in `AGENTS.md`
@@ -15,6 +19,72 @@ session-memory loss and context compaction.
 
 This file separates facts from inference. Items are grouped as `confirmed`,
 `probable`, or `unverified`.
+
+## 2026-05-19 Status Update
+
+The 2026-05-18 recovery ledger is partially superseded by later fixes and live
+E2E runs.
+
+### Current Verified Full Lifecycle
+
+On 2026-05-19, a real GitHub-origin task with CircleCI-backed CI completed the
+managed lifecycle end to end:
+
+- sandbox issue `oxnw/agentrail-e2e-sandbox#93` was created
+- AgentRail imported the issue and routed it to
+  `agt_codex_codex_benchmark_agent_15d6fb3a`
+- the managed Codex runner woke automatically and completed the task
+- AgentRail opened PR `oxnw/agentrail-e2e-sandbox#94`
+- GitHub checks passed
+- CircleCI status `ci/circleci: verify` passed
+- AgentRail review feedback reported approval was not required
+- AgentRail `/ship` merged PR `#94`
+- issue `#93` closed
+- the AgentRail task ended `done` with `availableActions: ["rollback"]`
+
+This proves the happy-path lifecycle for:
+
+- GitHub issue intake
+- deterministic routing
+- managed local runner wakeup
+- run-scoped managed Codex execution
+- AgentRail-owned PR submission
+- CircleCI-backed CI projection
+- review-not-required ship readiness
+- AgentRail-owned merge/ship
+
+### Superseded 2026-05-18 Failures
+
+These 2026-05-18 findings are no longer current for the GitHub-origin happy
+path:
+
+- fresh GitHub issue routing to `triage_default` with `no_route`
+- local managed-runner supervisor crashing with `EADDRINUSE 127.0.0.1:3000`
+- managed runner failing to wake/start automatically
+- happy-path review feedback disagreeing with ship readiness
+- CircleCI only being connected but not actively observed on a task
+
+### Still Open After 2026-05-19
+
+The following are still not fully proven by the latest run:
+
+- Linear-origin full lifecycle
+- review changes requested -> agent wakes -> fix -> green CI -> ship
+- CircleCI failure/recovery handling, beyond successful CircleCI-backed CI
+- stale run / reclaimability policy
+
+### Current Slice Status
+
+- Slice A, fresh GitHub intake routing: verified complete by issue `#93`.
+- Slice B, local managed-runner boot / wake reliability: verified complete by
+  the automatic run for issue `#93`.
+- Slice C, review feedback / ship readiness consistency: happy-path
+  `not_required` review state is verified complete; changes-requested recovery
+  remains open.
+- Slice D, real Linear-origin E2E: still open.
+- Slice E, real CircleCI-backed E2E: successful CI projection and ship are
+  verified through GitHub-origin PRs `#92` and `#94`; CircleCI failure/recovery
+  behavior remains open.
 
 ## Confirmed Completed Slices
 
@@ -57,11 +127,11 @@ This chain is the main product path that took AgentRail from:
 - to live `/ship`
 - to persisted `done` plus rollback availability
 
-## Confirmed Outstanding Work
+## Confirmed Outstanding Work At Recovery Time
 
 ### Issue `#47`: Real E2E lifecycle: GitHub, Linear, CircleCI managed agent flow
 
-Issue `#47` is the current open umbrella for real end-to-end validation.
+Issue `#47` is the open umbrella for real end-to-end validation.
 
 Confirmed goal from the issue body:
 
@@ -96,6 +166,8 @@ Confirmed still outstanding:
 
 No merged PR in the recovered history clearly closes this planned item.
 
+Status as of 2026-05-19: still believed open.
+
 ## Confirmed Earlier Breakages That Were Fixed Later
 
 These were found during real E2E or manual managed-run tests and then addressed
@@ -110,7 +182,7 @@ by later slices:
 - stale CI/review observations could incorrectly affect the latest fix
 - live `/ship` path was not fully wired through the runtime and queue
 
-## Probable Remaining Work Under Issue `#47`
+## Probable Remaining Work Under Issue `#47` At Recovery Time
 
 These items are strongly implied by the issue body and recovered run history,
 but are not yet proven complete from the recovered evidence:
@@ -119,6 +191,13 @@ but are not yet proven complete from the recovered evidence:
 - full real lifecycle proof for a CircleCI-backed CI path
 - confirmation that review-change -> wake -> fix -> green CI -> ship works on
   those non-GitHub-only paths as well
+
+Status as of 2026-05-19:
+
+- Linear-origin lifecycle is still open.
+- CircleCI-backed success path is verified through GitHub-origin PRs `#92` and
+  `#94`.
+- review-change -> wake -> fix -> green CI -> ship remains open.
 
 Reason for `probable` instead of `confirmed`:
 
@@ -139,7 +218,7 @@ These items should not be treated as facts until proven:
 - whether the `real-lifecycle-e2e` worktree contains additional unmerged notes
   that change the remaining scope
 
-## Working Conclusion
+## Working Conclusion At Recovery Time
 
 The recovered ledger supports these conclusions:
 
@@ -153,11 +232,15 @@ The recovered ledger supports these conclusions:
 
 ## Next Recommended Use
 
-Use this file as the canonical recovery note for:
+Use this file as a historical recovery note plus dated status tracker for:
 
 - choosing the next implementation slice
 - deciding which E2E paths still need proof
 - avoiding future reliance on chat/session memory for roadmap state
+
+Before choosing new work from this file, check the latest dated status section
+near the top. Older sections intentionally preserve historical findings that
+may now be fixed.
 
 ## 2026-05-18 Real E2E Findings
 
@@ -195,6 +278,10 @@ ledger was reconstructed.
 
 ### Confirmed Failures And Regressions
 
+Status as of 2026-05-19: these were real failures on 2026-05-18, but they are
+superseded for the GitHub-origin happy path by the issue `#93` -> PR `#94`
+live E2E run. Keep them as history, not current blockers.
+
 - fresh GitHub issue `#70` was sent to `triage_default` with routing outcome
   `no_route`
 - this happened even though the active deterministic rule and agent repo
@@ -208,6 +295,10 @@ ledger was reconstructed.
   `/ship` reported that approval was still required
 
 ### Confirmed Coverage Gaps
+
+Status as of 2026-05-19: Linear-origin E2E remains a gap. CircleCI successful
+status projection is no longer a gap for GitHub-origin tasks, but
+failure/recovery behavior is still not proven.
 
 - Linear is configured, but no Linear-origin task was actually exercised in
   this pass
@@ -230,6 +321,9 @@ These slices are sequenced to restore the GitHub product path first, then close
 provider-specific proof gaps.
 
 ### Slice A: Restore Fresh GitHub Intake Routing
+
+Status as of 2026-05-19: verified complete by sandbox issue `#93`, which routed
+to `agt_codex_codex_benchmark_agent_15d6fb3a`.
 
 Goal:
 
@@ -254,6 +348,10 @@ Exit criteria:
 
 ### Slice B: Fix Local Managed-Runner Boot / Wake Reliability
 
+Status as of 2026-05-19: verified complete by sandbox issue `#93`. The local
+runner woke automatically, completed the task, and did not crash with
+`EADDRINUSE`.
+
 Goal:
 
 - stop the local runner supervisor from spawning a child process that attempts
@@ -275,6 +373,10 @@ Exit criteria:
 
 ### Slice C: Fix Review Feedback / Ship Readiness Consistency
 
+Status as of 2026-05-19: happy path verified by PR `#94`. AgentRail review
+feedback reported `not_required`, `ship` was available, and `/ship` succeeded.
+The changes-requested recovery loop remains unproven.
+
 Goal:
 
 - make review feedback projection and ship gating derive from the same PR-wide
@@ -294,6 +396,8 @@ Exit criteria:
 
 ### Slice D: Real Linear-Origin E2E
 
+Status as of 2026-05-19: still open.
+
 Goal:
 
 - prove the end-to-end lifecycle starting from a real Linear issue
@@ -311,6 +415,10 @@ Exit criteria:
   issue `#47`, or yields concrete product bugs with reproduction steps
 
 ### Slice E: Real CircleCI-Backed E2E
+
+Status as of 2026-05-19: partially verified. CircleCI-backed successful CI
+projection and ship readiness were proven on GitHub-origin PRs `#92` and `#94`.
+CircleCI failure/recovery behavior remains unproven.
 
 Goal:
 
