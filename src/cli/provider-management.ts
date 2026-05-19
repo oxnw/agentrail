@@ -680,8 +680,9 @@ async function applyReadinessDuringConnect({
   const env = await readSimpleEnv(providerEnvPathForHome(homePath));
   const initialReport = await evaluateProviderReadiness(provider, config, env, fetch);
   const lines: string[] = [];
-  const { changed, applied } = await applyProviderReadinessFixes(provider, config, initialReport);
+  const { changed, applied } = await applyProviderReadinessFixes(provider, config, initialReport, { prompt });
   if (changed) {
+    await writeConfig(homePath, config);
     for (const item of applied) {
       lines.push(`Applied: ${item}`);
     }
@@ -998,16 +999,32 @@ function collectCircleCiProjectSlugs(repos: SetupConfigLike["repos"]): string[] 
 }
 
 function renderCircleCiProjectSlugs(repos: SetupConfigLike["repos"]): string[] {
-  const configured = (repos ?? [])
-    .filter((repo) => typeof repo.circleciProjectSlug === "string" && repo.circleciProjectSlug.trim().length > 0)
-    .map((repo) => `  ${repo.slug} -> ${repo.circleciProjectSlug!.trim()}`);
-  if (configured.length === 0) {
+  const configuredRepos = (repos ?? [])
+    .filter((repo) => typeof repo.circleciProjectSlug === "string" && repo.circleciProjectSlug.trim().length > 0);
+  const configured = configuredRepos
+    .flatMap((repo) => [
+      `  ${repo.slug} -> ${repo.circleciProjectSlug!.trim()}`,
+      `    CircleCI trigger: ${formatCircleCiTrigger(repo)}`,
+    ]);
+  if (configuredRepos.length === 0) {
     return ["  project slugs: none configured"];
   }
   return [
-    `  project slugs: ${configured.length}`,
+    `  project slugs: ${configuredRepos.length}`,
     ...configured,
   ];
+}
+
+function formatCircleCiTrigger(repo: NonNullable<SetupConfigLike["repos"]>[number]): string {
+  if (repo.circleciTriggerMode === "api") {
+    return repo.circleciPipelineDefinitionId
+      ? `AgentRail API trigger (${repo.circleciPipelineDefinitionId})`
+      : "AgentRail API trigger";
+  }
+  if (repo.circleciTriggerMode === "auto") {
+    return "automatic";
+  }
+  return "not configured";
 }
 
 function renderProviderStatus(provider: ProviderName, providers: ProviderConfig, env: Record<string, string>, repos: SetupConfigLike["repos"] = []): string {

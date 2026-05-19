@@ -136,6 +136,14 @@ agentrail provider connect linear
 Provider setup stores secrets locally and masks prompt input. Environment
 variables are still supported for CI/non-interactive automation.
 
+CircleCI setup verifies project access, checks the repo config file, and
+configures how AgentRail will obtain pipelines for AgentRail branches. If
+`.circleci/config.yml` is missing and AgentRail can infer a safe starter Node
+workflow, the connect command creates it. If automatic CircleCI branch builds
+are not available, AgentRail configures the CircleCI pipeline-run API when the
+token can access a pipeline definition. If CircleCI settings cannot be fixed
+locally, setup reports the exact blocker.
+
 Use the readiness commands before calling setup done:
 
 ```bash

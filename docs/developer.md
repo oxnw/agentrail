@@ -89,6 +89,14 @@ agentrail provider connect linear
 
 The CLI writes local provider env files and masks secret prompts.
 
+`agentrail provider connect circleci` also verifies the stored project slug,
+checks for `.circleci/config.yml`, creates a starter config for straightforward
+Node repos when it is missing, discovers CircleCI pipeline definitions, and
+stores the trigger strategy AgentRail will use. If automatic CircleCI branch
+builds are unavailable, AgentRail can trigger the configured pipeline definition
+through CircleCI's pipeline-run API instead of requiring a manual CircleCI
+button click.
+
 Readiness commands:
 
 ```bash

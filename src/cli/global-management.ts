@@ -66,6 +66,7 @@ export async function runRepoCommand(argv: string[], {
       stdout.write(`   default branch: ${repo.defaultBranch}\n`);
       if (repo.circleciProjectSlug) {
         stdout.write(`   CircleCI project: ${repo.circleciProjectSlug}\n`);
+        stdout.write(`   CircleCI trigger: ${formatCircleCiTrigger(repo)}\n`);
       }
     });
     return 0;
@@ -279,6 +280,18 @@ function normalizeRepoSlug(value: string): string {
 
 function toGitHubUrl(slug: string): string {
   return `https://github.com/${slug}`;
+}
+
+function formatCircleCiTrigger(repo: ConnectedRepo): string {
+  if (repo.circleciTriggerMode === "api") {
+    return repo.circleciPipelineDefinitionId
+      ? `AgentRail API trigger (${repo.circleciPipelineDefinitionId})`
+      : "AgentRail API trigger";
+  }
+  if (repo.circleciTriggerMode === "auto") {
+    return "automatic";
+  }
+  return "not configured";
 }
 
 function nextValue(argv: string[], index: number, flag: string): string {
